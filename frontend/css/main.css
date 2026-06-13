@@ -1,0 +1,83 @@
+:root {
+  /* Brand */
+  --rose: #c9847a;
+  --rose-light: #e8b4ad;
+  --rose-dark: #a8645a;
+  --dark: #221815;
+  --dark-2: #2d2220;
+  --dark-3: #3a2d2a;
+
+  /* Neutrals */
+  --bg: #f5f3f0;
+  --bg-card: #ffffff;
+  --bg-sidebar: #1a1412;
+  --border: #e5e0dc;
+  --text: #1a1412;
+  --text-secondary: #6b5e5a;
+  --text-muted: #9e918d;
+  --text-on-dark: #f0edeb;
+
+  /* Status */
+  --success: #2e7d32;
+  --warning: #ed6c02;
+  --error: #d32f2f;
+  --info: #0288d1;
+
+  /* Sizes */
+  --sidebar-w: 240px;
+  --topbar-h: 56px;
+  --radius: 8px;
+  --radius-sm: 4px;
+  --shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06);
+  --shadow-lg: 0 4px 16px rgba(0,0,0,.12);
+
+  /* Typography */
+  --font-sans: 'Inter', -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { font-size: 15px; -webkit-font-smoothing: antialiased; }
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+a { color: var(--rose); text-decoration: none; }
+a:hover { color: var(--rose-dark); }
+
+svg { display: block; flex-shrink: 0; }
+
+img { max-width: 100%; height: auto; display: block; }
+
+code, pre { font-family: var(--font-mono); font-size: .85em; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* Loading */
+.loading-screen {
+  position: fixed; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; background: var(--bg);
+  z-index: 9999; gap: 16px;
+}
+.loading-screen.hidden { display: none; }
+
+.loading-spinner {
+  width: 36px; height: 36px; border: 3px solid var(--border);
+  border-top-color: var(--rose); border-radius: 50%;
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.loading-text { color: var(--text-secondary); font-size: .9rem; }
+
+.hidden { display: none !important; }
