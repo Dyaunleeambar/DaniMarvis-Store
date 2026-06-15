@@ -1,0 +1,72 @@
+{
+  "name": "danimarvis-store",
+  "version": "1.0.0",
+  "description": "Panel de gestión DaniMarvis Store — Aplicación de escritorio",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "node backend/server.js",
+    "electron": "electron electron/main.js",
+    "dist": "electron-builder build",
+    "dist:win": "electron-builder build --win",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "build": {
+    "appId": "com.danimarvis.store",
+    "productName": "DaniMarvis Store",
+    "copyright": "Copyright © 2026 DaniMarvis",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "backend",
+        "to": "backend",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "frontend",
+        "to": "frontend",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        },
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "DaniMarvis-Store-${version}-portable.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "DaniMarvis Store"
+    },
+    "asar": true,
+    "asarUnpack": [
+      "backend/node_modules/better-sqlite3/**"
+    ]
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  }
+}
