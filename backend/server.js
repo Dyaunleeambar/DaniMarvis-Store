@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { getDB } from './db/database.js';
+import { initDB, getDB } from './db/database.js';
 import productsRouter from './routes/products.js';
 import providersRouter from './routes/providers.js';
 import salesRouter from './routes/sales.js';
@@ -11,19 +11,16 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3456;
 
 app.use(cors());
 app.use(express.json());
-
 app.use(express.static(join(__dirname, '..', 'frontend')));
 
-// API routes
 app.use('/api/products', productsRouter);
 app.use('/api/providers', providersRouter);
 app.use('/api/sales', salesRouter);
 
-// Dashboard stats
 app.get('/api/dashboard', (req, res) => {
   const db = getDB();
 
@@ -67,7 +64,6 @@ app.get('/api/dashboard', (req, res) => {
   res.json({ stats, monthlySales, topProducts, recentSales });
 });
 
-// Auth
 app.post('/api/login', (req, res) => {
   const db = getDB();
   const { username, password } = req.body;
@@ -76,7 +72,8 @@ app.post('/api/login', (req, res) => {
     return res.status(400).json({ error: 'Usuario y contraseña requeridos' });
   }
 
-  const user = db.prepare('SELECT id, username, name, role FROM users WHERE username = ? AND password = ?').get(username, password);
+  const user = db.prepare('SELECT id, username, name, role FROM users WHERE username = ? AND password = ?')
+    .get(username, password);
   if (!user) {
     return res.status(401).json({ error: 'Credenciales inválidas' });
   }
@@ -85,12 +82,23 @@ app.post('/api/login', (req, res) => {
   res.json({ user, token });
 });
 
-// SPA fallback
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'Ruta no encontrada' });
   res.sendFile(join(__dirname, '..', 'frontend', 'index.html'));
 });
 
-app.listen(PORT, () => {
-  console.log(`[Server] Panel DaniMarvis corriendo en http://localhost:${PORT}`);
-});
+async function start() {
+  try {
+    await initDB();
+    console.log('[DB] Base de datos inicializada');
+  } catch (err) {
+    console.error('[DB] Error fatal al iniciar la BD:', err);
+    process.exit(1);
+  }
+
+  app.listen(PORT, () => {
+    console.log(`[Server] Panel DaniMarvis corriendo en http://localhost:${PORT}`);
+  });
+}
+
+start();

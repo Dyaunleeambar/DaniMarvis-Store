@@ -1,4 +1,5 @@
-import Database from 'better-sqlite3';
+import initSqlJs from 'sql.js';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
@@ -6,20 +7,73 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const DB_PATH = join(__dirname, '..', 'danimarvis.db');
 
-let db;
+let db = null;
+
+class Statement {
+  #stmt;
+  constructor(stmt) { this.#stmt = stmt; }
+
+  all(...params) {
+    if (params.length) this.#stmt.bind(params);
+    const rows = [];
+    while (this.#stmt.step()) rows.push(this.#stmt.getAsObject());
+    this.#stmt.free();
+    return rows;
+  }
+
+  get(...params) {
+    if (params.length) this.#stmt.bind(params);
+    const hasRow = this.#stmt.step();
+    const row = hasRow ? this.#stmt.getAsObject() : undefined;
+    this.#stmt.free();
+    return row;
+  }
+
+  run(...params) {
+    if (params.length) this.#stmt.bind(params);
+    this.#stmt.step();
+    this.#stmt.free();
+    saveDB();
+  }
+}
+
+function saveDB() {
+  try {
+    const data = db.export();
+    fs.writeFileSync(DB_PATH, Buffer.from(data));
+  } catch (err) {
+    console.error('[DB] Error al guardar:', err.message);
+  }
+}
+
+export async function initDB() {
+  if (db) return;
+
+  const SQL = await initSqlJs();
+
+  if (fs.existsSync(DB_PATH)) {
+    const buffer = fs.readFileSync(DB_PATH);
+    db = new SQL.Database(buffer);
+  } else {
+    db = new SQL.Database();
+  }
+
+  db.exec('PRAGMA foreign_keys = ON;');
+  createSchema();
+  seedIfEmpty();
+  saveDB();
+
+  // Wrap db.prepare to return Statement
+  const orig = db.prepare.bind(db);
+  db.prepare = (sql) => new Statement(orig(sql));
+}
 
 export function getDB() {
-  if (!db) {
-    db = new Database(DB_PATH);
-    db.pragma('journal_mode = WAL');
-    db.pragma('foreign_keys = ON');
-    initSchema();
-    seedIfEmpty();
-  }
+  if (!db) throw new Error('Base de datos no inicializada. Llama a initDB() primero.');
   return db;
 }
 
-function initSchema() {
+function createSchema() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS providers (
       id TEXT PRIMARY KEY,
@@ -32,7 +86,6 @@ function initSchema() {
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
     );
-
     CREATE TABLE IF NOT EXISTS products (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -50,7 +103,6 @@ function initSchema() {
       updated_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (provider_id) REFERENCES providers(id)
     );
-
     CREATE TABLE IF NOT EXISTS sales (
       id TEXT PRIMARY KEY,
       product_id TEXT NOT NULL,
@@ -72,7 +124,6 @@ function initSchema() {
       FOREIGN KEY (product_id) REFERENCES products(id),
       FOREIGN KEY (provider_id) REFERENCES providers(id)
     );
-
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       username TEXT UNIQUE NOT NULL,
@@ -85,10 +136,11 @@ function initSchema() {
 }
 
 function seedIfEmpty() {
-  const count = db.prepare('SELECT COUNT(*) as c FROM users').get();
-  if (count.c === 0) {
-    const insert = db.prepare('INSERT INTO users (id, username, name, password, role) VALUES (?, ?, ?, ?, ?)');
-    insert.run('usr-admin', 'admin', 'Administrador', 'admin123', 'admin');
+  const result = db.exec('SELECT COUNT(*) as c FROM users');
+  const count = result?.[0]?.values?.[0]?.[0] || 0;
+  if (count === 0) {
+    db.run('INSERT INTO users (id, username, name, password, role) VALUES (?, ?, ?, ?, ?)',
+      ['usr-admin', 'admin', 'Administrador', 'admin123', 'admin']);
     console.log('[DB] Usuario admin creado: admin / admin123');
   }
 }

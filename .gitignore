@@ -4,3 +4,5 @@ node_modules/
 *.db-wal
 .env
 dist/
+dist2/
+dist3/

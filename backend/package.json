@@ -11,10 +11,11 @@
     "electron-dev": "concurrently \"node server.js\" \"wait-on http://localhost:3001 && electron ../electron/main.js\""
   },
   "dependencies": {
-    "better-sqlite3": "^11.0.0",
+    "canvas": "^3.2.3",
     "cors": "^2.8.5",
     "express": "^4.21.0",
     "multer": "^1.4.5-lts.1",
+    "sql.js": "^1.14.1",
     "uuid": "^10.0.0"
   },
   "devDependencies": {

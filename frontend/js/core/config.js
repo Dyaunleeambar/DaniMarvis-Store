@@ -1,4 +1,7 @@
-export const API_BASE = '/api';
+const BACKEND_PORT = 3456;
+export const API_BASE = window.location.port === String(BACKEND_PORT)
+  ? '/api'
+  : `http://localhost:${BACKEND_PORT}/api`;
 
 export const ROUTE_TITLES = {
   '#/dashboard': 'Dashboard',

@@ -3,7 +3,7 @@ const { fork } = require('child_process');
 const path = require('path');
 const http = require('http');
 
-const SERVER_PORT = 3001;
+const SERVER_PORT = 3456;
 let serverProcess = null;
 let mainWindow = null;
 
@@ -23,6 +23,14 @@ function getWwwPath() {
 
 function startServer() {
   return new Promise((resolve, reject) => {
+    // Kill any leftover process on the port
+    try {
+      const { execSync } = require('child_process');
+      execSync(`netstat -ano | findstr :${SERVER_PORT} | findstr LISTENING`, { stdio: 'ignore' });
+      // If the above succeeded, something is listening — try npx kill-port
+      try { execSync(`npx kill-port ${SERVER_PORT}`, { stdio: 'pipe' }); } catch {}
+    } catch {}
+
     const serverPath = getServerPath();
     serverProcess = fork(serverPath, [], {
       stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
@@ -44,6 +52,9 @@ function startServer() {
     serverProcess.on('error', reject);
     serverProcess.on('exit', (code) => {
       console.log('[Server] exited with code', code);
+      if (code !== 0 && code !== null) {
+        reject(new Error(`Servidor terminó con código ${code}`));
+      }
     });
 
     // Fallback: resolve after timeout
