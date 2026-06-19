@@ -7,7 +7,7 @@ const router = Router();
 router.get('/', (req, res) => {
   const db = getDB();
   const { category, status, provider_id, q } = req.query;
-  let sql = `SELECT p.*, pr.name as provider_name
+  let sql = `SELECT p.*, pr.name as provider_name, pr.commission_rate as provider_commission_rate
              FROM products p
              LEFT JOIN providers pr ON pr.id = p.provider_id`;
   const conditions = [];
@@ -27,7 +27,7 @@ router.get('/', (req, res) => {
 
 router.get('/:id', (req, res) => {
   const db = getDB();
-  const product = db.prepare(`SELECT p.*, pr.name as provider_name
+  const product = db.prepare(`SELECT p.*, pr.name as provider_name, pr.commission_rate as provider_commission_rate
     FROM products p LEFT JOIN providers pr ON pr.id = p.provider_id
     WHERE p.id = ?`).get(req.params.id);
   if (!product) return res.status(404).json({ error: 'Producto no encontrado' });
@@ -45,8 +45,8 @@ router.post('/', (req, res) => {
   const id = uuid();
   const product = {
     id, name, description: description || '', category: category || '',
-    price, commission_type: commission_type || 'percentage',
-    commission_value: commission_value || 0, warranty: warranty || '',
+    price, commission_type: commission_type || 'fixed',
+    commission_value: parseFloat(commission_value) || 0, warranty: warranty || '',
     provider_id: provider_id || null, image_url: image_url || '',
     stock: stock || 0, status: status || 'active'
   };

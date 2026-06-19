@@ -115,6 +115,7 @@ function createSchema() {
       total_amount REAL NOT NULL,
       commission_amount REAL DEFAULT 0,
       commission_paid INTEGER DEFAULT 0,
+      exchange_rate REAL DEFAULT 61000,
       delivery_method TEXT,
       delivery_status TEXT DEFAULT 'pending',
       notes TEXT,
@@ -132,15 +133,27 @@ function createSchema() {
       role TEXT DEFAULT 'admin',
       created_at TEXT DEFAULT (datetime('now'))
     );
+    CREATE TABLE IF NOT EXISTS settings (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      exchange_rate REAL NOT NULL DEFAULT 61000,
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
   `);
 }
 
 function seedIfEmpty() {
-  const result = db.exec('SELECT COUNT(*) as c FROM users');
-  const count = result?.[0]?.values?.[0]?.[0] || 0;
+  let result = db.exec('SELECT COUNT(*) as c FROM users');
+  let count = result?.[0]?.values?.[0]?.[0] || 0;
   if (count === 0) {
     db.run('INSERT INTO users (id, username, name, password, role) VALUES (?, ?, ?, ?, ?)',
       ['usr-admin', 'admin', 'Administrador', 'admin123', 'admin']);
     console.log('[DB] Usuario admin creado: admin / admin123');
+  }
+
+  result = db.exec('SELECT COUNT(*) as c FROM settings');
+  count = result?.[0]?.values?.[0]?.[0] || 0;
+  if (count === 0) {
+    db.run('INSERT INTO settings (id, exchange_rate) VALUES (1, 61000)');
+    console.log('[DB] Tipo de cambio por defecto: 1 USD = 61000 MN');
   }
 }

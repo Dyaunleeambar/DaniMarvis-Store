@@ -8,6 +8,7 @@ import { render as renderProducts } from '../views/productsView.js';
 import { render as renderProviders } from '../views/providersView.js';
 import { render as renderSales } from '../views/salesView.js';
 import { render as renderCatalogImages } from '../views/catalogImagesView.js';
+import { render as renderSettings } from '../views/settingsView.js';
 import { render as renderLogin } from '../views/loginView.js';
 
 const toastEl = document.getElementById('toast');
@@ -90,6 +91,7 @@ async function bootstrap() {
   route('#/providers', protect((_, c) => renderProviders(c)));
   route('#/sales', protect((_, c) => renderSales(c)));
   route('#/catalog-images', protect((_, c) => renderCatalogImages(c)));
+  route('#/settings', protect((_, c) => renderSettings(c)));
 
   window.addEventListener('routeChanged', (e) => {
     updateActiveLink(e.detail.hash);
@@ -132,6 +134,7 @@ window.navigate = navigate;
 window.showToast = showToast;
 window.closeModal = closeModal;
 window.openModal = openModal;
-window.confirm = (msg) => window.confirm(msg);
+const _nativeConfirm = window.confirm.bind(window);
+window.confirm = (msg) => _nativeConfirm(msg);
 
 bootstrap();

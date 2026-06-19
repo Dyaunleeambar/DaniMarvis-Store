@@ -1,5 +1,5 @@
 import { api } from '../db/api.js';
-import { formatCurrency } from '../utils/utils.js';
+import { formatUSD } from '../utils/utils.js';
 import { generateProductImage } from '../utils/imageGenerator.js';
 import { showToast } from '../core/app.js';
 
@@ -62,10 +62,10 @@ function renderView(container, products) {
                 </div>
                 <div class="product-card__info">
                   <div class="product-card__name">${p.name}</div>
-                  <div class="product-card__price">${formatCurrency(p.price)}</div>
+                  <div class="product-card__price">${formatUSD(p.price)}</div>
                   <div class="product-card__meta">
                     ${p.commission_value > 0
-                      ? `Comisión: ${p.commission_type === 'percentage' ? p.commission_value + '%' : formatCurrency(p.commission_value)}`
+                      ? `Comisión: ${formatUSD(p.commission_value)}`
                       : 'Sin comisión'
                     }
                     ${p.warranty ? ` · ${p.warranty}` : ''}

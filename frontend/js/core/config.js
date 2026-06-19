@@ -9,4 +9,5 @@ export const ROUTE_TITLES = {
   '#/providers': 'Proveedores',
   '#/sales': 'Ventas',
   '#/catalog-images': 'Catálogo de imágenes',
+  '#/settings': 'Configuración',
 };

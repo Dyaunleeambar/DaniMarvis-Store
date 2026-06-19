@@ -41,6 +41,24 @@ app.use('/api/products', productsRouter);
 app.use('/api/providers', providersRouter);
 app.use('/api/sales', salesRouter);
 
+app.get('/api/settings', (req, res) => {
+  const db = getDB();
+  const settings = db.prepare('SELECT exchange_rate FROM settings WHERE id = 1').get();
+  res.json(settings);
+});
+
+app.put('/api/settings', (req, res) => {
+  const db = getDB();
+  const { exchange_rate } = req.body;
+  if (!exchange_rate || exchange_rate <= 0) {
+    return res.status(400).json({ error: 'Tipo de cambio inválido' });
+  }
+  db.prepare('UPDATE settings SET exchange_rate = ?, updated_at = datetime(\'now\') WHERE id = 1')
+    .run(exchange_rate);
+  const settings = db.prepare('SELECT exchange_rate FROM settings WHERE id = 1').get();
+  res.json(settings);
+});
+
 app.get('/api/dashboard', (req, res) => {
   const db = getDB();
 
@@ -81,7 +99,8 @@ app.get('/api/dashboard', (req, res) => {
     LIMIT 5
   `).all();
 
-  res.json({ stats, monthlySales, topProducts, recentSales });
+  const settings = db.prepare('SELECT exchange_rate FROM settings WHERE id = 1').get();
+  res.json({ stats, monthlySales, topProducts, recentSales, exchange_rate: settings.exchange_rate });
 });
 
 app.post('/api/login', (req, res) => {

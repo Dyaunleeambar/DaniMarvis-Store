@@ -1,5 +1,5 @@
 import { api } from '../db/api.js';
-import { formatCurrency, formatDate } from '../utils/utils.js';
+import { formatUSD, formatMN, formatDate } from '../utils/utils.js';
 import { showToast } from '../core/app.js';
 
 export async function render(container) {
@@ -15,7 +15,8 @@ export async function render(container) {
 }
 
 function renderDashboard(container, data) {
-  const { stats, monthlySales, topProducts, recentSales } = data;
+  const { stats, monthlySales, topProducts, recentSales, exchange_rate } = data;
+  const rate = exchange_rate || 61000;
 
   container.innerHTML = `
     <div class="page">
@@ -51,8 +52,9 @@ function renderDashboard(container, data) {
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
           </div>
           <div>
-            <div class="stat-value">${formatCurrency(stats.total_revenue)}</div>
-            <div class="stat-label">Ingresos totales</div>
+            <div class="stat-value">${formatUSD(stats.total_revenue)}</div>
+            <div class="stat-label">Ingresos totales (USD)</div>
+            <div style="font-size:.72rem;color:var(--text-muted)">${formatMN(stats.total_revenue, rate)}</div>
           </div>
         </div>
         <div class="card card--stat">
@@ -60,8 +62,9 @@ function renderDashboard(container, data) {
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           </div>
           <div>
-            <div class="stat-value">${formatCurrency(stats.pending_commissions)}</div>
-            <div class="stat-label">Comisiones pendientes</div>
+            <div class="stat-value">${formatUSD(stats.pending_commissions)}</div>
+            <div class="stat-label">Comisiones pendientes (USD)</div>
+            <div style="font-size:.72rem;color:var(--text-muted)">${formatMN(stats.pending_commissions, rate)}</div>
           </div>
         </div>
       </div>
@@ -83,7 +86,7 @@ function renderDashboard(container, data) {
                       <tr>
                         <td>${s.product_name || '—'}</td>
                         <td>${s.client_name || '—'}</td>
-                        <td class="amount">${formatCurrency(s.total_amount)}</td>
+                        <td class="amount">${formatUSD(s.total_amount)}</td>
                         <td>${formatDate(s.sale_date)}</td>
                       </tr>
                     `).join('')}
@@ -108,7 +111,7 @@ function renderDashboard(container, data) {
                     <div>
                       <div style="display:flex;justify-content:space-between;font-size:.82rem;margin-bottom:4px">
                         <span style="font-weight:500">${p.name}</span>
-                        <span class="amount">${formatCurrency(p.revenue)}</span>
+                        <span class="amount">${formatUSD(p.revenue)}</span>
                       </div>
                       <div style="height:6px;background:var(--bg);border-radius:3px;overflow:hidden">
                         <div style="height:100%;width:${pct}%;background:var(--rose);border-radius:3px;transition:width .5s"></div>
@@ -135,7 +138,7 @@ function renderDashboard(container, data) {
                 const h = maxRev > 0 ? (m.revenue / maxRev) * 100 : 0;
                 return `
                   <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px">
-                    <span style="font-size:.65rem;color:var(--text-muted);font-weight:500">${formatCurrency(m.revenue)}</span>
+                    <span style="font-size:.65rem;color:var(--text-muted);font-weight:500">${formatUSD(m.revenue)}</span>
                     <div style="width:100%;background:var(--bg);border-radius:4px 4px 0 0;height:${h}%;min-height:4px;background:linear-gradient(to top, var(--rose), var(--rose-light));border-radius:4px 4px 0 0;transition:height .5s"></div>
                     <span style="font-size:.65rem;color:var(--text-muted)">${m.month}</span>
                   </div>

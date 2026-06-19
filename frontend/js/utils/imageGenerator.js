@@ -77,7 +77,7 @@ export async function generateProductImage(product) {
   ctx.textAlign = 'center';
 
   const commText = product.commission_value > 0
-    ? `Comisión: ${product.commission_type === 'percentage' ? product.commission_value + '%' : formatPrice(product.commission_value)}`
+    ? `Comisión: ${formatPrice(product.commission_value)}`
     : 'Sin comisión';
   ctx.fillText(commText, CANVAS_SIZE / 2 - 110, barY + 34);
 

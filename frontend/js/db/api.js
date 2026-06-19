@@ -55,6 +55,10 @@ export const api = {
   // Dashboard
   getDashboard: () => request('GET', '/dashboard'),
 
+  // Settings
+  getSettings: () => request('GET', '/settings'),
+  updateSettings: (data) => request('PUT', '/settings', data),
+
   // Auth
   login: (username, password) => request('POST', '/login', { username, password }),
 };

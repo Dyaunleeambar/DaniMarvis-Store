@@ -1,5 +1,14 @@
+export function formatUSD(n) {
+  return '$' + Number(n).toLocaleString('es-CO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+export function formatMN(usd, rate) {
+  const mn = (parseFloat(usd) || 0) * (parseFloat(rate) || 61000);
+  return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(mn);
+}
+
 export function formatCurrency(n) {
-  return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n);
+  return formatUSD(n);
 }
 
 export function formatDate(dateStr) {

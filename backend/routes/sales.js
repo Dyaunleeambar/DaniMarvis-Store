@@ -37,38 +37,51 @@ router.get('/:id', (req, res) => {
   res.json(sale);
 });
 
+function calcCommission(product, qty) {
+  return product.commission_value > 0
+    ? Math.round(product.commission_value * qty * 100) / 100
+    : 0;
+}
+
 router.post('/', (req, res) => {
   const db = getDB();
   const { product_id, provider_id, client_name, client_phone, client_address,
-    quantity, unit_price, total_amount, commission_amount,
-    delivery_method, delivery_status, notes, sale_date } = req.body;
+    quantity, unit_price, delivery_method, delivery_status, notes, sale_date } = req.body;
 
-  if (!product_id || !unit_price) {
-    return res.status(400).json({ error: 'Producto y precio unitario son obligatorios' });
+  if (!product_id) {
+    return res.status(400).json({ error: 'Producto es obligatorio' });
   }
 
+  const product = db.prepare('SELECT * FROM products WHERE id = ?').get(product_id);
+  if (!product) return res.status(404).json({ error: 'Producto no encontrado' });
+
+  const settings = db.prepare('SELECT exchange_rate FROM settings WHERE id = 1').get();
+
   const id = uuid();
-  const qty = quantity || 1;
-  const total = total_amount || (unit_price * qty);
+  const qty = parseInt(quantity) || 1;
+  const unitPrice = parseFloat(unit_price) || product.price;
+  const total = Math.round(qty * unitPrice * 100) / 100;
+  const commissionAmount = calcCommission(product, qty);
 
   const sale = {
-    id, product_id, provider_id: provider_id || null,
+    id, product_id, provider_id: provider_id || product.provider_id || null,
     client_name: client_name || '', client_phone: client_phone || '',
     client_address: client_address || '',
-    quantity: qty, unit_price, total_amount: total,
-    commission_amount: commission_amount || 0,
-    commission_paid: 0,
+    quantity: qty, unit_price: unitPrice, total_amount: total,
+    commission_amount: commissionAmount, commission_paid: 0,
+    exchange_rate: settings.exchange_rate,
     delivery_method: delivery_method || '', delivery_status: delivery_status || 'pending',
     notes: notes || '', sale_date: sale_date || new Date().toISOString()
   };
 
   db.prepare(`INSERT INTO sales (id, product_id, provider_id, client_name, client_phone,
     client_address, quantity, unit_price, total_amount, commission_amount,
-    commission_paid, delivery_method, delivery_status, notes, sale_date)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    commission_paid, exchange_rate, delivery_method, delivery_status, notes, sale_date)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     sale.id, sale.product_id, sale.provider_id, sale.client_name,
     sale.client_phone, sale.client_address, sale.quantity, sale.unit_price,
     sale.total_amount, sale.commission_amount, sale.commission_paid,
+    sale.exchange_rate,
     sale.delivery_method, sale.delivery_status, sale.notes, sale.sale_date
   );
 
@@ -77,27 +90,35 @@ router.post('/', (req, res) => {
 
 router.put('/:id', (req, res) => {
   const db = getDB();
-  const existing = db.prepare('SELECT id FROM sales WHERE id = ?').get(req.params.id);
+  const existing = db.prepare('SELECT * FROM sales WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Venta no encontrada' });
 
-  const { client_name, client_phone, client_address, quantity, unit_price,
+  let { client_name, client_phone, client_address, quantity, unit_price,
     total_amount, commission_amount, commission_paid, delivery_method,
     delivery_status, notes, sale_date } = req.body;
+
+  quantity = parseInt(quantity) || existing.quantity;
+  unit_price = parseFloat(unit_price) || existing.unit_price;
+  total_amount = Math.round(quantity * unit_price * 100) / 100;
+
+  const product = db.prepare('SELECT * FROM products WHERE id = ?').get(existing.product_id);
+  commission_amount = calcCommission(product || existing, quantity);
 
   db.prepare(`UPDATE sales SET
     client_name = COALESCE(?, client_name), client_phone = COALESCE(?, client_phone),
     client_address = COALESCE(?, client_address),
-    quantity = COALESCE(?, quantity), unit_price = COALESCE(?, unit_price),
-    total_amount = COALESCE(?, total_amount),
-    commission_amount = COALESCE(?, commission_amount),
+    quantity = ?, unit_price = ?,
+    total_amount = ?,
+    commission_amount = ?,
     commission_paid = COALESCE(?, commission_paid),
     delivery_method = COALESCE(?, delivery_method),
     delivery_status = COALESCE(?, delivery_status),
     notes = COALESCE(?, notes), sale_date = COALESCE(?, sale_date),
     updated_at = datetime('now')
     WHERE id = ?`).run(
-    client_name, client_phone, client_address, quantity, unit_price,
-    total_amount, commission_amount, commission_paid, delivery_method,
+    client_name, client_phone, client_address,
+    quantity, unit_price, total_amount, commission_amount,
+    commission_paid, delivery_method,
     delivery_status, notes, sale_date,
     req.params.id
   );

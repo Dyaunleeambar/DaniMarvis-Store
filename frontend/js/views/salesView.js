@@ -1,6 +1,6 @@
 import { api } from '../db/api.js';
 import { openModal, closeModal, showToast } from '../core/app.js';
-import { formatCurrency, formatDate, generateId } from '../utils/utils.js';
+import { formatUSD, formatMN, formatDate, generateId } from '../utils/utils.js';
 
 let currentContainer = null;
 let currentSales = [];
@@ -29,13 +29,14 @@ export async function render(container) {
 function renderTable(container, sales) {
   const totalRevenue = sales.reduce((s, v) => s + v.total_amount, 0);
   const pendingCommissions = sales.filter(v => !v.commission_paid).reduce((s, v) => s + v.commission_amount, 0);
+  const exchangeRate = sales.length > 0 ? sales[0].exchange_rate : 61000;
 
   container.innerHTML = `
     <div class="page">
       <div class="page-header">
         <div>
           <h1>Ventas</h1>
-          <p>${sales.length} venta(s) · Total: ${formatCurrency(totalRevenue)} · Comisiones pendientes: ${formatCurrency(pendingCommissions)}</p>
+          <p>${sales.length} venta(s) · Total: ${formatUSD(totalRevenue)} · Comisiones pendientes: ${formatUSD(pendingCommissions)}</p>
         </div>
         <button class="btn btn--primary" onclick="window._openSaleForm(null)">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -50,8 +51,9 @@ function renderTable(container, sales) {
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
           </div>
           <div>
-            <div class="stat-value">${formatCurrency(totalRevenue)}</div>
+            <div class="stat-value">${formatUSD(totalRevenue)}</div>
             <div class="stat-label">Ingresos totales</div>
+            <div style="font-size:.72rem;color:var(--text-muted)">${formatMN(totalRevenue, exchangeRate)}</div>
           </div>
         </div>
         <div class="card card--stat">
@@ -59,8 +61,9 @@ function renderTable(container, sales) {
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           </div>
           <div>
-            <div class="stat-value">${formatCurrency(pendingCommissions)}</div>
+            <div class="stat-value">${formatUSD(pendingCommissions)}</div>
             <div class="stat-label">Comisiones pendientes</div>
+            <div style="font-size:.72rem;color:var(--text-muted)">${formatMN(pendingCommissions, exchangeRate)}</div>
           </div>
         </div>
         <div class="card card--stat">
@@ -116,8 +119,8 @@ function renderTable(container, sales) {
                       <div style="font-size:.85rem">${s.client_name || '—'}</div>
                       ${s.client_phone ? `<div style="font-size:.75rem;color:var(--text-muted)">${s.client_phone}</div>` : ''}
                     </td>
-                    <td class="amount">${formatCurrency(s.total_amount)}</td>
-                    <td class="amount">${formatCurrency(s.commission_amount)}</td>
+                    <td class="amount">${formatUSD(s.total_amount)}<br><span style="font-size:.7rem;color:var(--text-muted)">${formatMN(s.total_amount, s.exchange_rate || exchangeRate)}</span></td>
+                    <td class="amount">${formatUSD(s.commission_amount)}</td>
                     <td><span class="badge badge--${s.commission_paid ? 'paid' : 'unpaid'}">${s.commission_paid ? 'Pagada' : 'Pendiente'}</span></td>
                     <td><span class="badge badge--${s.delivery_status === 'delivered' ? 'delivered' : s.delivery_status === 'shipped' ? 'shipped' : 'pending'}">${s.delivery_status || 'pending'}</span></td>
                     <td style="font-size:.82rem;color:var(--text-secondary);white-space:nowrap">${formatDate(s.sale_date)}</td>
@@ -184,7 +187,7 @@ window._openSaleForm = function(sale) {
           <select name="product_id" class="form-control" id="sale-product" required>
             <option value="">Seleccionar producto</option>
             ${currentProducts.map(p =>
-              `<option value="${p.id}" data-price="${p.price}" data-commission="${p.commission_value}" data-commission-type="${p.commission_type}" data-provider="${p.provider_id || ''}" ${sale?.product_id === p.id ? 'selected' : ''}>${p.name} — ${formatCurrency(p.price)}</option>`
+              `<option value="${p.id}" data-price="${p.price}" data-commission="${p.commission_value}" data-provider="${p.provider_id || ''}" ${sale?.product_id === p.id ? 'selected' : ''}>${p.name} — ${formatUSD(p.price)}</option>`
             ).join('')}
           </select>
         </div>
@@ -218,18 +221,19 @@ window._openSaleForm = function(sale) {
           <input type="number" name="quantity" class="form-control" id="sale-qty" value="${sale?.quantity || 1}" min="1" />
         </div>
         <div class="form-group">
-          <label>Precio unitario</label>
-          <input type="number" name="unit_price" class="form-control" id="sale-price" value="${sale?.unit_price || ''}" step="1000" />
+          <label>Precio unitario (USD)</label>
+          <input type="number" name="unit_price" class="form-control" id="sale-price" value="${sale?.unit_price || ''}" step="any" />
         </div>
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label>Total</label>
-          <input type="number" name="total_amount" class="form-control" id="sale-total" value="${sale?.total_amount || ''}" step="1000" readonly style="background:var(--bg)" />
+          <label>Total (USD)</label>
+          <input type="number" name="total_amount" class="form-control" id="sale-total" value="${sale?.total_amount || ''}" step="any" readonly style="background:var(--bg)" />
         </div>
         <div class="form-group">
-          <label>Comisión</label>
-          <input type="number" name="commission_amount" class="form-control" id="sale-commission" value="${sale?.commission_amount || 0}" step="1000" readonly style="background:var(--bg)" />
+          <label>Comisión (USD)</label>
+          <input type="number" name="commission_amount" class="form-control" id="sale-commission" value="${sale?.commission_amount || 0}" step="any" readonly style="background:var(--bg)" />
+          <small id="commission-source" style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:2px">—</small>
         </div>
       </div>
       <div class="form-row">
@@ -281,19 +285,18 @@ window._openSaleForm = function(sale) {
   function calcTotals() {
     const qty = parseInt(qtyInput.value) || 1;
     const price = parseFloat(priceInput.value) || 0;
-    totalInput.value = qty * price;
+    totalInput.value = Math.round(qty * price * 100) / 100;
 
     const selected = productSelect.options[productSelect.selectedIndex];
     if (selected && selected.value) {
-      const commType = selected.dataset.commissionType;
       const commVal = parseFloat(selected.dataset.commission) || 0;
-      let commission = 0;
-      if (commType === 'percentage') {
-        commission = totalInput.value * (commVal / 100);
-      } else {
-        commission = commVal * qty;
-      }
-      commissionInput.value = Math.round(commission);
+      const commission = commVal * qty;
+      commissionInput.value = Math.round(commission * 100) / 100;
+
+      const label = document.getElementById('commission-source');
+      if (label) label.textContent = commVal > 0
+        ? `${formatUSD(commVal)} fijo por unidad`
+        : 'Sin comisión';
 
       if (selected.dataset.provider && !sale) {
         providerSelect.value = selected.dataset.provider;

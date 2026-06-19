@@ -1,6 +1,6 @@
 import { api } from '../db/api.js';
 import { loadCached } from '../services/index.js';
-import { formatCurrency, debounce, generateId } from '../utils/utils.js';
+import { formatUSD, debounce, generateId } from '../utils/utils.js';
 import { openModal, closeModal, showToast } from '../core/app.js';
 
 let currentContainer = null;
@@ -93,8 +93,8 @@ function renderTable(container, products, providers) {
                       </div>
                     </td>
                     <td><span style="font-size:.82rem">${p.category || '—'}</span></td>
-                    <td class="amount">${formatCurrency(p.price)}</td>
-                    <td><span style="font-size:.82rem">${p.commission_value > 0 ? (p.commission_type === 'percentage' ? `${p.commission_value}%` : formatCurrency(p.commission_value)) : '—'}</span></td>
+                    <td class="amount">${formatUSD(p.price)}</td>
+                    <td><span style="font-size:.82rem">${p.commission_value > 0 ? formatUSD(p.commission_value) : '—'}</span></td>
                     <td><span style="font-size:.82rem">${p.provider_name || '—'}</span></td>
                     <td><span style="font-size:.82rem">${p.stock}</span></td>
                     <td><span class="badge badge--${p.status === 'active' ? 'active' : 'archived'}">${p.status}</span></td>
@@ -153,8 +153,8 @@ window._openProductForm = function(product) {
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label>Precio *</label>
-          <input type="number" name="price" class="form-control" value="${product?.price || ''}" min="0" step="1000" required />
+          <label>Precio (USD) *</label>
+          <input type="number" name="price" class="form-control" value="${product?.price || ''}" step="any" required />
         </div>
         <div class="form-group">
           <label>Categoría</label>
@@ -170,18 +170,10 @@ window._openProductForm = function(product) {
         <label>Descripción</label>
         <textarea name="description" class="form-control">${product?.description || ''}</textarea>
       </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label>Tipo de comisión</label>
-          <select name="commission_type" class="form-control">
-            <option value="percentage" ${product?.commission_type === 'percentage' ? 'selected' : ''}>Porcentaje (%)</option>
-            <option value="fixed" ${product?.commission_type === 'fixed' ? 'selected' : ''}>Valor fijo ($)</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Valor comisión</label>
-          <input type="number" name="commission_value" class="form-control" value="${product?.commission_value || 0}" min="0" step="1000" />
-        </div>
+      <div class="form-group">
+        <label>Comisión (USD) — valor fijo por unidad</label>
+        <input type="number" name="commission_value" class="form-control" value="${product?.commission_value || 0}" min="0" step="any" />
+        <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:2px">Monto fijo en USD que gana el vendedor por cada unidad vendida</small>
       </div>
       <div class="form-row">
         <div class="form-group">
@@ -218,6 +210,8 @@ window._openProductForm = function(product) {
   document.getElementById('product-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(e.target));
+    data.commission_type = 'fixed';
+    data.commission_value = parseFloat(data.commission_value) || 0;
 
     try {
       if (product) {
