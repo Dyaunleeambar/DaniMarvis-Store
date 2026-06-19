@@ -1,74 +1,9 @@
 {
   "name": "danimarvis-store",
   "version": "1.0.0",
-  "description": "Panel de gestión DaniMarvis Store — Aplicación de escritorio",
-  "main": "electron/main.js",
+  "description": "Panel de gestión DaniMarvis Store — Versión Web",
   "scripts": {
     "start": "node backend/server.js",
-    "electron": "electron electron/main.js",
-    "dist": "electron-builder build",
-    "dist:win": "electron-builder build --win"
-  },
-  "build": {
-    "appId": "com.danimarvis.store",
-    "productName": "DaniMarvis Store",
-    "copyright": "Copyright © 2026 DaniMarvis",
-    "icon": "backend/build/icon.png",
-    "directories": {
-      "output": "dist"
-    },
-    "files": [
-      "electron/**/*",
-      "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "backend",
-        "to": "backend",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": "frontend",
-        "to": "frontend",
-        "filter": [
-          "**/*"
-        ]
-      }
-    ],
-    "win": {
-      "target": [
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ]
-    },
-    "portable": {
-      "artifactName": "DaniMarvis-Store-${version}-portable.${ext}"
-    },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "DaniMarvis Store"
-    },
-    "asar": true
-  },
-  "devDependencies": {
-    "@electron/rebuild": "^4.0.4",
-    "electron": "^33.0.0",
-    "electron-builder": "^25.1.8"
+    "dev": "node --watch backend/server.js"
   }
 }

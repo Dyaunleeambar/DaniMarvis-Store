@@ -8,6 +8,7 @@ import { render as renderProducts } from '../views/productsView.js';
 import { render as renderProviders } from '../views/providersView.js';
 import { render as renderSales } from '../views/salesView.js';
 import { render as renderCatalogImages } from '../views/catalogImagesView.js';
+import { render as renderLogin } from '../views/loginView.js';
 
 const toastEl = document.getElementById('toast');
 let _toastTimer = null;
@@ -66,12 +67,29 @@ async function bootstrap() {
     console.warn('[App] IndexedDB:', err);
   }
 
-  route('#/dashboard', (_, c) => renderDashboard(c));
-  route('#/', (_, c) => renderDashboard(c));
-  route('#/products', (_, c) => renderProducts(c));
-  route('#/providers', (_, c) => renderProviders(c));
-  route('#/sales', (_, c) => renderSales(c));
-  route('#/catalog-images', (_, c) => renderCatalogImages(c));
+  function protect(handler) {
+    return (params, c) => {
+      if (!auth.isLoggedIn()) {
+        navigate('#/login');
+        return;
+      }
+      document.getElementById('app-shell').classList.remove('hidden');
+      return handler(params, c);
+    };
+  }
+
+  route('#/login', () => {
+    document.getElementById('app-shell').classList.add('hidden');
+    const loginContainer = document.getElementById('login-container');
+    renderLogin(loginContainer);
+    return () => { loginContainer.innerHTML = ''; };
+  });
+  route('#/dashboard', protect((_, c) => renderDashboard(c)));
+  route('#/', protect((_, c) => renderDashboard(c)));
+  route('#/products', protect((_, c) => renderProducts(c)));
+  route('#/providers', protect((_, c) => renderProviders(c)));
+  route('#/sales', protect((_, c) => renderSales(c)));
+  route('#/catalog-images', protect((_, c) => renderCatalogImages(c)));
 
   window.addEventListener('routeChanged', (e) => {
     updateActiveLink(e.detail.hash);
@@ -90,13 +108,23 @@ async function bootstrap() {
 
   document.getElementById('logout-btn').addEventListener('click', () => {
     auth.logout();
+    navigate('#/login');
     showToast('Sesión finalizada');
+  });
+
+  window.addEventListener('authChanged', () => {
+    updateSidebar();
   });
 
   updateSidebar();
 
   loading.classList.add('hidden');
-  shell.classList.remove('hidden');
+  if (!auth.isLoggedIn()) {
+    navigate('#/login');
+    shell.classList.add('hidden');
+  } else {
+    shell.classList.remove('hidden');
+  }
   initRouter(mainEl);
 }
 

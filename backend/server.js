@@ -17,6 +17,26 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(join(__dirname, '..', 'frontend')));
 
+function authMiddleware(req, res, next) {
+  if (req.path === '/login') return next();
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Token requerido' });
+  }
+  try {
+    const payload = JSON.parse(Buffer.from(authHeader.slice(7), 'base64').toString());
+    if (Date.now() > payload.exp) {
+      return res.status(401).json({ error: 'Token expirado' });
+    }
+    req.userId = payload.id;
+    next();
+  } catch {
+    return res.status(401).json({ error: 'Token inválido' });
+  }
+}
+
+app.use('/api', authMiddleware);
+
 app.use('/api/products', productsRouter);
 app.use('/api/providers', providersRouter);
 app.use('/api/sales', salesRouter);
