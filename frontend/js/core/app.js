@@ -24,20 +24,43 @@ export function showToast(msg, type = '') {
 
 const overlay = document.getElementById('modal-overlay');
 const modalContent = document.getElementById('modal-content');
+const modalConfirm = document.getElementById('modal-confirm');
+const modalConfirmBox = document.getElementById('modal-confirm-box');
+let modalCloseGuard = null;
+let activeConfirmDismiss = null;
+
+function hideConfirmDialog() {
+  modalConfirm.classList.add('hidden');
+  modalConfirmBox.innerHTML = '';
+  activeConfirmDismiss = null;
+}
+
+export function setModalCloseGuard(guard) {
+  modalCloseGuard = guard;
+}
 
 export function openModal(html) {
+  modalCloseGuard = null;
+  hideConfirmDialog();
   modalContent.innerHTML = html;
   overlay.classList.remove('hidden');
 }
 
-export function closeModal() {
+export async function closeModal(force = false) {
+  if (!force && modalCloseGuard) {
+    const allow = await modalCloseGuard();
+    if (!allow) return;
+  }
+  modalCloseGuard = null;
+  hideConfirmDialog();
   overlay.classList.add('hidden');
   modalContent.innerHTML = '';
 }
 
 export function confirmDialog(message, { title = 'Confirmar', confirmText = 'Eliminar', danger = true } = {}) {
   return new Promise((resolve) => {
-    openModal(`
+    const stacked = !overlay.classList.contains('hidden') && modalContent.innerHTML.trim() !== '';
+    const html = `
       <div class="modal-header">
         <h2>${title}</h2>
         <button class="modal-close" id="confirm-dialog-close">
@@ -49,12 +72,23 @@ export function confirmDialog(message, { title = 'Confirmar', confirmText = 'Eli
         <button type="button" class="btn btn--secondary" id="confirm-dialog-cancel">Cancelar</button>
         <button type="button" class="btn ${danger ? 'btn--danger' : 'btn--primary'}" id="confirm-dialog-accept">${confirmText}</button>
       </div>
-    `);
+    `;
+
+    const host = stacked ? modalConfirmBox : modalContent;
+    host.innerHTML = html;
+    overlay.classList.remove('hidden');
+    if (stacked) modalConfirm.classList.remove('hidden');
 
     const finish = (result) => {
-      closeModal();
+      hideConfirmDialog();
+      if (!stacked) {
+        overlay.classList.add('hidden');
+        modalContent.innerHTML = '';
+      }
       resolve(result);
     };
+
+    activeConfirmDismiss = () => finish(false);
 
     document.getElementById('confirm-dialog-close').addEventListener('click', () => finish(false));
     document.getElementById('confirm-dialog-cancel').addEventListener('click', () => finish(false));
@@ -62,7 +96,12 @@ export function confirmDialog(message, { title = 'Confirmar', confirmText = 'Eli
   });
 }
 
+modalConfirm.addEventListener('click', (e) => {
+  if (activeConfirmDismiss && e.target === modalConfirm) activeConfirmDismiss();
+});
+
 overlay.addEventListener('click', (e) => {
+  if (activeConfirmDismiss) return;
   if (e.target === overlay) closeModal();
 });
 

@@ -29,6 +29,7 @@ Este sistema permite a un **gestor de ventas**:
 3. **Registrar ventas** con cálculo automático de comisiones.
 4. **Generar imágenes promocionales** 1080×1080 para Facebook/Instagram/WhatsApp con el logo de la marca, precio, comisión y CTA.
 5. **Dar seguimiento** a entregas y comisiones pendientes.
+6. **Configurar el tipo de cambio** USD → MN para mostrar precios en moneda nacional.
 
 El negocio funciona así:
 
@@ -47,7 +48,7 @@ Los importadores proporcionan productos y se encargan del envío directo al clie
 |-----------|-----|
 | **Node.js** (v18+) | Entorno de ejecución |
 | **Express** | Framework HTTP |
-| **better-sqlite3** | Base de datos SQLite |
+| **sql.js** | Base de datos SQLite (100% JS/WASM) |
 | **uuid** | Generación de IDs |
 
 ### Frontend
@@ -76,7 +77,7 @@ Los importadores proporcionan productos y se encargan del envío directo al clie
 │  │  ┌────▼────┐                           │   │
 │  │  │  Views  │  (Dashboard, Products,    │   │
 │  │  │         │   Providers, Sales,        │   │
-│  │  │         │   Catalog Images)          │   │
+│  │  │         │   Catalog Images, Settings)│   │
 │  │  └────┬────┘                           │   │
 │  │       │                                │   │
 │  │  ┌────▼────┐                           │   │
@@ -93,7 +94,7 @@ Los importadores proporcionan productos y se encargan del envío directo al clie
 │  └────┬─────┘  └────────────────────────┘   │
 │       │                                      │
 │  ┌────▼─────┐                                │
-│  │  SQLite  │  (better-sqlite3)              │
+│  │  SQLite  │  (sql.js — WASM, sin nativos)  │
 │  │  .db     │                                │
 │  └──────────┘                                │
 └──────────────────────────────────────────────┘
@@ -117,11 +118,15 @@ cd /d/Proyectos/DaniMarvisStore
 cd backend
 npm install
 
-# 3. Iniciar el servidor
+# 3. Iniciar el servidor (desde backend/ o desde la raíz del proyecto)
 npm start
+# Alternativa con recarga automática:
+npm run dev
 ```
 
-El servidor arranca en `http://localhost:3001`. La base de datos SQLite se crea automáticamente en `backend/danimarvis.db` con un usuario administrador por defecto.
+El servidor arranca en `http://localhost:3456`. La base de datos SQLite se crea automáticamente en `backend/danimarvis.db` con un usuario administrador por defecto.
+
+> Desde la raíz del proyecto también puedes usar `npm start` (ejecuta `backend/server.js` directamente).
 
 ### Credenciales de Acceso
 
@@ -135,8 +140,9 @@ El servidor arranca en `http://localhost:3001`. La base de datos SQLite se crea 
 
 ```
 DaniMarvisStore/
+├── package.json               # Scripts npm desde la raíz del proyecto
 ├── backend/
-│   ├── server.js              # Servidor Express (puerto 3001)
+│   ├── server.js              # Servidor Express (puerto 3456)
 │   ├── package.json           # Dependencias Node.js
 │   ├── danimarvis.db          # Base de datos SQLite (auto-creada)
 │   ├── db/
@@ -147,30 +153,32 @@ DaniMarvisStore/
 │       └── sales.js           # CRUD ventas
 │
 ├── frontend/
-│   ├── index.html             # Shell SPA: sidebar, topbar, modal, toast
+│   ├── index.html             # Shell SPA: sidebar, modal, confirmación apilada, toast
 │   ├── css/
 │   │   ├── main.css           # Variables, reset, loading screen
 │   │   ├── layout.css         # Sidebar fijo, grid, responsive
 │   │   └── components.css     # Cards, tablas, formularios, badges
 │   └── js/
 │       ├── core/
-│       │   ├── app.js         # Bootstrap, rutas, toast, modal
+│       │   ├── app.js         # Bootstrap, rutas, toast, modal, confirmDialog
 │       │   ├── router.js      # Router SPA por hash (#/ruta)
 │       │   └── config.js      # Constantes y títulos de rutas
 │       ├── db/
 │       │   ├── api.js         # Cliente HTTP para API REST
 │       │   └── indexeddb.js   # Caché offline con IndexedDB
 │       ├── services/
-│       │   └── index.js       # Auth + capa de caché
+│       │   └── index.js       # Auth, caché (loadCached / invalidateCache)
 │       ├── utils/
 │       │   ├── utils.js       # formatCurrency, fechas, IDs
 │       │   └── imageGenerator.js  # Motor Canvas para imágenes
 │       └── views/
+│           ├── loginView.js          # Pantalla de inicio de sesión
 │           ├── dashboardView.js      # Estadísticas y gráficos
-│           ├── productsView.js       # CRUD productos + filtros
+│           ├── productsView.js       # CRUD productos + filtros + caché
 │           ├── providersView.js      # CRUD proveedores
 │           ├── salesView.js          # CRUD ventas + cálculo comisiones
-│           └── catalogImagesView.js  # Generador de imágenes
+│           ├── catalogImagesView.js  # Generador de imágenes
+│           └── settingsView.js       # Tipo de cambio USD → MN
 │
 └── README.md
 ```
@@ -199,19 +207,22 @@ Response: { "user": {...}, "token": "..." }
 | `PUT` | `/api/products/:id` | Actualizar producto |
 | `DELETE` | `/api/products/:id` | Eliminar o archivar producto |
 
-**Ejemplo de creación:**
+**Ejemplo de creación** (precios en USD, comisión fija por unidad):
 
 ```json
 {
   "name": "Licuadora Pro 3000",
-  "price": 250000,
+  "price": 85.00,
   "category": "Electrodomésticos",
-  "commission_type": "percentage",
-  "commission_value": 5,
+  "commission_type": "fixed",
+  "commission_value": 5.00,
   "warranty": "1 año",
+  "provider_id": null,
   "stock": 10
 }
 ```
+
+> En `PUT /api/products/:id`, los campos opcionales como `provider_id` se normalizan (`""` → `null`) para evitar errores de integridad referencial.
 
 ### Proveedores
 
@@ -238,7 +249,14 @@ Response: { "user": {...}, "token": "..." }
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| `GET` | `/api/dashboard` | Estadísticas: totales, ventas mensuales, top productos |
+| `GET` | `/api/dashboard` | Estadísticas: totales, ventas mensuales, top productos, tipo de cambio |
+
+### Configuración
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/settings` | Obtener configuración global (tipo de cambio) |
+| `PUT` | `/api/settings` | Actualizar tipo de cambio USD → MN |
 
 ---
 
@@ -255,13 +273,18 @@ El frontend es una **SPA** (Single Page Application) construida con JavaScript v
 | `#/providers` | Proveedores | CRUD con conteo de productos asociados |
 | `#/sales` | Ventas | CRUD con cálculo automático de comisiones y filtros |
 | `#/catalog-images` | Catálogo imágenes | Generador de imágenes promocionales |
+| `#/settings` | Configuración | Tipo de cambio USD → MN para precios en moneda nacional |
 
 ### Funcionalidades
 
+- **Autenticación** con token Bearer en sessionStorage
 - **Toast notifications** para feedback de acciones
-- **Modal** para formularios de creación/edición
+- **Modales** para formularios de creación/edición
+- **Diálogos de confirmación** (`confirmDialog`) para eliminar registros o descartar cambios sin guardar
+- **Protección de formularios** — al cerrar el modal de productos con datos modificados se pide confirmación
 - **Sidebar responsive** — se colapsa en móvil
-- **Caché offline** con IndexedDB (5 min de TTL)
+- **Caché offline** con IndexedDB (TTL 5 min en listado de productos)
+- **Invalidación de caché** automática al crear, editar o eliminar productos
 - **Filtros en tiempo real** en productos y ventas
 - **Cálculo automático** de comisiones al registrar ventas
 
@@ -320,24 +343,30 @@ Ingresa nombre, contacto, teléfono y % de comisión.
 ```
 Panel → Productos → Nuevo producto
 ```
-Asocia cada producto a un proveedor. Define precio, comisión (porcentaje o fijo), garantía y stock.
+Asocia cada producto a un proveedor. Define precio en USD, comisión fija por unidad, garantía y stock.
 
-### 3. Generar imágenes promocionales
+### 3. Configurar tipo de cambio
+```
+Panel → Configuración
+```
+Actualiza el valor de 1 USD en moneda nacional (MN). Se refleja en dashboard, ventas e imágenes promocionales.
+
+### 4. Generar imágenes promocionales
 ```
 Panel → Catálogo imágenes → Generar imagen
 ```
 Descarga la imagen y publícala en Facebook con un enlace a tu WhatsApp.
 
-### 4. Registrar ventas
+### 5. Registrar ventas
 ```
 Panel → Ventas → Nueva venta
 ```
 Selecciona el producto, ingresa datos del cliente. El sistema calcula automáticamente el total y la comisión.
 
-### 5. Dar seguimiento
+### 6. Dar seguimiento
 Actualiza el estado de entrega (pendiente → enviado → entregado) y marca comisiones como pagadas.
 
-### 6. Revisar dashboard
+### 7. Revisar dashboard
 El dashboard muestra ingresos totales, comisiones pendientes, productos más vendidos y ventas mensuales.
 
 ---

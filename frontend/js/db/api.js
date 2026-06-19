@@ -18,7 +18,13 @@ async function request(method, path, body) {
     throw new Error('Sesión expirada');
   }
 
-  const data = await res.json();
+  const text = await res.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(res.ok ? 'Respuesta inválida del servidor' : `Error del servidor (${res.status})`);
+  }
   if (!res.ok) throw new Error(data.error || 'Error en la solicitud');
   return data;
 }

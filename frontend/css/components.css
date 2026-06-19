@@ -233,6 +233,19 @@ tr:hover td { background: rgba(201,132,122,.03); }
 }
 .modal-overlay.hidden { display: none; }
 
+.modal-confirm {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,.35);
+  z-index: 1;
+  padding: 24px;
+  animation: fadeIn .15s ease;
+}
+.modal-confirm.hidden { display: none; }
+
 .modal-content {
   background: var(--bg-card);
   border-radius: var(--radius);

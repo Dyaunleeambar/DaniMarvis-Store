@@ -1,7 +1,7 @@
 import { api } from '../db/api.js';
 import { loadCached, invalidateCache } from '../services/index.js';
 import { formatUSD, debounce, generateId } from '../utils/utils.js';
-import { openModal, closeModal, showToast, confirmDialog } from '../core/app.js';
+import { openModal, closeModal, setModalCloseGuard, showToast, confirmDialog } from '../core/app.js';
 
 let currentContainer = null;
 let currentFilter = {};
@@ -207,7 +207,19 @@ window._openProductForm = function(product) {
     </form>
   `);
 
-  document.getElementById('product-form').addEventListener('submit', async (e) => {
+  const form = document.getElementById('product-form');
+  const initialSnapshot = snapshotForm(form);
+
+  setModalCloseGuard(async () => {
+    if (snapshotForm(form) === initialSnapshot) return true;
+    return confirmDialog('¿Descartar los cambios sin guardar?', {
+      title: 'Cambios sin guardar',
+      confirmText: 'Descartar',
+      danger: true,
+    });
+  });
+
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(e.target));
     data.commission_type = 'fixed';
@@ -222,13 +234,18 @@ window._openProductForm = function(product) {
         await api.createProduct(data);
         showToast('Producto creado', 'success');
       }
-      closeModal();
+      await invalidateCache('products');
+      closeModal(true);
       render(currentContainer);
     } catch (err) {
       showToast(err.message, 'error');
     }
   });
 };
+
+function snapshotForm(form) {
+  return JSON.stringify(Object.fromEntries(new FormData(form)));
+}
 
 window._editProduct = async function(id) {
   try {
@@ -245,7 +262,7 @@ window._deleteProduct = async function(id) {
   try {
     await api.deleteProduct(id);
     showToast('Producto eliminado', 'success');
-    invalidateCache('products');
+    await invalidateCache('products');
     render(currentContainer);
   } catch (err) {
     showToast(err.message, 'error');

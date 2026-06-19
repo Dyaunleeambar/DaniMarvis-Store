@@ -70,21 +70,33 @@ router.put('/:id', (req, res) => {
 
   const { name, description, category, price, commission_type, commission_value, warranty, provider_id, image_url, stock, status } = req.body;
 
+  if (!name || price === undefined || price === '') {
+    return res.status(400).json({ error: 'Nombre y precio son obligatorios' });
+  }
+
   db.prepare(`UPDATE products SET
-    name = COALESCE(?, name), description = COALESCE(?, description),
-    category = COALESCE(?, category), price = COALESCE(?, price),
-    commission_type = COALESCE(?, commission_type), commission_value = COALESCE(?, commission_value),
-    warranty = COALESCE(?, warranty), provider_id = COALESCE(?, provider_id),
-    image_url = COALESCE(?, image_url), stock = COALESCE(?, stock),
-    status = COALESCE(?, status), updated_at = datetime('now')
+    name = ?, description = ?, category = ?, price = ?,
+    commission_type = ?, commission_value = ?, warranty = ?,
+    provider_id = ?, image_url = ?, stock = ?, status = ?,
+    updated_at = datetime('now')
     WHERE id = ?`).run(
-    name, description, category, price,
-    commission_type, commission_value, warranty, provider_id,
-    image_url, stock, status,
+    name,
+    description || '',
+    category || '',
+    parseFloat(price),
+    commission_type || 'fixed',
+    parseFloat(commission_value) || 0,
+    warranty || '',
+    provider_id || null,
+    image_url || '',
+    parseInt(stock, 10) || 0,
+    status || 'active',
     req.params.id
   );
 
-  const updated = db.prepare('SELECT * FROM products WHERE id = ?').get(req.params.id);
+  const updated = db.prepare(`SELECT p.*, pr.name as provider_name, pr.commission_rate as provider_commission_rate
+    FROM products p LEFT JOIN providers pr ON pr.id = p.provider_id
+    WHERE p.id = ?`).get(req.params.id);
   res.json(updated);
 });
 
