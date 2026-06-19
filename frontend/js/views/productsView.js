@@ -1,7 +1,7 @@
 import { api } from '../db/api.js';
-import { loadCached } from '../services/index.js';
+import { loadCached, invalidateCache } from '../services/index.js';
 import { formatUSD, debounce, generateId } from '../utils/utils.js';
-import { openModal, closeModal, showToast } from '../core/app.js';
+import { openModal, closeModal, showToast, confirmDialog } from '../core/app.js';
 
 let currentContainer = null;
 let currentFilter = {};
@@ -240,10 +240,12 @@ window._editProduct = async function(id) {
 };
 
 window._deleteProduct = async function(id) {
-  if (!confirm('¿Eliminar este producto?')) return;
+  const ok = await confirmDialog('¿Eliminar este producto? Esta acción no se puede deshacer.');
+  if (!ok) return;
   try {
     await api.deleteProduct(id);
     showToast('Producto eliminado', 'success');
+    invalidateCache('products');
     render(currentContainer);
   } catch (err) {
     showToast(err.message, 'error');

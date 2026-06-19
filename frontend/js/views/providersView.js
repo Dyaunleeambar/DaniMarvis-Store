@@ -1,6 +1,5 @@
 import { api } from '../db/api.js';
-import { formatCurrency } from '../utils/utils.js';
-import { openModal, closeModal, showToast } from '../core/app.js';
+import { openModal, closeModal, showToast, confirmDialog } from '../core/app.js';
 
 let currentContainer = null;
 let currentProviders = [];
@@ -154,7 +153,8 @@ window._editProvider = async function(id) {
 };
 
 window._deleteProvider = async function(id) {
-  if (!confirm('¿Eliminar este proveedor?')) return;
+  const ok = await confirmDialog('¿Eliminar este proveedor? Esta acción no se puede deshacer.');
+  if (!ok) return;
   try {
     await api.deleteProvider(id);
     showToast('Proveedor eliminado', 'success');

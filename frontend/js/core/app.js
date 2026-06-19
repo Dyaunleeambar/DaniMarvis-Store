@@ -35,6 +35,33 @@ export function closeModal() {
   modalContent.innerHTML = '';
 }
 
+export function confirmDialog(message, { title = 'Confirmar', confirmText = 'Eliminar', danger = true } = {}) {
+  return new Promise((resolve) => {
+    openModal(`
+      <div class="modal-header">
+        <h2>${title}</h2>
+        <button class="modal-close" id="confirm-dialog-close">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <p style="font-size:.9rem;color:var(--text-secondary);margin-bottom:4px">${message}</p>
+      <div class="form-actions">
+        <button type="button" class="btn btn--secondary" id="confirm-dialog-cancel">Cancelar</button>
+        <button type="button" class="btn ${danger ? 'btn--danger' : 'btn--primary'}" id="confirm-dialog-accept">${confirmText}</button>
+      </div>
+    `);
+
+    const finish = (result) => {
+      closeModal();
+      resolve(result);
+    };
+
+    document.getElementById('confirm-dialog-close').addEventListener('click', () => finish(false));
+    document.getElementById('confirm-dialog-cancel').addEventListener('click', () => finish(false));
+    document.getElementById('confirm-dialog-accept').addEventListener('click', () => finish(true));
+  });
+}
+
 overlay.addEventListener('click', (e) => {
   if (e.target === overlay) closeModal();
 });

@@ -1,5 +1,5 @@
 import { api } from '../db/api.js';
-import { openModal, closeModal, showToast } from '../core/app.js';
+import { openModal, closeModal, showToast, confirmDialog } from '../core/app.js';
 import { formatUSD, formatMN, formatDate, generateId } from '../utils/utils.js';
 
 let currentContainer = null;
@@ -352,7 +352,8 @@ window._editSale = async function(id) {
 };
 
 window._deleteSale = async function(id) {
-  if (!confirm('¿Eliminar esta venta?')) return;
+  const ok = await confirmDialog('¿Eliminar esta venta? Esta acción no se puede deshacer.');
+  if (!ok) return;
   try {
     await api.deleteSale(id);
     showToast('Venta eliminada', 'success');
