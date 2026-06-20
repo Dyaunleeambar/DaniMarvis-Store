@@ -68,6 +68,10 @@ export const api = {
   updateCategory: (id, data) => request('PUT', `/categories/${id}`, data),
   deleteCategory: (id) => request('DELETE', `/categories/${id}`),
 
+  // Backup
+  exportBackup: () => request('GET', '/backup'),
+  restoreBackup: (data) => request('POST', '/backup/restore', data),
+
   // Settings
   getSettings: () => request('GET', '/settings'),
   updateSettings: (data) => request('PUT', '/settings', data),

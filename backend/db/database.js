@@ -38,7 +38,7 @@ class Statement {
   }
 }
 
-function saveDB() {
+export function saveDB() {
   try {
     const data = db.export();
     fs.writeFileSync(DB_PATH, Buffer.from(data));

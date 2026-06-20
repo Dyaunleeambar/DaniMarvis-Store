@@ -10,4 +10,5 @@ export const ROUTE_TITLES = {
   '#/sales': 'Ventas',
   '#/catalog-images': 'Catálogo de imágenes',
   '#/settings': 'Configuración',
+  '#/backup': 'Respaldos',
 };
