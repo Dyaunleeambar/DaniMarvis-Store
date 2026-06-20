@@ -6,6 +6,7 @@ import { initDB, getDB } from './db/database.js';
 import productsRouter from './routes/products.js';
 import providersRouter from './routes/providers.js';
 import salesRouter from './routes/sales.js';
+import categoriesRouter from './routes/categories.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -40,6 +41,16 @@ app.use('/api', authMiddleware);
 app.use('/api/products', productsRouter);
 app.use('/api/providers', providersRouter);
 app.use('/api/sales', salesRouter);
+app.use('/api/categories', categoriesRouter);
+
+app.get('/api/counts', (req, res) => {
+  const db = getDB();
+  res.json({
+    products: db.prepare('SELECT COUNT(*) as c FROM products').get().c,
+    providers: db.prepare('SELECT COUNT(*) as c FROM providers').get().c,
+    sales: db.prepare('SELECT COUNT(*) as c FROM sales').get().c,
+  });
+});
 
 app.get('/api/settings', (req, res) => {
   const db = getDB();

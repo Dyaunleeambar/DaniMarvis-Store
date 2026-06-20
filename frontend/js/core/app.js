@@ -2,6 +2,7 @@ import { route, initRouter, navigate } from './router.js';
 import { ROUTE_TITLES } from './config.js';
 import { initDB } from '../db/indexeddb.js';
 import { auth } from '../services/index.js';
+import { api } from '../db/api.js';
 
 import { render as renderDashboard } from '../views/dashboardView.js';
 import { render as renderProducts } from '../views/productsView.js';
@@ -110,6 +111,19 @@ function updateSidebar() {
   document.getElementById('sidebar-user').textContent = user ? user.name : 'Invitado';
 }
 
+export async function refreshSidebarCounts() {
+  if (!auth.isLoggedIn()) return;
+  try {
+    const counts = await api.getCounts();
+    for (const [key, value] of Object.entries(counts)) {
+      const el = document.querySelector(`[data-count="${key}"]`);
+      if (el) el.textContent = value;
+    }
+  } catch (err) {
+    console.warn('[Sidebar] No se pudieron cargar los contadores:', err.message);
+  }
+}
+
 function updateActiveLink(hash) {
   document.querySelectorAll('.sidebar-link').forEach(link => {
     link.classList.remove('sidebar-link--active');
@@ -162,6 +176,7 @@ async function bootstrap() {
   window.addEventListener('routeChanged', (e) => {
     updateActiveLink(e.detail.hash);
     updatePageTitle(e.detail.path);
+    refreshSidebarCounts();
   });
 
   document.getElementById('sidebar-toggle').addEventListener('click', () => {
@@ -182,9 +197,11 @@ async function bootstrap() {
 
   window.addEventListener('authChanged', () => {
     updateSidebar();
+    refreshSidebarCounts();
   });
 
   updateSidebar();
+  if (auth.isLoggedIn()) refreshSidebarCounts();
 
   loading.classList.add('hidden');
   if (!auth.isLoggedIn()) {

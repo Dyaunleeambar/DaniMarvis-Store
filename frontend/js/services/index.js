@@ -2,6 +2,30 @@ import { api } from '../db/api.js';
 import { dbGetAll, dbPutAll, dbClear, getCacheTime, setCacheTime } from '../db/indexeddb.js';
 
 const CACHE_TTL = 5 * 60 * 1000; // 5 min
+const PRODUCTS_CACHE_KEY = 'products:all';
+const PRODUCTS_STORE = 'products';
+
+export async function fetchProducts() {
+  try {
+    const data = await api.getProducts();
+    await dbClear(PRODUCTS_STORE);
+    if (data.length) await dbPutAll(PRODUCTS_STORE, data);
+    await setCacheTime(PRODUCTS_CACHE_KEY);
+    await setCacheTime('products', 0);
+    return data;
+  } catch (err) {
+    const cached = await dbGetAll(PRODUCTS_STORE);
+    if (cached.length > 0) return cached;
+    throw err;
+  }
+}
+
+export function invalidateProductsCache() {
+  return Promise.all([
+    invalidateCache(PRODUCTS_CACHE_KEY),
+    invalidateCache('products'),
+  ]);
+}
 
 export const auth = {
   getUser() {

@@ -1,5 +1,5 @@
 import { api } from '../db/api.js';
-import { openModal, closeModal, showToast, confirmDialog } from '../core/app.js';
+import { openModal, closeModal, showToast, confirmDialog, refreshSidebarCounts } from '../core/app.js';
 import { formatUSD, formatMN, formatDate, generateId } from '../utils/utils.js';
 
 let currentContainer = null;
@@ -335,6 +335,7 @@ window._openSaleForm = function(sale) {
         showToast('Venta registrada', 'success');
       }
       closeModal();
+      refreshSidebarCounts();
       render(currentContainer);
     } catch (err) {
       showToast(err.message, 'error');
@@ -357,6 +358,7 @@ window._deleteSale = async function(id) {
   try {
     await api.deleteSale(id);
     showToast('Venta eliminada', 'success');
+    refreshSidebarCounts();
     render(currentContainer);
   } catch (err) {
     showToast(err.message, 'error');

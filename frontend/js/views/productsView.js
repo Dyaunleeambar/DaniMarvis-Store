@@ -1,37 +1,71 @@
 import { api } from '../db/api.js';
-import { loadCached, invalidateCache } from '../services/index.js';
+import { fetchProducts, invalidateProductsCache } from '../services/index.js';
 import { formatUSD, debounce, generateId } from '../utils/utils.js';
-import { openModal, closeModal, setModalCloseGuard, showToast, confirmDialog } from '../core/app.js';
+import { openModal, closeModal, setModalCloseGuard, showToast, confirmDialog, refreshSidebarCounts } from '../core/app.js';
 
 let currentContainer = null;
 let currentFilter = {};
-let currentProducts = [];
+let allProducts = [];
 let currentProviders = [];
+let currentCategories = [];
+
+function categoryOptions(selected = '') {
+  return currentCategories.map(c =>
+    `<option value="${escAttr(c.name)}" ${selected === c.name ? 'selected' : ''}>${escAttr(c.name)}</option>`
+  ).join('');
+}
+
+function filterProducts(products, filter) {
+  return products.filter(p => {
+    if (filter.category && p.category !== filter.category) return false;
+    if (filter.status && p.status !== filter.status) return false;
+    if (filter.q) {
+      const q = filter.q.toLowerCase();
+      const name = (p.name || '').toLowerCase();
+      const desc = (p.description || '').toLowerCase();
+      if (!name.includes(q) && !desc.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function hasActiveFilter(filter) {
+  return !!(filter.q || filter.category || filter.status);
+}
+
+function escAttr(str) {
+  return String(str ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
 
 export async function render(container) {
   currentContainer = container;
   container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-secondary)">Cargando productos...</div>';
 
   try {
-    const [products, providers] = await Promise.all([
-      loadCached('products', () => api.getProducts(currentFilter), 'products'),
+    const [products, providers, categories] = await Promise.all([
+      fetchProducts(),
       api.getProviders(),
+      api.getCategories(),
     ]);
-    currentProducts = products;
+    allProducts = products;
     currentProviders = providers;
-    renderTable(container, products, providers);
+    currentCategories = categories;
+    renderTable(container, filterProducts(allProducts, currentFilter), providers);
   } catch (err) {
     container.innerHTML = `<div class="empty-state"><h3>Error</h3><p>${err.message}</p></div>`;
   }
 }
 
 function renderTable(container, products, providers) {
+  const filtered = hasActiveFilter(currentFilter);
   container.innerHTML = `
     <div class="page">
       <div class="page-header">
         <div>
           <h1>Productos</h1>
-          <p>${products.length} producto(s) registrados</p>
+          <p>${filtered
+            ? `${products.length} producto(s) encontrados de ${allProducts.length}`
+            : `${products.length} producto(s) registrados`}</p>
         </div>
         <button class="btn btn--primary" onclick="window._openProductForm(null)">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -40,21 +74,15 @@ function renderTable(container, products, providers) {
       </div>
 
       <div class="filter-bar">
-        <input type="text" id="filter-search" class="form-control" placeholder="Buscar producto..." />
+        <input type="text" id="filter-search" class="form-control" placeholder="Buscar producto..." value="${escAttr(currentFilter.q)}" />
         <select id="filter-category" class="form-control form-control--small">
           <option value="">Todas las categorías</option>
-          <option value="Electrodomésticos">Electrodomésticos</option>
-          <option value="Cocina">Cocina</option>
-          <option value="Hogar">Hogar</option>
-          <option value="Energía">Energía</option>
-          <option value="Climatización">Climatización</option>
-          <option value="Tecnología">Tecnología</option>
-          <option value="Otro">Otro</option>
+          ${categoryOptions(currentFilter.category)}
         </select>
         <select id="filter-status" class="form-control form-control--small">
           <option value="">Todos los estados</option>
-          <option value="active">Activos</option>
-          <option value="archived">Archivados</option>
+          <option value="active" ${currentFilter.status === 'active' ? 'selected' : ''}>Activos</option>
+          <option value="archived" ${currentFilter.status === 'archived' ? 'selected' : ''}>Archivados</option>
         </select>
       </div>
 
@@ -75,7 +103,7 @@ function renderTable(container, products, providers) {
             </thead>
             <tbody>
               ${products.length === 0
-                ? `<tr><td colspan="8"><div class="empty-state" style="padding:32px"><h3>No hay productos</h3><p>Crea tu primer producto para comenzar</p></div></td></tr>`
+                ? `<tr><td colspan="8"><div class="empty-state" style="padding:32px"><h3>${filtered ? 'Sin resultados' : 'No hay productos'}</h3><p>${filtered ? 'Prueba con otros filtros o términos de búsqueda' : 'Crea tu primer producto para comenzar'}</p></div></td></tr>`
                 : products.map(p => `
                   <tr>
                     <td>
@@ -124,11 +152,20 @@ function renderTable(container, products, providers) {
   const statusSelect = document.getElementById('filter-status');
 
   const applyFilters = debounce(() => {
+    const searchHadFocus = document.activeElement === searchInput;
+    const cursorPos = searchHadFocus ? searchInput.selectionStart : 0;
+
     currentFilter = {};
-    if (searchInput.value) currentFilter.q = searchInput.value;
+    if (searchInput.value.trim()) currentFilter.q = searchInput.value.trim();
     if (catSelect.value) currentFilter.category = catSelect.value;
     if (statusSelect.value) currentFilter.status = statusSelect.value;
-    render(currentContainer);
+    renderTable(currentContainer, filterProducts(allProducts, currentFilter), currentProviders);
+
+    if (searchHadFocus) {
+      const input = document.getElementById('filter-search');
+      input.focus();
+      input.setSelectionRange(cursorPos, cursorPos);
+    }
   });
 
   searchInput.addEventListener('input', applyFilters);
@@ -160,9 +197,7 @@ window._openProductForm = function(product) {
           <label>Categoría</label>
           <select name="category" class="form-control">
             <option value="">Seleccionar</option>
-            ${['Electrodomésticos','Cocina','Hogar','Energía','Climatización','Tecnología','Otro'].map(c =>
-              `<option value="${c}" ${product?.category === c ? 'selected' : ''}>${c}</option>`
-            ).join('')}
+            ${categoryOptions(product?.category)}
           </select>
         </div>
       </div>
@@ -234,8 +269,9 @@ window._openProductForm = function(product) {
         await api.createProduct(data);
         showToast('Producto creado', 'success');
       }
-      await invalidateCache('products');
+      await invalidateProductsCache();
       closeModal(true);
+      refreshSidebarCounts();
       render(currentContainer);
     } catch (err) {
       showToast(err.message, 'error');
@@ -262,7 +298,8 @@ window._deleteProduct = async function(id) {
   try {
     await api.deleteProduct(id);
     showToast('Producto eliminado', 'success');
-    await invalidateCache('products');
+    await invalidateProductsCache();
+    refreshSidebarCounts();
     render(currentContainer);
   } catch (err) {
     showToast(err.message, 'error');

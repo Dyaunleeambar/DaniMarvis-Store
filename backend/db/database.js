@@ -1,5 +1,6 @@
 import initSqlJs from 'sql.js';
 import fs from 'fs';
+import { v4 as uuid } from 'uuid';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
@@ -59,13 +60,14 @@ export async function initDB() {
   }
 
   db.exec('PRAGMA foreign_keys = ON;');
+
+  // Wrap db.prepare before schema/seed so Statement.all() is available
+  const orig = db.prepare.bind(db);
+  db.prepare = (sql) => new Statement(orig(sql));
+
   createSchema();
   seedIfEmpty();
   saveDB();
-
-  // Wrap db.prepare to return Statement
-  const orig = db.prepare.bind(db);
-  db.prepare = (sql) => new Statement(orig(sql));
 }
 
 export function getDB() {
@@ -138,7 +140,36 @@ function createSchema() {
       exchange_rate REAL NOT NULL DEFAULT 61000,
       updated_at TEXT DEFAULT (datetime('now'))
     );
+    CREATE TABLE IF NOT EXISTS categories (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      sort_order INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
   `);
+  seedCategories();
+}
+
+const DEFAULT_CATEGORIES = [
+  'Electrodomésticos', 'Cocina', 'Hogar', 'Energía', 'Climatización', 'Tecnología', 'Otro'
+];
+
+function seedCategories() {
+  const existing = db.prepare('SELECT COUNT(*) as c FROM categories').get();
+  if (existing.c === 0) {
+    DEFAULT_CATEGORIES.forEach((name, i) => {
+      db.run('INSERT INTO categories (id, name, sort_order) VALUES (?, ?, ?)', [uuid(), name, i]);
+    });
+  }
+
+  const orphans = db.prepare(`
+    SELECT DISTINCT category as name FROM products
+    WHERE category != '' AND category NOT IN (SELECT name FROM categories)
+  `).all();
+  orphans.forEach((row, i) => {
+    db.run('INSERT OR IGNORE INTO categories (id, name, sort_order) VALUES (?, ?, ?)',
+      [uuid(), row.name, 100 + i]);
+  });
 }
 
 function seedIfEmpty() {

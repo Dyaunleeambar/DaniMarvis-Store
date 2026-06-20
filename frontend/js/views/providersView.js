@@ -1,5 +1,5 @@
 import { api } from '../db/api.js';
-import { openModal, closeModal, showToast, confirmDialog } from '../core/app.js';
+import { openModal, closeModal, showToast, confirmDialog, refreshSidebarCounts } from '../core/app.js';
 
 let currentContainer = null;
 let currentProviders = [];
@@ -136,6 +136,7 @@ window._openProviderForm = function(provider) {
         showToast('Proveedor creado', 'success');
       }
       closeModal();
+      refreshSidebarCounts();
       render(currentContainer);
     } catch (err) {
       showToast(err.message, 'error');
@@ -158,6 +159,7 @@ window._deleteProvider = async function(id) {
   try {
     await api.deleteProvider(id);
     showToast('Proveedor eliminado', 'success');
+    refreshSidebarCounts();
     render(currentContainer);
   } catch (err) {
     showToast(err.message, 'error');

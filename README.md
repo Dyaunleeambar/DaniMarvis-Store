@@ -150,7 +150,8 @@ DaniMarvisStore/
 │   └── routes/
 │       ├── products.js        # CRUD productos
 │       ├── providers.js       # CRUD proveedores
-│       └── sales.js           # CRUD ventas
+│       ├── sales.js           # CRUD ventas
+│       └── categories.js      # CRUD categorías
 │
 ├── frontend/
 │   ├── index.html             # Shell SPA: sidebar, modal, confirmación apilada, toast
@@ -167,7 +168,7 @@ DaniMarvisStore/
 │       │   ├── api.js         # Cliente HTTP para API REST
 │       │   └── indexeddb.js   # Caché offline con IndexedDB
 │       ├── services/
-│       │   └── index.js       # Auth, caché (loadCached / invalidateCache)
+│       │       └── index.js       # Auth, caché + invalidación de productos
 │       ├── utils/
 │       │   ├── utils.js       # formatCurrency, fechas, IDs
 │       │   └── imageGenerator.js  # Motor Canvas para imágenes
@@ -211,14 +212,13 @@ Response: { "user": {...}, "token": "..." }
 
 ```json
 {
-  "name": "Licuadora Pro 3000",
-  "price": 85.00,
+  "name": "Nevera 3.5 Pies Milexus",
+  "price": 189.99,
   "category": "Electrodomésticos",
   "commission_type": "fixed",
-  "commission_value": 5.00,
-  "warranty": "1 año",
-  "provider_id": null,
-  "stock": 10
+  "commission_value": 10,
+  "warranty": "3 meses",
+  "stock": 5
 }
 ```
 
@@ -245,11 +245,28 @@ Response: { "user": {...}, "token": "..." }
 | `PATCH` | `/api/sales/:id/status` | Actualizar solo estado (`delivery_status`, `commission_paid`) |
 | `DELETE` | `/api/sales/:id` | Eliminar venta |
 
+### Categorías
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/categories` | Listar categorías ordenadas |
+| `POST` | `/api/categories` | Crear categoría |
+| `PUT` | `/api/categories/:id` | Renombrar (actualiza productos asociados) |
+| `DELETE` | `/api/categories/:id` | Eliminar (solo si no tiene productos) |
+
+> Las 7 categorías por defecto se crean al inicializar la BD. Las categorías huérfanas de productos existentes se importan automáticamente.
+
 ### Dashboard
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
 | `GET` | `/api/dashboard` | Estadísticas: totales, ventas mensuales, top productos, tipo de cambio |
+
+### Conteos
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/counts` | Conteo de productos, proveedores y ventas para la barra lateral |
 
 ### Configuración
 
@@ -283,9 +300,11 @@ El frontend es una **SPA** (Single Page Application) construida con JavaScript v
 - **Diálogos de confirmación** (`confirmDialog`) para eliminar registros o descartar cambios sin guardar
 - **Protección de formularios** — al cerrar el modal de productos con datos modificados se pide confirmación
 - **Sidebar responsive** — se colapsa en móvil
-- **Caché offline** con IndexedDB (TTL 5 min en listado de productos)
+- **Sidebar con conteos en vivo** — muestra cantidad de productos, proveedores y ventas, se actualiza al navegar o tras crear/eliminar
+- **Caché offline** con IndexedDB y función dedicada `fetchProducts()` que evita datos obsoletos
 - **Invalidación de caché** automática al crear, editar o eliminar productos
-- **Filtros en tiempo real** en productos y ventas
+- **Categorías dinámicas** desde el servidor — el formulario de productos y los filtros se alimentan de `GET /api/categories`
+- **Filtros en tiempo real** en productos (con preservación de foco en el campo de búsqueda)
 - **Cálculo automático** de comisiones al registrar ventas
 
 ---
@@ -309,7 +328,7 @@ El generador produce imágenes **1080×1080px** (formato estándar para Facebook
 │       $ 2.500.000            │  ← Precio destacado (rose)
 │                              │
 │  ┌────────────────────────┐  │
-│  │ Comisión: 8% │ Garantía│  │  ← Barra oscura
+│  │ Comisión: $10 USD │ Gtía│  │  ← Barra oscura
 │  └────────────────────────┘  │
 │                              │
 │   📲 Escríbeme y llévate     │

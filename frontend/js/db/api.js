@@ -60,6 +60,13 @@ export const api = {
 
   // Dashboard
   getDashboard: () => request('GET', '/dashboard'),
+  getCounts: () => request('GET', '/counts'),
+
+  // Categories
+  getCategories: () => request('GET', '/categories'),
+  createCategory: (data) => request('POST', '/categories', data),
+  updateCategory: (id, data) => request('PUT', `/categories/${id}`, data),
+  deleteCategory: (id) => request('DELETE', `/categories/${id}`),
 
   // Settings
   getSettings: () => request('GET', '/settings'),
