@@ -296,8 +296,8 @@ window._deleteProduct = async function(id) {
   const ok = await confirmDialog('¿Eliminar este producto? Esta acción no se puede deshacer.');
   if (!ok) return;
   try {
-    await api.deleteProduct(id);
-    showToast('Producto eliminado', 'success');
+    const res = await api.deleteProduct(id);
+    showToast(res.message, 'success');
     await invalidateProductsCache();
     refreshSidebarCounts();
     render(currentContainer);

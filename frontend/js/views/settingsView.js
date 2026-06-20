@@ -1,5 +1,5 @@
 import { api } from '../db/api.js';
-import { showToast, confirmDialog, openModal, closeModal } from '../core/app.js';
+import { showToast, confirmDialog, openModal, closeModal, setModalCloseGuard } from '../core/app.js';
 
 let currentContainer = null;
 let currentSettings = null;
@@ -150,7 +150,19 @@ function openCategoryForm(id = null, name = '') {
     </form>
   `);
 
-  document.getElementById('category-form').addEventListener('submit', async (e) => {
+  const form = document.getElementById('category-form');
+  const initialSnapshot = snapshotForm(form);
+
+  setModalCloseGuard(async () => {
+    if (snapshotForm(form) === initialSnapshot) return true;
+    return confirmDialog('¿Descartar los cambios sin guardar?', {
+      title: 'Cambios sin guardar',
+      confirmText: 'Descartar',
+      danger: true,
+    });
+  });
+
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const trimmed = new FormData(e.target).get('name').trim();
     if (!trimmed) {
@@ -190,6 +202,10 @@ async function deleteCategory(id, name) {
   } catch (err) {
     showToast(err.message, 'error');
   }
+}
+
+function snapshotForm(form) {
+  return JSON.stringify(Object.fromEntries(new FormData(form)));
 }
 
 function escHtml(str) {
