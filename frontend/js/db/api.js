@@ -76,6 +76,29 @@ export const api = {
   getSettings: () => request('GET', '/settings'),
   updateSettings: (data) => request('PUT', '/settings', data),
 
+  // Upload
+  uploadImage: async (file) => {
+    const formData = new FormData();
+    formData.append('image', file);
+    const token = sessionStorage.getItem('dm_token');
+    const res = await fetch(`${API_BASE}/upload`, {
+      method: 'POST',
+      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+      body: formData,
+    });
+    if (res.status === 401) {
+      sessionStorage.removeItem('dm_user');
+      sessionStorage.removeItem('dm_token');
+      window.location.hash = '#/login';
+      throw new Error('Sesión expirada');
+    }
+    const text = await res.text();
+    let data;
+    try { data = text ? JSON.parse(text) : {}; } catch { throw new Error('Error al subir imagen'); }
+    if (!res.ok) throw new Error(data.error || 'Error al subir imagen');
+    return data;
+  },
+
   // Auth
   login: (username, password) => request('POST', '/login', { username, password }),
 };

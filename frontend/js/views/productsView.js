@@ -33,8 +33,16 @@ function hasActiveFilter(filter) {
   return !!(filter.q || filter.category || filter.status);
 }
 
+function escHtml(str) {
+  return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 function escAttr(str) {
   return String(str ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+function formatDescription(text) {
+  const parts = text.split(/\s*(?:💥|🔹|•|\n)\s*/).filter(Boolean);
+  if (parts.length <= 1) return escHtml(text);
+  return parts.map(p => `<div class="desc-line">${escHtml(p)}</div>`).join('');
 }
 
 export async function render(container) {
@@ -108,16 +116,16 @@ function renderTable(container, products, providers) {
                   <tr>
                     <td>
                       <div style="display:flex;align-items:center;gap:10px">
-                        ${p.image_url
-                          ? `<img src="${p.image_url}" alt="" style="width:36px;height:36px;object-fit:cover;border-radius:4px;background:var(--bg)" />`
+                        ${p.images?.[0]
+                          ? `<img src="${p.images[0]}" alt="" style="width:36px;height:36px;object-fit:cover;border-radius:4px;background:var(--bg)" />`
                           : `<div style="width:36px;height:36px;border-radius:4px;background:var(--bg);display:flex;align-items:center;justify-content:center;color:var(--text-muted)">
                               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
                             </div>`
                         }
-                        <div>
-                          <div style="font-weight:600;font-size:.88rem">${p.name}</div>
-                          ${p.warranty ? `<div style="font-size:.72rem;color:var(--text-muted)">Garantía: ${p.warranty}</div>` : ''}
-                        </div>
+                          <div>
+                            <div style="font-weight:600;font-size:.88rem;cursor:pointer;color:var(--rose)" onclick="window._viewProduct('${p.id}')">${p.name}</div>
+                            ${p.warranty ? `<div style="font-size:.72rem;color:var(--text-muted)">Garantía: ${p.warranty}</div>` : ''}
+                          </div>
                       </div>
                     </td>
                     <td><span style="font-size:.82rem">${p.category || '—'}</span></td>
@@ -231,9 +239,31 @@ window._openProductForm = function(product) {
           <input type="number" name="stock" class="form-control" value="${product?.stock || 0}" min="0" />
         </div>
         <div class="form-group">
-          <label>URL de imagen</label>
-          <input type="url" name="image_url" class="form-control" placeholder="https://..." value="${product?.image_url || ''}" />
+          <label>Imágenes</label>
+          <div id="product-images-thumbs" class="image-thumbnails">
+            ${(product?.images || []).map(url =>
+              `<div class="img-thumb" data-url="${escAttr(url)}">
+                <img src="${escAttr(url)}" alt="" />
+                <button type="button" class="img-thumb-remove" data-url="${escAttr(url)}">&times;</button>
+              </div>`
+            ).join('')}
+          </div>
+          <div class="image-input-row">
+            <input type="text" id="product-image-url-input" class="form-control" placeholder="https://..." />
+            <button type="button" class="btn btn--secondary btn--sm" id="btn-add-image-url">Agregar</button>
+            <label class="btn btn--secondary btn--sm" style="cursor:pointer;margin:0">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              Subir
+              <input type="file" accept="image/*" id="product-image-file" style="display:none" />
+            </label>
+          </div>
+          <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">Agregá URLs o subí archivos. La primera imagen es la principal.</small>
         </div>
+      </div>
+      <div class="form-group">
+        <label>URL de referencia (ficha del producto)</label>
+        <input type="url" name="image_url" class="form-control" placeholder="https://..." value="${product?.image_url || ''}" />
+        <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">Enlace a la página web con la descripción completa del producto</small>
       </div>
       <div class="form-actions">
         <button type="button" class="btn btn--secondary" onclick="closeModal()">Cancelar</button>
@@ -254,11 +284,67 @@ window._openProductForm = function(product) {
     });
   });
 
+  const productImages = product?.images ? [...product.images] : [];
+  const thumbsContainer = document.getElementById('product-images-thumbs');
+  const fileInput = document.getElementById('product-image-file');
+  const urlInput = document.getElementById('product-image-url-input');
+  const addUrlBtn = document.getElementById('btn-add-image-url');
+
+  function renderThumbs() {
+    thumbsContainer.innerHTML = productImages.map(url =>
+      `<div class="img-thumb" data-url="${escAttr(url)}">
+        <img src="${escAttr(url)}" alt="" />
+        <button type="button" class="img-thumb-remove" data-url="${escAttr(url)}">&times;</button>
+      </div>`
+    ).join('');
+    thumbsContainer.querySelectorAll('.img-thumb-remove').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const idx = productImages.indexOf(btn.dataset.url);
+        if (idx !== -1) productImages.splice(idx, 1);
+        renderThumbs();
+      });
+    });
+  }
+
+  addUrlBtn?.addEventListener('click', () => {
+    const url = urlInput.value.trim();
+    if (!url) return;
+    productImages.push(url);
+    urlInput.value = '';
+    renderThumbs();
+  });
+
+  urlInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addUrlBtn?.click();
+    }
+  });
+
+  fileInput?.addEventListener('change', async () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+    try {
+      fileInput.disabled = true;
+      const res = await api.uploadImage(file);
+      productImages.push(res.url);
+      renderThumbs();
+      showToast('Imagen subida', 'success');
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      fileInput.disabled = false;
+      fileInput.value = '';
+    }
+  });
+
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const data = Object.fromEntries(new FormData(e.target));
+    const fd = new FormData(e.target);
+    const data = Object.fromEntries(fd);
     data.commission_type = 'fixed';
     data.commission_value = parseFloat(data.commission_value) || 0;
+    data.images = productImages;
 
     try {
       if (product) {
@@ -290,6 +376,148 @@ window._editProduct = async function(id) {
   } catch (err) {
     showToast('Error al cargar producto', 'error');
   }
+};
+
+window._viewProduct = async function(id) {
+  try {
+    const p = await api.getProduct(id);
+    const images = p.images?.length ? p.images : [];
+    openModal(`
+      <div class="modal-header">
+        <h2>${escHtml(p.name)}</h2>
+        <button class="modal-close" onclick="closeModal()">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="product-detail">
+        <div class="product-detail-gallery">
+          ${images.length > 0
+            ? `
+              <div class="gallery-main">
+                <img src="${escAttr(images[0])}" alt="${escAttr(p.name)}" id="gallery-main-img" />
+              </div>
+              ${images.length > 1 ? `
+                <div class="gallery-thumbs" id="gallery-thumbs">
+                  ${images.map((url, i) =>
+                    `<img src="${escAttr(url)}" alt="" class="gallery-thumb${i === 0 ? ' active' : ''}" data-index="${i}" />`
+                  ).join('')}
+                </div>
+              ` : ''}
+            `
+            : `<div class="product-detail-image--empty" style="width:100%;padding:48px;text-align:center">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin:0 auto 8px"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+                <span style="color:var(--text-muted);font-size:.85rem">Sin imagen</span>
+              </div>`
+          }
+        </div>
+        <div class="product-detail-info">
+          <div class="detail-row">
+            <span class="detail-label">Precio</span>
+            <span class="detail-value">${formatUSD(p.price)}</span>
+          </div>
+          ${p.category ? `<div class="detail-row"><span class="detail-label">Categoría</span><span class="detail-value">${escHtml(p.category)}</span></div>` : ''}
+          ${p.description ? `<div class="detail-row detail-row--col"><span class="detail-label">Descripción</span><div class="detail-text">${formatDescription(p.description)}</div></div>` : ''}
+          <div class="detail-row">
+            <span class="detail-label">Comisión</span>
+            <span class="detail-value">${p.commission_value > 0 ? formatUSD(p.commission_value) + ' / ud.' : '—'}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Stock</span>
+            <span class="detail-value">${p.stock}</span>
+          </div>
+          ${p.provider_name ? `<div class="detail-row"><span class="detail-label">Proveedor</span><span class="detail-value">${escHtml(p.provider_name)}</span></div>` : ''}
+          ${p.warranty ? `<div class="detail-row"><span class="detail-label">Garantía</span><span class="detail-value">${escHtml(p.warranty)}</span></div>` : ''}
+          <div class="detail-row">
+            <span class="detail-label">Estado</span>
+            <span class="detail-value"><span class="badge badge--${p.status === 'active' ? 'active' : 'archived'}">${p.status}</span></span>
+          </div>
+          ${p.image_url ? `<div class="detail-row">
+            <span class="detail-label">Ficha</span>
+            <span class="detail-value"><a href="${escAttr(p.image_url)}" target="_blank" rel="noopener" class="btn btn--sm btn--primary" style="display:inline-flex">Ver ficha completa</a></span>
+          </div>` : ''}
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn--secondary" onclick="closeModal()">Cerrar</button>
+      </div>
+    `);
+
+    setModalCloseGuard(null);
+
+    const galleryImg = document.getElementById('gallery-main-img');
+    if (galleryImg) {
+      galleryImg.addEventListener('click', () => {
+        if (!images.length) return;
+        const currentSrc = galleryImg.getAttribute('src');
+        const idx = images.indexOf(currentSrc);
+        window._openLightbox(images, idx >= 0 ? idx : 0);
+      });
+
+      const thumbs = document.querySelectorAll('.gallery-thumb');
+      thumbs.forEach(thumb => {
+        thumb.addEventListener('click', () => {
+          const idx = parseInt(thumb.dataset.index);
+          galleryImg.style.opacity = '0';
+          setTimeout(() => {
+            galleryImg.setAttribute('src', images[idx]);
+            galleryImg.style.opacity = '1';
+          }, 120);
+          thumbs.forEach(t => t.classList.remove('active'));
+          thumb.classList.add('active');
+        });
+      });
+    }
+  } catch (err) {
+    showToast('Error al cargar producto', 'error');
+  }
+};
+
+window._openLightbox = function(images, startIdx = 0) {
+  let currentIdx = startIdx;
+  const overlay = document.createElement('div');
+  overlay.className = 'lightbox-overlay';
+  overlay.innerHTML = `
+    <button class="lightbox-close">&times;</button>
+    ${images.length > 1 ? '<button class="lightbox-nav lightbox-prev">&lsaquo;</button><button class="lightbox-nav lightbox-next">&rsaquo;</button>' : ''}
+    <div class="lightbox-image-wrap">
+      <img src="${escAttr(images[currentIdx])}" alt="" class="lightbox-image" />
+    </div>
+    <div class="lightbox-counter">${currentIdx + 1} / ${images.length}</div>
+  `;
+
+  const img = overlay.querySelector('.lightbox-image');
+  const counter = overlay.querySelector('.lightbox-counter');
+
+  function destroy() {
+    overlay.remove();
+    document.body.style.overflow = '';
+    document.removeEventListener('keydown', onKey);
+  }
+
+  function showImage(i) {
+    currentIdx = i;
+    img.src = images[currentIdx];
+    if (counter) counter.textContent = `${currentIdx + 1} / ${images.length}`;
+  }
+
+  function onKey(e) {
+    if (e.key === 'Escape') destroy();
+    if (e.key === 'ArrowLeft') showImage((currentIdx - 1 + images.length) % images.length);
+    if (e.key === 'ArrowRight') showImage((currentIdx + 1) % images.length);
+  }
+
+  const prev = overlay.querySelector('.lightbox-prev');
+  const next = overlay.querySelector('.lightbox-next');
+  if (prev) prev.addEventListener('click', (e) => { e.stopPropagation(); showImage((currentIdx - 1 + images.length) % images.length); });
+  if (next) next.addEventListener('click', (e) => { e.stopPropagation(); showImage((currentIdx + 1) % images.length); });
+
+  overlay.addEventListener('click', destroy);
+  img.addEventListener('click', (e) => e.stopPropagation());
+  overlay.querySelector('.lightbox-close')?.addEventListener('click', destroy);
+
+  document.addEventListener('keydown', onKey);
+  document.body.appendChild(overlay);
+  document.body.style.overflow = 'hidden';
 };
 
 window._deleteProduct = async function(id) {

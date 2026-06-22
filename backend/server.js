@@ -1,7 +1,10 @@
 import express from 'express';
 import cors from 'cors';
+import multer from 'multer';
 import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { dirname, join, extname } from 'path';
+import { existsSync, mkdirSync } from 'fs';
+import { v4 as uuid } from 'uuid';
 import { initDB, getDB } from './db/database.js';
 import productsRouter from './routes/products.js';
 import providersRouter from './routes/providers.js';
@@ -15,9 +18,29 @@ const __dirname = dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3456;
 
+const uploadsDir = join(__dirname, 'uploads');
+if (!existsSync(uploadsDir)) mkdirSync(uploadsDir, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: uploadsDir,
+  filename: (req, file, cb) => {
+    cb(null, uuid() + (extname(file.originalname) || '.jpg'));
+  }
+});
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+    if (allowed.includes(extname(file.originalname).toLowerCase())) return cb(null, true);
+    cb(new Error('Solo se permiten imágenes (jpg, png, gif, webp)'));
+  }
+});
+
 app.use(cors());
 app.use(express.json());
 app.use(express.static(join(__dirname, '..', 'frontend')));
+app.use('/uploads', express.static(uploadsDir));
 
 function authMiddleware(req, res, next) {
   if (req.path === '/login') return next();
@@ -44,6 +67,17 @@ app.use('/api/providers', providersRouter);
 app.use('/api/sales', salesRouter);
 app.use('/api/categories', categoriesRouter);
 app.use('/api/backup', backupRouter);
+
+app.post('/api/upload', (req, res) => {
+  upload.single('image')(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'La imagen no puede superar los 5MB' : err.message });
+    }
+    if (err) return res.status(400).json({ error: err.message });
+    if (!req.file) return res.status(400).json({ error: 'No se seleccionó ningún archivo' });
+    res.json({ url: `/uploads/${req.file.filename}` });
+  });
+});
 
 app.get('/api/counts', (req, res) => {
   const db = getDB();

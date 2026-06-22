@@ -67,6 +67,7 @@ export async function initDB() {
 
   createSchema();
   seedIfEmpty();
+  migrateImages();
   saveDB();
 }
 
@@ -170,6 +171,18 @@ function seedCategories() {
     db.run('INSERT OR IGNORE INTO categories (id, name, sort_order) VALUES (?, ?, ?)',
       [uuid(), row.name, 100 + i]);
   });
+}
+
+function migrateImages() {
+  try {
+    db.exec("ALTER TABLE products ADD COLUMN images TEXT DEFAULT '[]'");
+  } catch (_) {}
+  const toMigrate = db.prepare(
+    "SELECT id, image_url FROM products WHERE image_url IS NOT NULL AND image_url != '' AND (images IS NULL OR images = '[]' OR images = '[]')"
+  ).all();
+  for (const row of toMigrate) {
+    db.prepare("UPDATE products SET images = ? WHERE id = ?").run(JSON.stringify([row.image_url]), row.id);
+  }
 }
 
 function seedIfEmpty() {

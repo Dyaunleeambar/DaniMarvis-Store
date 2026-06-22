@@ -4,5 +4,7 @@ node_modules/
 *.db-wal
 .env
 dist/
+backend/uploads/*
+!backend/uploads/.gitkeep
 dist2/
 dist3/

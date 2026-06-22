@@ -4,6 +4,19 @@ import { getDB } from '../db/database.js';
 
 const router = Router();
 
+function normalizeProduct(p) {
+  if (!p) return null;
+  try { p.images = JSON.parse(p.images || '[]'); } catch { p.images = []; }
+  if (!p.images.length && p.image_url) {
+    p.images = [p.image_url];
+  }
+  return p;
+}
+
+function imagesJson(images) {
+  return JSON.stringify(Array.isArray(images) ? images.filter(Boolean) : []);
+}
+
 router.get('/', (req, res) => {
   const db = getDB();
   const { category, status, provider_id, q } = req.query;
@@ -21,7 +34,7 @@ router.get('/', (req, res) => {
   if (conditions.length) sql += ' WHERE ' + conditions.join(' AND ');
   sql += ' ORDER BY p.created_at DESC';
 
-  const products = db.prepare(sql).all(...params);
+  const products = db.prepare(sql).all(...params).map(normalizeProduct);
   res.json(products);
 });
 
@@ -31,12 +44,12 @@ router.get('/:id', (req, res) => {
     FROM products p LEFT JOIN providers pr ON pr.id = p.provider_id
     WHERE p.id = ?`).get(req.params.id);
   if (!product) return res.status(404).json({ error: 'Producto no encontrado' });
-  res.json(product);
+  res.json(normalizeProduct(product));
 });
 
 router.post('/', (req, res) => {
   const db = getDB();
-  const { name, description, category, price, commission_type, commission_value, warranty, provider_id, image_url, stock, status } = req.body;
+  const { name, description, category, price, commission_type, commission_value, warranty, provider_id, images, image_url, stock, status } = req.body;
 
   if (!name || price === undefined) {
     return res.status(400).json({ error: 'Nombre y precio son obligatorios' });
@@ -47,20 +60,20 @@ router.post('/', (req, res) => {
     id, name, description: description || '', category: category || '',
     price, commission_type: commission_type || 'fixed',
     commission_value: parseFloat(commission_value) || 0, warranty: warranty || '',
-    provider_id: provider_id || null, image_url: image_url || '',
+    provider_id: provider_id || null, images: imagesJson(images), image_url: image_url || '',
     stock: stock || 0, status: status || 'active'
   };
 
   db.prepare(`INSERT INTO products (id, name, description, category, price,
-    commission_type, commission_value, warranty, provider_id, image_url, stock, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    commission_type, commission_value, warranty, provider_id, images, image_url, stock, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     product.id, product.name, product.description, product.category,
     product.price, product.commission_type, product.commission_value,
-    product.warranty, product.provider_id, product.image_url,
+    product.warranty, product.provider_id, product.images, product.image_url,
     product.stock, product.status
   );
 
-  res.status(201).json(product);
+  res.status(201).json(normalizeProduct(product));
 });
 
 router.put('/:id', (req, res) => {
@@ -68,7 +81,7 @@ router.put('/:id', (req, res) => {
   const existing = db.prepare('SELECT id FROM products WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Producto no encontrado' });
 
-  const { name, description, category, price, commission_type, commission_value, warranty, provider_id, image_url, stock, status } = req.body;
+  const { name, description, category, price, commission_type, commission_value, warranty, provider_id, images, image_url, stock, status } = req.body;
 
   if (!name || price === undefined || price === '') {
     return res.status(400).json({ error: 'Nombre y precio son obligatorios' });
@@ -77,7 +90,7 @@ router.put('/:id', (req, res) => {
   db.prepare(`UPDATE products SET
     name = ?, description = ?, category = ?, price = ?,
     commission_type = ?, commission_value = ?, warranty = ?,
-    provider_id = ?, image_url = ?, stock = ?, status = ?,
+    provider_id = ?, images = ?, image_url = ?, stock = ?, status = ?,
     updated_at = datetime('now')
     WHERE id = ?`).run(
     name,
@@ -88,6 +101,7 @@ router.put('/:id', (req, res) => {
     parseFloat(commission_value) || 0,
     warranty || '',
     provider_id || null,
+    imagesJson(images),
     image_url || '',
     parseInt(stock, 10) || 0,
     status || 'active',
@@ -97,7 +111,7 @@ router.put('/:id', (req, res) => {
   const updated = db.prepare(`SELECT p.*, pr.name as provider_name, pr.commission_rate as provider_commission_rate
     FROM products p LEFT JOIN providers pr ON pr.id = p.provider_id
     WHERE p.id = ?`).get(req.params.id);
-  res.json(updated);
+  res.json(normalizeProduct(updated));
 });
 
 router.delete('/:id', (req, res) => {
