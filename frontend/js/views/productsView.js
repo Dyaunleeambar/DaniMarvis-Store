@@ -265,6 +265,11 @@ window._openProductForm = function(product) {
         <input type="url" name="image_url" class="form-control" placeholder="https://..." value="${product?.image_url || ''}" />
         <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">Enlace a la página web con la descripción completa del producto</small>
       </div>
+      <div class="form-group">
+        <label>Texto de publicación</label>
+        <textarea name="publish_text" class="form-control" placeholder="Copiado para WhatsApp, Facebook, etc." style="min-height:120px">${escHtml(product?.publish_text || '')}</textarea>
+        <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">Texto formateado para compartir en redes o mensajería</small>
+      </div>
       <div class="form-actions">
         <button type="button" class="btn btn--secondary" onclick="closeModal()">Cancelar</button>
         <button type="submit" class="btn btn--primary">${product ? 'Guardar cambios' : 'Crear producto'}</button>
@@ -437,6 +442,10 @@ window._viewProduct = async function(id) {
           </div>` : ''}
         </div>
       </div>
+      ${p.publish_text ? `<div class="publish-text-section">
+        <div class="publish-text-label">Texto de publicación</div>
+        <div class="publish-text-content">${escHtml(p.publish_text)}</div>
+      </div>` : ''}
       <div class="form-actions">
         <button type="button" class="btn btn--secondary" onclick="closeModal()">Cerrar</button>
       </div>

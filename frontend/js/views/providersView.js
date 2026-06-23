@@ -4,6 +4,10 @@ import { openModal, closeModal, showToast, confirmDialog, refreshSidebarCounts }
 let currentContainer = null;
 let currentProviders = [];
 
+function escHtml(str) {
+  return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 export async function render(container) {
   currentContainer = container;
   container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-secondary)">Cargando proveedores...</div>';
@@ -39,7 +43,7 @@ function renderTable(container, providers) {
                 <th>Contacto</th>
                 <th>Teléfono</th>
                 <th>Email</th>
-                <th>Comisión %</th>
+                <th>Info</th>
                 <th>Productos</th>
                 <th style="width:80px"></th>
               </tr>
@@ -53,7 +57,7 @@ function renderTable(container, providers) {
                     <td>${p.contact || '—'}</td>
                     <td>${p.phone || '—'}</td>
                     <td>${p.email || '—'}</td>
-                    <td>${p.commission_rate > 0 ? p.commission_rate + '%' : '—'}</td>
+                    <td style="max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.info ? escHtml(p.info) : '—'}</td>
                     <td><span class="badge badge--${p.product_count > 0 ? 'active' : 'archived'}">${p.product_count}</span></td>
                     <td>
                       <div class="actions-cell">
@@ -101,15 +105,13 @@ window._openProviderForm = function(provider) {
           <input type="text" name="phone" class="form-control" value="${provider?.phone || ''}" />
         </div>
       </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label>Email</label>
-          <input type="email" name="email" class="form-control" value="${provider?.email || ''}" />
-        </div>
-        <div class="form-group">
-          <label>Comisión (%)</label>
-          <input type="number" name="commission_rate" class="form-control" value="${provider?.commission_rate || 0}" min="0" max="100" step="0.5" />
-        </div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" name="email" class="form-control" value="${provider?.email || ''}" />
+      </div>
+      <div class="form-group">
+        <label>Información del proveedor</label>
+        <textarea name="info" class="form-control" style="min-height:120px" placeholder="Condiciones, requisitos, formas de pago, etc.">${escHtml(provider?.info || '')}</textarea>
       </div>
       <div class="form-group">
         <label>Notas</label>
@@ -125,7 +127,6 @@ window._openProviderForm = function(provider) {
   document.getElementById('provider-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(e.target));
-    data.commission_rate = parseFloat(data.commission_rate) || 0;
 
     try {
       if (provider) {

@@ -68,6 +68,8 @@ export async function initDB() {
   createSchema();
   seedIfEmpty();
   migrateImages();
+  migratePublishText();
+  migrateProviderInfo();
   saveDB();
 }
 
@@ -85,6 +87,7 @@ function createSchema() {
       phone TEXT,
       email TEXT,
       commission_rate REAL DEFAULT 0,
+      info TEXT DEFAULT '',
       notes TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
@@ -100,6 +103,7 @@ function createSchema() {
       warranty TEXT,
       provider_id TEXT,
       image_url TEXT,
+      publish_text TEXT DEFAULT '',
       stock INTEGER DEFAULT 0,
       status TEXT DEFAULT 'active',
       created_at TEXT DEFAULT (datetime('now')),
@@ -183,6 +187,17 @@ function migrateImages() {
   for (const row of toMigrate) {
     db.prepare("UPDATE products SET images = ? WHERE id = ?").run(JSON.stringify([row.image_url]), row.id);
   }
+}
+
+function migratePublishText() {
+  try {
+    db.exec("ALTER TABLE products ADD COLUMN publish_text TEXT DEFAULT ''");
+  } catch (_) {}
+}
+function migrateProviderInfo() {
+  try {
+    db.exec("ALTER TABLE providers ADD COLUMN info TEXT DEFAULT ''");
+  } catch (_) {}
 }
 
 function seedIfEmpty() {
