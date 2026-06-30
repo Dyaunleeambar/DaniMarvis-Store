@@ -8,7 +8,7 @@ export const ROUTE_TITLES = {
   '#/products': 'Productos',
   '#/providers': 'Proveedores',
   '#/sales': 'Ventas',
-  '#/catalog-images': 'Catálogo de imágenes',
+  '#/catalog-images': 'Catálogo público',
   '#/settings': 'Configuración',
   '#/backup': 'Respaldos',
 };

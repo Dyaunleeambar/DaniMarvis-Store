@@ -11,6 +11,7 @@ import providersRouter from './routes/providers.js';
 import salesRouter from './routes/sales.js';
 import categoriesRouter from './routes/categories.js';
 import backupRouter from './routes/backup.js';
+import { generateCatalogFile } from './lib/catalogGenerator.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -166,6 +167,39 @@ app.post('/api/login', (req, res) => {
 
   const token = Buffer.from(JSON.stringify({ id: user.id, exp: Date.now() + 86400000 })).toString('base64');
   res.json({ user, token });
+});
+
+app.use('/catalogo', express.static(join(__dirname, '..', 'public-catalog')));
+
+app.post('/api/generate-catalog', (req, res) => {
+  try {
+    const db = getDB();
+    const products = db.prepare(`
+      SELECT p.*, pr.name as provider_name
+      FROM products p
+      LEFT JOIN providers pr ON pr.id = p.provider_id
+      WHERE p.status = 'active'
+      ORDER BY p.category, p.name
+    `).all();
+
+    if (!products.length) {
+      return res.status(400).json({ error: 'No hay productos activos para generar el catálogo' });
+    }
+
+    const catalogDir = join(__dirname, '..', 'public-catalog');
+    const uploadsDir = join(__dirname, 'uploads');
+    generateCatalogFile(products, catalogDir, uploadsDir);
+
+    res.json({
+      message: 'Catálogo generado correctamente',
+      products_count: products.length,
+      path: catalogDir,
+      filename: 'index.html'
+    });
+  } catch (err) {
+    console.error('[Catalog] Error:', err);
+    res.status(500).json({ error: 'Error al generar el catálogo: ' + err.message });
+  }
 });
 
 app.get('*', (req, res) => {

@@ -99,6 +99,9 @@ export const api = {
     return data;
   },
 
+  // Catalog
+  generateCatalog: () => request('POST', '/generate-catalog'),
+
   // Auth
   login: (username, password) => request('POST', '/login', { username, password }),
 };
