@@ -73,8 +73,6 @@ export function buildCatalogHtml(products, uploadsDir) {
     const text = `Hola, me interesa *${p.name}*. Precio: ${formatCurrency(p.price)}. ¿Está disponible?`;
     const waLink = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(text)}`;
 
-    const hasExternal = isExternalUrl(p.image_url);
-
     return `
       <div class="product-card" data-category="${escapeHtml(p.category || '')}" data-idx="${idx}">
         <div class="product-card__img">${imgHtml}</div>
@@ -84,7 +82,6 @@ export function buildCatalogHtml(products, uploadsDir) {
           ${p.description ? `<p class="product-card__desc">${escapeHtml(p.description.slice(0, 100))}${p.description.length > 100 ? '...' : ''}</p>` : ''}
           <div class="product-card__actions">
             <a href="${waLink}" target="_blank" class="btn-wa">Consultar</a>
-            ${hasExternal ? `<a href="${escapeHtml(p.image_url)}" target="_blank" class="btn-link">Ver producto</a>` : ''}
           </div>
         </div>
       </div>`;
@@ -535,7 +532,7 @@ export function buildCatalogHtml(products, uploadsDir) {
     }
 
     function formatPrice(n) {
-      return '$' + Number(n).toFixed(2).replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',');
+      return 'USD ' + Number(n).toFixed(2).replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',');
     }
 
     function buildWaLink(name, price) {
@@ -566,7 +563,6 @@ export function buildCatalogHtml(products, uploadsDir) {
           (p.category ? '<span class="category-tag">' + escape(p.category) + '</span>' : '') +
           (p.description ? '<p class="desc">' + escape(p.description) + '</p>' : '') +
           '<a href="' + waLink + '" target="_blank" class="btn-wa">Consultar por WhatsApp</a>' +
-          (p.image_url ? '<a href="' + escape(p.image_url) + '" target="_blank" class="btn-link">Ver producto en sitio web</a>' : '') +
         '</div>';
 
       document.getElementById('preview-modal').classList.add('open');
