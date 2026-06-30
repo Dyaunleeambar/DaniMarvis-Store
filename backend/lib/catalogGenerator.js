@@ -48,7 +48,7 @@ export function buildCatalogHtml(products, uploadsDir) {
               copyFileSync(src, dest);
             }
             if (!p._localImage) {
-              p._localImage = `/catalogo/images/${filename}`;
+              p._localImage = `images/${filename}`;
             }
           }
         }
