@@ -115,7 +115,7 @@ function renderTable(container, products, providers) {
                 ? `<tr><td colspan="9"><div class="empty-state" style="padding:32px"><h3>${filtered ? 'Sin resultados' : 'No hay productos'}</h3><p>${filtered ? 'Prueba con otros filtros o términos de búsqueda' : 'Crea tu primer producto para comenzar'}</p></div></td></tr>`
                 : products.map((p, i) => `
                   <tr>
-                    <td><span style="color:var(--text-muted);font-size:.8rem">${i + 1}</span></td>
+                    <td><span style="color:var(--text-muted);font-size:.8rem">${products.length - i}</span></td>
                     <td>
                       <div style="display:flex;align-items:center;gap:10px">
                         ${p.images?.[0]
