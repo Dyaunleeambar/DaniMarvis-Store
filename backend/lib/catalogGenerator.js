@@ -252,6 +252,8 @@ export function buildCatalogHtml(products, uploadsDir) {
       box-shadow: var(--shadow);
       transition: box-shadow .2s, transform .2s;
       cursor: pointer;
+      display: flex;
+      flex-direction: column;
     }
     .product-card:hover {
       box-shadow: var(--shadow-lg);
@@ -286,6 +288,7 @@ export function buildCatalogHtml(products, uploadsDir) {
       display: flex;
       flex-direction: column;
       gap: 6px;
+      flex: 1;
     }
     .product-card__name {
       font-size: .95rem;
@@ -310,7 +313,8 @@ export function buildCatalogHtml(products, uploadsDir) {
     .product-card__actions {
       display: flex;
       gap: 8px;
-      margin-top: 8px;
+      margin-top: auto;
+      padding-top: 8px;
     }
     .btn-wa {
       flex: 1;
