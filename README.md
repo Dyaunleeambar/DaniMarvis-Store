@@ -28,8 +28,9 @@ Este sistema permite a un **gestor de ventas**:
 2. **Administrar proveedores** con sus datos de contacto y tasa de comisión.
 3. **Registrar ventas** con cálculo automático de comisiones.
 4. **Generar imágenes promocionales** 1080×1080 para Facebook/Instagram/WhatsApp con el logo de la marca, precio, comisión y CTA.
-5. **Dar seguimiento** a entregas y comisiones pendientes.
-6. **Configurar el tipo de cambio** USD → MN para mostrar precios en moneda nacional.
+5. **Generar un catálogo web público** con todos los productos activos, filtros por categoría, búsqueda y botón directo a WhatsApp. Se despliega en GitHub Pages.
+6. **Dar seguimiento** a entregas y comisiones pendientes.
+7. **Configurar el tipo de cambio** USD → MN para mostrar precios en moneda nacional.
 
 El negocio funciona así:
 
@@ -141,12 +142,20 @@ El servidor arranca en `http://localhost:3456`. La base de datos SQLite se crea 
 ```
 DaniMarvisStore/
 ├── package.json               # Scripts npm desde la raíz del proyecto
+├── scripts/
+│   └── generate-catalog.js    # Script CLI para regenerar el catálogo público
+├── public-catalog/
+│   ├── index.html             # Catálogo web estático generado (GitHub Pages)
+│   └── images/                # Imágenes de productos copiadas para el catálogo
 ├── backend/
 │   ├── server.js              # Servidor Express (puerto 3456)
 │   ├── package.json           # Dependencias Node.js
 │   ├── danimarvis.db          # Base de datos SQLite (auto-creada)
 │   ├── db/
 │   │   └── database.js        # Esquema + seed de BD
+│   ├── lib/
+│   │   ├── catalogGenerator.js # Generador de HTML estático del catálogo público
+│   │   └── currency.js         # Formateador de precios en USD
 │   └── routes/
 │       ├── products.js        # CRUD productos
 │       ├── providers.js       # CRUD proveedores
@@ -178,7 +187,7 @@ DaniMarvisStore/
 │           ├── productsView.js       # CRUD productos + filtros + caché
 │           ├── providersView.js      # CRUD proveedores
 │           ├── salesView.js          # CRUD ventas + cálculo comisiones
-│           ├── catalogImagesView.js  # Generador de imágenes
+│           ├── catalogImagesView.js  # Generador de catálogo público
 │           └── settingsView.js       # Tipo de cambio USD → MN
 │
 └── README.md
@@ -268,6 +277,13 @@ Response: { "user": {...}, "token": "..." }
 |--------|------|-------------|
 | `GET` | `/api/counts` | Conteo de productos, proveedores y ventas para la barra lateral |
 
+### Catálogo público
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `POST` | `/api/generate-catalog` | Regenerar el catálogo HTML estático desde el panel (requiere auth)
+| `GET` | `/catalogo` | Ver el catálogo público generado localmente |
+
 ### Configuración
 
 | Método | Ruta | Descripción |
@@ -289,7 +305,7 @@ El frontend es una **SPA** (Single Page Application) construida con JavaScript v
 | `#/products` | Productos | CRUD completo con filtros por categoría, estado y búsqueda |
 | `#/providers` | Proveedores | CRUD con conteo de productos asociados |
 | `#/sales` | Ventas | CRUD con cálculo automático de comisiones y filtros |
-| `#/catalog-images` | Catálogo imágenes | Generador de imágenes promocionales |
+| `#/catalog-images` | Catálogo público | Generador de catálogo web estático + despliegue en GitHub Pages |
 | `#/settings` | Configuración | Tipo de cambio USD → MN para precios en moneda nacional |
 
 ### Funcionalidades
@@ -350,6 +366,50 @@ Las imágenes se generan **100% en el cliente** usando Canvas API — no ocupan 
 
 ---
 
+## 🌐 Catálogo Público (GitHub Pages)
+
+El sistema genera un **catálogo web estático** con todos los productos activos, ideal para compartir por WhatsApp sin depender del catálogo oficial de Meta (bloqueado para números cubanos +53).
+
+### Características
+
+- **Grid de productos** con imagen principal, nombre, precio en USD, descripción y botón "Consultar" vía WhatsApp.
+- **Filtros por categoría** y **búsqueda** en vivo.
+- **Modal de previsualización** al hacer clic en un producto con todos los detalles y enlace directo a WhatsApp.
+- **Diseño responsive** con soporte modo oscuro automático.
+- **Sin enlaces a competidores** — el catálogo solo dirige a tu WhatsApp.
+
+### Cómo generar el catálogo
+
+1. Ve a **Catálogo público** en el panel.
+2. Haz clic en **"Generar catálogo"**.
+3. El servidor genera el HTML en `public-catalog/index.html` y copia las imágenes.
+4. Para publicarlo en GitHub Pages, haz commit y push de la carpeta `public-catalog/`.
+
+### Desde la terminal
+
+```bash
+node scripts/generate-catalog.js
+```
+
+### Estructura generada
+
+```
+public-catalog/
+├── index.html        # Catálogo completo (autocontenido)
+└── images/           # Imágenes de productos copiadas desde backend/uploads/
+```
+
+### Despliegue en GitHub Pages
+
+1. Pushear el proyecto (incluyendo `public-catalog/`) a GitHub.
+2. Ir a Settings → Pages → "Deploy from a branch".
+3. Seleccionar `main` / `public-catalog`.
+4. El sitio queda disponible en `https://<usuario>.github.io/<repo>/public-catalog/`.
+
+---
+
+
+
 ## 🔄 Flujo de Trabajo
 
 ### 1. Registrar un proveedor
@@ -376,16 +436,22 @@ Panel → Catálogo imágenes → Generar imagen
 ```
 Descarga la imagen y publícala en Facebook con un enlace a tu WhatsApp.
 
-### 5. Registrar ventas
+### 5. Generar catálogo público
+```
+Panel → Catálogo público → Generar catálogo
+```
+El servidor genera un catálogo web estático con todos los productos activos, imágenes y botón de WhatsApp. Luego haz commit y push a GitHub para actualizar GitHub Pages.
+
+### 6. Registrar ventas
 ```
 Panel → Ventas → Nueva venta
 ```
 Selecciona el producto, ingresa datos del cliente. El sistema calcula automáticamente el total y la comisión.
 
-### 6. Dar seguimiento
+### 7. Dar seguimiento
 Actualiza el estado de entrega (pendiente → enviado → entregado) y marca comisiones como pagadas.
 
-### 7. Revisar dashboard
+### 8. Revisar dashboard
 El dashboard muestra ingresos totales, comisiones pendientes, productos más vendidos y ventas mensuales.
 
 ---
@@ -421,14 +487,14 @@ Edita `frontend/js/utils/imageGenerator.js` para cambiar:
 Ideas para futuras iteraciones:
 
 - [ ] **Exportar reportes** a Excel/CSV
-- [ ] **Enlace directo a WhatsApp** por producto (con plantilla de mensaje predefinida)
+- [x] **Enlace directo a WhatsApp** por producto (con plantilla de mensaje predefinida)
 - [ ] **Panel de comisiones** por proveedor con resumen mensual
-- [ ] **Subida de imágenes** al servidor (multer ya incluido en package.json)
-- [ ] **Modo oscuro**
+- [x] **Subida de imágenes** al servidor (multer incluido en package.json)
+- [x] **Modo oscuro** (en el catálogo público)
 - [ ] **Autenticación mejorada** con JWT y sesiones
 - [ ] **Notificaciones** cuando una venta cambia de estado
 - [ ] **Integración con Facebook Catalog** para Dynamic Ads
-- [ ] **Generación de catálogo PDF** para compartir por WhatsApp
+- [x] **Generación de catálogo web** para compartir por WhatsApp (desplegado en GitHub Pages)
 - [ ] **Múltiples gestores** con roles y permisos
 
 ---
