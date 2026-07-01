@@ -448,7 +448,7 @@ window._viewProduct = async function(id) {
           ${p.warranty ? `<div class="detail-row"><span class="detail-label">Garantía</span><span class="detail-value">${escHtml(p.warranty)}</span></div>` : ''}
           <div class="detail-row">
             <span class="detail-label">Estado</span>
-            <span class="detail-value"><span class="badge badge--${p.status === 'active' ? 'active' : 'archived'}">${p.status}</span></span>
+            <span class="detail-value"><span class="badge badge--${p.catalog_visible ? 'active' : 'archived'}">${p.catalog_visible ? 'activo' : 'inactivo'}</span></span>
           </div>
           ${p.image_url ? `<div class="detail-row">
             <span class="detail-label">Ficha</span>
