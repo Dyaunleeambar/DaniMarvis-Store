@@ -135,7 +135,7 @@ function renderTable(container, products, providers) {
                     <td><span style="font-size:.82rem">${p.commission_value > 0 ? formatUSD(p.commission_value) : '—'}</span></td>
                     <td><span style="font-size:.82rem">${p.provider_name || '—'}</span></td>
                     <td><span style="font-size:.82rem">${p.stock}</span></td>
-                    <td><span class="badge badge--${p.status === 'active' ? 'active' : 'archived'}">${p.status}</span></td>
+                    <td><span class="badge badge--${p.catalog_visible ? 'active' : 'archived'}">${p.catalog_visible ? 'activo' : 'inactivo'}</span></td>
                     <td>
                       <div class="actions-cell">
                         <button class="btn btn--sm btn--ghost" onclick="window._toggleVisibility('${p.id}', this)" title="${p.catalog_visible ? 'Ocultar del catálogo' : 'Mostrar en catálogo'}" style="color:${p.catalog_visible ? 'var(--success)' : 'var(--text-muted)'}">
