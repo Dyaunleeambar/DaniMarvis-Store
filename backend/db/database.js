@@ -70,6 +70,7 @@ export async function initDB() {
   migrateImages();
   migratePublishText();
   migrateProviderInfo();
+  migrateCatalogVisible();
   saveDB();
 }
 
@@ -106,6 +107,7 @@ function createSchema() {
       publish_text TEXT DEFAULT '',
       stock INTEGER DEFAULT 0,
       status TEXT DEFAULT 'active',
+      catalog_visible INTEGER DEFAULT 1,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (provider_id) REFERENCES providers(id)
@@ -197,6 +199,11 @@ function migratePublishText() {
 function migrateProviderInfo() {
   try {
     db.exec("ALTER TABLE providers ADD COLUMN info TEXT DEFAULT ''");
+  } catch (_) {}
+}
+function migrateCatalogVisible() {
+  try {
+    db.exec("ALTER TABLE products ADD COLUMN catalog_visible INTEGER DEFAULT 1");
   } catch (_) {}
 }
 

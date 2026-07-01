@@ -178,7 +178,7 @@ app.post('/api/generate-catalog', (req, res) => {
       SELECT p.*, pr.name as provider_name
       FROM products p
       LEFT JOIN providers pr ON pr.id = p.provider_id
-      WHERE p.status = 'active'
+      WHERE p.status = 'active' AND p.catalog_visible = 1
       ORDER BY p.category, p.name
     `).all();
 

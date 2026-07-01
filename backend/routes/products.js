@@ -49,7 +49,7 @@ router.get('/:id', (req, res) => {
 
 router.post('/', (req, res) => {
   const db = getDB();
-  const { name, description, category, price, commission_type, commission_value, warranty, provider_id, images, image_url, publish_text, stock, status } = req.body;
+  const { name, description, category, price, commission_type, commission_value, warranty, provider_id, images, image_url, publish_text, stock, status, catalog_visible } = req.body;
 
   if (!name || price === undefined) {
     return res.status(400).json({ error: 'Nombre y precio son obligatorios' });
@@ -61,16 +61,17 @@ router.post('/', (req, res) => {
     price, commission_type: commission_type || 'fixed',
     commission_value: parseFloat(commission_value) || 0, warranty: warranty || '',
     provider_id: provider_id || null, images: imagesJson(images), image_url: image_url || '',
-    publish_text: publish_text || '', stock: stock || 0, status: status || 'active'
+    publish_text: publish_text || '', stock: stock || 0, status: status || 'active',
+    catalog_visible: catalog_visible !== undefined ? (catalog_visible ? 1 : 0) : 1
   };
 
   db.prepare(`INSERT INTO products (id, name, description, category, price,
-    commission_type, commission_value, warranty, provider_id, images, image_url, publish_text, stock, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    commission_type, commission_value, warranty, provider_id, images, image_url, publish_text, stock, status, catalog_visible)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     product.id, product.name, product.description, product.category,
     product.price, product.commission_type, product.commission_value,
     product.warranty, product.provider_id, product.images, product.image_url,
-    product.publish_text, product.stock, product.status
+    product.publish_text, product.stock, product.status, product.catalog_visible
   );
 
   res.status(201).json(normalizeProduct(product));
@@ -81,7 +82,7 @@ router.put('/:id', (req, res) => {
   const existing = db.prepare('SELECT id FROM products WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Producto no encontrado' });
 
-  const { name, description, category, price, commission_type, commission_value, warranty, provider_id, images, image_url, publish_text, stock, status } = req.body;
+  const { name, description, category, price, commission_type, commission_value, warranty, provider_id, images, image_url, publish_text, stock, status, catalog_visible } = req.body;
 
   if (!name || price === undefined || price === '') {
     return res.status(400).json({ error: 'Nombre y precio son obligatorios' });
@@ -91,7 +92,7 @@ router.put('/:id', (req, res) => {
     name = ?, description = ?, category = ?, price = ?,
     commission_type = ?, commission_value = ?, warranty = ?,
     provider_id = ?, images = ?, image_url = ?, publish_text = ?, stock = ?, status = ?,
-    updated_at = datetime('now')
+    catalog_visible = ?, updated_at = datetime('now')
     WHERE id = ?`).run(
     name,
     description || '',
@@ -106,6 +107,7 @@ router.put('/:id', (req, res) => {
     publish_text || '',
     parseInt(stock, 10) || 0,
     status || 'active',
+    catalog_visible !== undefined ? (catalog_visible ? 1 : 0) : 1,
     req.params.id
   );
 
@@ -113,6 +115,16 @@ router.put('/:id', (req, res) => {
     FROM products p LEFT JOIN providers pr ON pr.id = p.provider_id
     WHERE p.id = ?`).get(req.params.id);
   res.json(normalizeProduct(updated));
+});
+
+router.patch('/:id/visibility', (req, res) => {
+  const db = getDB();
+  const existing = db.prepare('SELECT id, catalog_visible FROM products WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Producto no encontrado' });
+
+  const newValue = existing.catalog_visible ? 0 : 1;
+  db.prepare('UPDATE products SET catalog_visible = ?, updated_at = datetime(\'now\') WHERE id = ?').run(newValue, req.params.id);
+  res.json({ id: req.params.id, catalog_visible: newValue });
 });
 
 router.delete('/:id', (req, res) => {

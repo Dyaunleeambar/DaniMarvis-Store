@@ -99,6 +99,7 @@ function renderTable(container, products, providers) {
           <table>
             <thead>
               <tr>
+                <th style="width:40px">#</th>
                 <th>Producto</th>
                 <th>Categoría</th>
                 <th>Precio</th>
@@ -111,9 +112,10 @@ function renderTable(container, products, providers) {
             </thead>
             <tbody>
               ${products.length === 0
-                ? `<tr><td colspan="8"><div class="empty-state" style="padding:32px"><h3>${filtered ? 'Sin resultados' : 'No hay productos'}</h3><p>${filtered ? 'Prueba con otros filtros o términos de búsqueda' : 'Crea tu primer producto para comenzar'}</p></div></td></tr>`
-                : products.map(p => `
+                ? `<tr><td colspan="9"><div class="empty-state" style="padding:32px"><h3>${filtered ? 'Sin resultados' : 'No hay productos'}</h3><p>${filtered ? 'Prueba con otros filtros o términos de búsqueda' : 'Crea tu primer producto para comenzar'}</p></div></td></tr>`
+                : products.map((p, i) => `
                   <tr>
+                    <td><span style="color:var(--text-muted);font-size:.8rem">${i + 1}</span></td>
                     <td>
                       <div style="display:flex;align-items:center;gap:10px">
                         ${p.images?.[0]
@@ -136,6 +138,12 @@ function renderTable(container, products, providers) {
                     <td><span class="badge badge--${p.status === 'active' ? 'active' : 'archived'}">${p.status}</span></td>
                     <td>
                       <div class="actions-cell">
+                        <button class="btn btn--sm btn--ghost" onclick="window._toggleVisibility('${p.id}', this)" title="${p.catalog_visible ? 'Ocultar del catálogo' : 'Mostrar en catálogo'}" style="color:${p.catalog_visible ? 'var(--success)' : 'var(--text-muted)'}">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${p.catalog_visible
+                            ? '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>'
+                            : '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>'}
+                          </svg>
+                        </button>
                         <button class="btn btn--sm btn--ghost" onclick="window._editProduct('${p.id}')" title="Editar">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                         </button>
@@ -237,6 +245,12 @@ window._openProductForm = function(product) {
         <div class="form-group">
           <label>Stock</label>
           <input type="number" name="stock" class="form-control" value="${product?.stock || 0}" min="0" />
+        </div>
+        <div class="form-group">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:8px 0">
+            <input type="checkbox" name="catalog_visible" value="1" ${product?.catalog_visible !== 0 ? 'checked' : ''} style="width:16px;height:16px" />
+            Mostrar en catálogo público
+          </label>
         </div>
         <div class="form-group">
           <label>Imágenes</label>
@@ -527,6 +541,20 @@ window._openLightbox = function(images, startIdx = 0) {
   document.addEventListener('keydown', onKey);
   document.body.appendChild(overlay);
   document.body.style.overflow = 'hidden';
+};
+
+window._toggleVisibility = async function(id, btn) {
+  try {
+    const res = await api.toggleVisibility(id);
+    btn.title = res.catalog_visible ? 'Ocultar del catálogo' : 'Mostrar en catálogo';
+    btn.style.color = res.catalog_visible ? 'var(--success)' : 'var(--text-muted)';
+    btn.innerHTML = res.catalog_visible
+      ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>'
+      : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+    showToast(res.catalog_visible ? 'Producto visible en catálogo' : 'Producto oculto del catálogo', 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
 };
 
 window._deleteProduct = async function(id) {
