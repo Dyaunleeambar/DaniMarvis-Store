@@ -696,7 +696,7 @@ export async function buildCatalogHtml(products, uploadsDir) {
     }
 
     function formatPrice(n) {
-      return 'USD ' + Number(n).toFixed(2).replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',');
+      return '$' + Number(n).toFixed(2).replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',') + ' USD';
     }
 
     function buildWaLink(name, price) {
