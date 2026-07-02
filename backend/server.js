@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import { fileURLToPath } from 'url';
-import { dirname, join, extname } from 'path';
+import { basename, dirname, join, extname } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { v4 as uuid } from 'uuid';
 import { initDB, getDB } from './db/database.js';
@@ -12,6 +12,7 @@ import salesRouter from './routes/sales.js';
 import categoriesRouter from './routes/categories.js';
 import backupRouter from './routes/backup.js';
 import { generateCatalogFile } from './lib/catalogGenerator.js';
+import { ensureWebp } from './lib/imageUtils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -70,12 +71,19 @@ app.use('/api/categories', categoriesRouter);
 app.use('/api/backup', backupRouter);
 
 app.post('/api/upload', (req, res) => {
-  upload.single('image')(req, res, (err) => {
+  upload.single('image')(req, res, async (err) => {
     if (err instanceof multer.MulterError) {
       return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'La imagen no puede superar los 5MB' : err.message });
     }
     if (err) return res.status(400).json({ error: err.message });
     if (!req.file) return res.status(400).json({ error: 'No se seleccionó ningún archivo' });
+
+    try {
+      const webpPath = await ensureWebp(req.file.path);
+      if (webpPath && webpPath !== req.file.path) {
+        return res.json({ url: `/uploads/${basename(webpPath)}` });
+      }
+    } catch { /* fallback: return original */ }
     res.json({ url: `/uploads/${req.file.filename}` });
   });
 });
@@ -171,7 +179,7 @@ app.post('/api/login', (req, res) => {
 
 app.use('/catalogo', express.static(join(__dirname, '..', 'public-catalog')));
 
-app.post('/api/generate-catalog', (req, res) => {
+app.post('/api/generate-catalog', async (req, res) => {
   try {
     const db = getDB();
     const products = db.prepare(`
@@ -188,7 +196,7 @@ app.post('/api/generate-catalog', (req, res) => {
 
     const catalogDir = join(__dirname, '..', 'public-catalog');
     const uploadsDir = join(__dirname, 'uploads');
-    generateCatalogFile(products, catalogDir, uploadsDir);
+    await generateCatalogFile(products, catalogDir, uploadsDir);
 
     res.json({
       message: 'Catálogo generado correctamente',

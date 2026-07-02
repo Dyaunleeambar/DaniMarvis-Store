@@ -271,7 +271,7 @@ window._openProductForm = function(product) {
               <input type="file" accept="image/*" id="product-image-file" style="display:none" />
             </label>
           </div>
-          <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">Agregá URLs o subí archivos. La primera imagen es la principal.</small>
+          <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">Agregá URLs o subí archivos. Arrastrá las imágenes para reordenarlas. La primera es la principal.</small>
         </div>
       </div>
       <div class="form-group">
@@ -308,22 +308,71 @@ window._openProductForm = function(product) {
   const fileInput = document.getElementById('product-image-file');
   const urlInput = document.getElementById('product-image-url-input');
   const addUrlBtn = document.getElementById('btn-add-image-url');
+  let dragIndex = null;
 
   function renderThumbs() {
-    thumbsContainer.innerHTML = productImages.map(url =>
-      `<div class="img-thumb" data-url="${escAttr(url)}">
+    thumbsContainer.innerHTML = productImages.map((url, i) =>
+      `<div class="img-thumb" draggable="true" data-url="${escAttr(url)}" data-idx="${i}">
         <img src="${escAttr(url)}" alt="" />
         <button type="button" class="img-thumb-remove" data-url="${escAttr(url)}">&times;</button>
       </div>`
     ).join('');
     thumbsContainer.querySelectorAll('.img-thumb-remove').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
         const idx = productImages.indexOf(btn.dataset.url);
         if (idx !== -1) productImages.splice(idx, 1);
         renderThumbs();
       });
     });
   }
+
+  thumbsContainer.addEventListener('dragstart', (e) => {
+    const el = e.target.closest('.img-thumb');
+    if (!el) return;
+    dragIndex = parseInt(el.dataset.idx);
+    el.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', '');
+  });
+
+  thumbsContainer.addEventListener('dragenter', (e) => {
+    const el = e.target.closest('.img-thumb');
+    if (!el || parseInt(el.dataset.idx) === dragIndex) return;
+    if (el.contains(e.relatedTarget)) return;
+    el.classList.add('drag-over');
+  });
+
+  thumbsContainer.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  });
+
+  thumbsContainer.addEventListener('dragleave', (e) => {
+    const el = e.target.closest('.img-thumb');
+    if (!el) return;
+    if (el.contains(e.relatedTarget)) return;
+    el.classList.remove('drag-over');
+  });
+
+  thumbsContainer.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const el = e.target.closest('.img-thumb');
+    if (!el) return;
+    el.classList.remove('drag-over');
+    const toIdx = parseInt(el.dataset.idx);
+    if (dragIndex !== null && toIdx !== dragIndex) {
+      const [moved] = productImages.splice(dragIndex, 1);
+      productImages.splice(toIdx, 0, moved);
+      renderThumbs();
+    }
+    dragIndex = null;
+  });
+
+  thumbsContainer.addEventListener('dragend', () => {
+    thumbsContainer.querySelectorAll('.img-thumb').forEach(t => t.classList.remove('dragging', 'drag-over'));
+    dragIndex = null;
+  });
 
   addUrlBtn?.addEventListener('click', () => {
     const url = urlInput.value.trim();

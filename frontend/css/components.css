@@ -366,6 +366,21 @@ tr:hover td { background: rgba(201,132,122,.03); }
   padding: 0;
 }
 .img-thumb-remove:hover { opacity: .85; }
+.img-thumb {
+  cursor: grab;
+  transition: opacity .15s, border-color .15s;
+}
+.img-thumb:active { cursor: grabbing; }
+.img-thumb.dragging {
+  opacity: .35;
+  border-style: dashed;
+}
+.img-thumb.drag-over {
+  border-color: var(--rose);
+  border-width: 2px;
+  transform: scale(1.04);
+  box-shadow: 0 2px 8px rgba(201,132,122,.25);
+}
 
 /* ── Product detail modal ─────────────────────────────────── */
 .product-detail {
