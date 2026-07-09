@@ -99,20 +99,96 @@ app.get('/api/counts', (req, res) => {
 
 app.get('/api/settings', (req, res) => {
   const db = getDB();
-  const settings = db.prepare('SELECT exchange_rate FROM settings WHERE id = 1').get();
+  const settings = db.prepare('SELECT exchange_rate, publish_config FROM settings WHERE id = 1').get();
+  if (settings.publish_config) {
+    try { settings.publish_config = JSON.parse(settings.publish_config); } catch { settings.publish_config = {}; }
+  } else {
+    settings.publish_config = {};
+  }
   res.json(settings);
 });
 
 app.put('/api/settings', (req, res) => {
   const db = getDB();
-  const { exchange_rate } = req.body;
-  if (!exchange_rate || exchange_rate <= 0) {
-    return res.status(400).json({ error: 'Tipo de cambio inválido' });
+  const { exchange_rate, publish_config } = req.body;
+
+  if (exchange_rate !== undefined) {
+    if (!exchange_rate || exchange_rate <= 0) {
+      return res.status(400).json({ error: 'Tipo de cambio inválido' });
+    }
+    db.prepare("UPDATE settings SET exchange_rate = ?, updated_at = datetime('now') WHERE id = 1")
+      .run(exchange_rate);
   }
-  db.prepare('UPDATE settings SET exchange_rate = ?, updated_at = datetime(\'now\') WHERE id = 1')
-    .run(exchange_rate);
-  const settings = db.prepare('SELECT exchange_rate FROM settings WHERE id = 1').get();
+
+  if (publish_config !== undefined) {
+    db.prepare("UPDATE settings SET publish_config = ?, updated_at = datetime('now') WHERE id = 1")
+      .run(JSON.stringify(publish_config));
+  }
+
+  const settings = db.prepare('SELECT exchange_rate, publish_config FROM settings WHERE id = 1').get();
+  if (settings.publish_config) {
+    try { settings.publish_config = JSON.parse(settings.publish_config); } catch { settings.publish_config = {}; }
+  } else {
+    settings.publish_config = {};
+  }
   res.json(settings);
+});
+
+app.post('/api/generate-description', async (req, res) => {
+  const db = getDB();
+  const row = db.prepare('SELECT publish_config FROM settings WHERE id = 1').get();
+  let pc = {};
+  try { pc = JSON.parse(row.publish_config || '{}'); } catch {}
+  const ai = pc.ai || {};
+
+  if (!ai.enabled || !ai.api_key) {
+    return res.status(400).json({ error: 'IA no configurada. Configurá la API en Ajustes > Publicaciones.' });
+  }
+
+  const { name, category, warranty, description: existingDesc } = req.body;
+  if (!name) {
+    return res.status(400).json({ error: 'El nombre del producto es obligatorio' });
+  }
+
+  const userPrompt = [
+    `Producto: ${name}`,
+    category ? `Categoría: ${category}` : '',
+    warranty ? `Garantía: ${warranty}` : '',
+    existingDesc ? `Descripción actual: ${existingDesc}` : ''
+  ].filter(Boolean).join('\n');
+
+  try {
+    const response = await fetch(`${ai.api_url.replace(/\/+$/, '')}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${ai.api_key}`
+      },
+      body: JSON.stringify({
+        model: ai.model || 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: ai.system_prompt || 'Genera una descripción atractiva y profesional para un producto de catálogo de ventas.' },
+          { role: 'user', content: userPrompt }
+        ],
+        temperature: 0.7,
+        max_tokens: 600
+      })
+    });
+
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => '');
+      throw new Error(`API ${response.status}: ${errBody.slice(0, 200)}`);
+    }
+
+    const data = await response.json();
+    const generated = data.choices?.[0]?.message?.content?.trim();
+    if (!generated) throw new Error('La IA no generó contenido');
+
+    res.json({ description: generated });
+  } catch (err) {
+    console.error('[AI] Error:', err);
+    res.status(500).json({ error: 'Error al generar descripción: ' + err.message });
+  }
 });
 
 app.get('/api/dashboard', (req, res) => {

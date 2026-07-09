@@ -219,7 +219,10 @@ window._openProductForm = function(product) {
       </div>
       <div class="form-group">
         <label>Descripción</label>
-        <textarea name="description" class="form-control">${product?.description || ''}</textarea>
+        <textarea name="description" class="form-control" id="product-description">${product?.description || ''}</textarea>
+        <button type="button" class="btn btn--sm btn--secondary" id="btn-generate-desc" style="margin-top:6px">
+          ✨ Generar descripción con IA
+        </button>
       </div>
       <div class="form-group">
         <label>Comisión (USD) — valor fijo por unidad</label>
@@ -281,8 +284,16 @@ window._openProductForm = function(product) {
       </div>
       <div class="form-group">
         <label>Texto de publicación</label>
-        <textarea name="publish_text" class="form-control" placeholder="Copiado para WhatsApp, Facebook, etc." style="min-height:120px">${escHtml(product?.publish_text || '')}</textarea>
-        <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">Texto formateado para compartir en redes o mensajería</small>
+        <textarea name="publish_text" class="form-control" id="product-publish-text" placeholder="Copiado para WhatsApp, Facebook, etc." style="min-height:120px">${escHtml(product?.publish_text || '')}</textarea>
+        <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+          <button type="button" class="btn btn--sm btn--secondary" id="btn-generate-publish">
+            📝 Generar texto de publicación
+          </button>
+          <button type="button" class="btn btn--sm btn--ghost" id="btn-copy-publish" title="Copiar al portapapeles">
+            📋 Copiar
+          </button>
+        </div>
+        <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">Texto formateado para compartir en redes o mensajería. Se genera automáticamente desde la plantilla configurada en Ajustes.</small>
       </div>
       <div class="form-actions">
         <button type="button" class="btn btn--secondary" onclick="closeModal()">Cancelar</button>
@@ -403,6 +414,82 @@ window._openProductForm = function(product) {
     } finally {
       fileInput.disabled = false;
       fileInput.value = '';
+    }
+  });
+
+  const generateDescBtn = document.getElementById('btn-generate-desc');
+  generateDescBtn?.addEventListener('click', async () => {
+    const name = form.querySelector('[name="name"]')?.value?.trim();
+    if (!name) {
+      showToast('Primero ingresá el nombre del producto', 'warning');
+      return;
+    }
+    const category = form.querySelector('[name="category"]')?.value || '';
+    const warranty = form.querySelector('[name="warranty"]')?.value || '';
+    const existingDesc = form.querySelector('[name="description"]')?.value || '';
+
+    generateDescBtn.disabled = true;
+    generateDescBtn.textContent = 'Generando...';
+    try {
+      const res = await api.generateDescription({ name, category, warranty, description: existingDesc });
+      const descField = document.getElementById('product-description');
+      if (descField) {
+        descField.value = res.description;
+        descField.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      showToast('Descripción generada', 'success');
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      generateDescBtn.disabled = false;
+      generateDescBtn.textContent = '✨ Generar descripción con IA';
+    }
+  });
+
+  const publishBtn = document.getElementById('btn-generate-publish');
+  publishBtn?.addEventListener('click', async () => {
+    const fd = new FormData(form);
+    const data = Object.fromEntries(fd);
+    const price = parseFloat(data.price) || 0;
+
+    let settingsData;
+    try {
+      settingsData = await api.getSettings();
+    } catch {
+      showToast('Error al cargar configuración', 'error');
+      return;
+    }
+    const template = settingsData.publish_config?.template || '';
+
+    let text = template
+      .replace(/\{NAME\}/g, data.name || '')
+      .replace(/\{PRICE\}/g, price.toFixed(2))
+      .replace(/\{DESCRIPTION\}/g, data.description || '')
+      .replace(/\{WARRANTY\}/g, data.warranty || '')
+      .replace(/\{CATEGORY\}/g, data.category || '')
+      .replace(/\{STOCK\}/g, data.stock || '0');
+
+    const publishField = document.getElementById('product-publish-text');
+    if (publishField) {
+      publishField.value = text;
+      publishField.dispatchEvent(new Event('input', { bubbles: true }));
+      publishField.style.minHeight = Math.max(120, text.split('\n').length * 22) + 'px';
+    }
+    showToast('Texto de publicación generado', 'success');
+  });
+
+  const copyBtn = document.getElementById('btn-copy-publish');
+  copyBtn?.addEventListener('click', async () => {
+    const text = document.getElementById('product-publish-text')?.value;
+    if (!text) {
+      showToast('No hay texto para copiar', 'warning');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast('Copiado al portapapeles', 'success');
+    } catch {
+      showToast('No se pudo copiar. Seleccioná el texto manualmente.', 'error');
     }
   });
 

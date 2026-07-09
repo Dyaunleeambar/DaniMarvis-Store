@@ -21,12 +21,16 @@ export async function render(container) {
 }
 
 function renderPage(container, settings, categories) {
+  const pc = settings.publish_config || {};
+  const template = pc.template || '';
+  const ai = pc.ai || {};
+
   container.innerHTML = `
     <div class="page">
       <div class="page-header">
         <div>
           <h1>Configuración</h1>
-          <p>Tipo de cambio y categorías de productos</p>
+          <p>Tipo de cambio, categorías y texto de publicación</p>
         </div>
       </div>
 
@@ -57,6 +61,63 @@ function renderPage(container, settings, categories) {
             <li>Al renombrar una categoría, los productos asociados se actualizan automáticamente</li>
           </ul>
         </div>
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <h3 style="margin:0 0 4px">Plantilla de publicación</h3>
+        <p style="margin:0 0 16px;font-size:.82rem;color:var(--text-secondary)">
+          Definí el formato del texto que se genera automáticamente. Usá los placeholders
+          <code>{NAME}</code>, <code>{PRICE}</code>, <code>{DESCRIPTION}</code>,
+          <code>{WARRANTY}</code>, <code>{CATEGORY}</code>, <code>{STOCK}</code>
+          para insertar datos del producto.
+        </p>
+        <form id="publish-template-form">
+          <div class="form-group">
+            <label>Plantilla</label>
+            <textarea name="template" class="form-control" style="min-height:220px;font-family:monospace;font-size:.82rem;line-height:1.5">${escHtml(template)}</textarea>
+          </div>
+
+          <details style="margin-top:16px" ${ai.enabled ? 'open' : ''}>
+            <summary style="cursor:pointer;font-weight:600;font-size:.9rem;color:var(--rose)">⚙ Generación con IA (opcional)</summary>
+            <div style="margin-top:12px">
+              <div class="form-group">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0">
+                  <input type="checkbox" name="ai_enabled" value="1" ${ai.enabled ? 'checked' : ''} style="width:16px;height:16px" />
+                  Habilitar generación automática de descripciones con IA
+                </label>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label>API URL</label>
+                  <input type="url" name="ai_api_url" class="form-control" value="${escAttr(ai.api_url || 'https://api.openai.com/v1')}" placeholder="https://api.openai.com/v1" />
+                </div>
+                <div class="form-group">
+                  <label>Modelo</label>
+                  <input type="text" name="ai_model" class="form-control" value="${escAttr(ai.model || 'gpt-4o-mini')}" placeholder="gpt-4o-mini" />
+                </div>
+              </div>
+              <div class="form-group">
+                <label>API Key</label>
+                <input type="password" name="ai_api_key" class="form-control" value="${escAttr(ai.api_key || '')}" placeholder="sk-..." />
+                <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">
+                  Probá gratis con <a href="https://freetokenrouter.cn" target="_blank" rel="noopener">Free Token Router</a>
+                  (modelo: <code>qwen-turbo</code>, URL: <code>https://freetokenrouter.cn/api/v1</code>)
+                  o <a href="https://openrouter.ai" target="_blank" rel="noopener">OpenRouter</a>
+                  (modelo: <code>openrouter/free</code>)
+                </small>
+              </div>
+              <div class="form-group">
+                <label>Prompt del sistema</label>
+                <textarea name="ai_system_prompt" class="form-control" style="min-height:100px;font-size:.82rem">${escHtml(ai.system_prompt || '')}</textarea>
+                <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">Instrucciones para la IA sobre cómo generar la descripción del producto</small>
+              </div>
+            </div>
+          </details>
+
+          <div class="form-actions" style="margin-top:16px">
+            <button type="submit" class="btn btn--primary">Guardar plantilla</button>
+          </div>
+        </form>
       </div>
 
       <div class="card" style="margin-top:16px">
@@ -116,6 +177,33 @@ function renderPage(container, settings, categories) {
       await api.updateSettings(data);
       currentSettings = { exchange_rate: data.exchange_rate };
       showToast('Tipo de cambio actualizado', 'success');
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+
+  document.getElementById('publish-template-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+
+    const publish_config = {
+      template: fd.get('template') || '',
+      ai: {
+        enabled: fd.get('ai_enabled') === '1',
+        api_url: fd.get('ai_api_url') || '',
+        api_key: fd.get('ai_api_key') || '',
+        model: fd.get('ai_model') || '',
+        system_prompt: fd.get('ai_system_prompt') || ''
+      }
+    };
+
+    try {
+      const res = await api.updateSettings({
+        exchange_rate: currentSettings?.exchange_rate || settings?.exchange_rate || 61000,
+        publish_config
+      });
+      currentSettings = res;
+      showToast('Plantilla de publicación guardada', 'success');
     } catch (err) {
       showToast(err.message, 'error');
     }

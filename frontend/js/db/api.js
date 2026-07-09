@@ -99,6 +99,9 @@ export const api = {
     return data;
   },
 
+  // AI
+  generateDescription: (data) => request('POST', '/generate-description', data),
+
   // Catalog
   generateCatalog: () => request('POST', '/generate-catalog'),
   toggleVisibility: (id) => request('PATCH', `/products/${id}/visibility`),
