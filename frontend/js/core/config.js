@@ -11,4 +11,5 @@ export const ROUTE_TITLES = {
   '#/catalog-images': 'Catálogo público',
   '#/settings': 'Configuración',
   '#/backup': 'Respaldos',
+  '#/publications': 'Publicaciones',
 };

@@ -24,6 +24,7 @@ function renderPage(container, settings, categories) {
   const pc = settings.publish_config || {};
   const template = pc.template || '';
   const ai = pc.ai || {};
+  const fb = pc.facebook || {};
 
   container.innerHTML = `
     <div class="page">
@@ -114,6 +115,29 @@ function renderPage(container, settings, categories) {
             </div>
           </details>
 
+          <details style="margin-top:12px" ${fb.page_id ? 'open' : ''}>
+            <summary style="cursor:pointer;font-weight:600;font-size:.9rem;color:var(--rose)">🌐 Publicación en Facebook (opcional)</summary>
+            <div style="margin-top:12px">
+              <div class="form-row">
+                <div class="form-group">
+                  <label>Facebook Page ID</label>
+                  <input type="text" name="fb_page_id" class="form-control" value="${escAttr(fb.page_id || '')}" placeholder="Ej: 123456789012345" />
+                </div>
+                <div class="form-group">
+                  <label>Instagram Account ID (opcional)</label>
+                  <input type="text" name="fb_instagram_id" class="form-control" value="${escAttr(fb.instagram_id || '')}" placeholder="Ej: 17841400000000000" />
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Facebook Page Access Token</label>
+                <input type="password" name="fb_access_token" class="form-control" value="${escAttr(fb.access_token || '')}" placeholder="EAAC..." />
+                <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">
+                  Token de larga duración. Se genera desde Facebook Developers. Requiere permisos: <code>pages_manage_posts</code>, <code>pages_read_engagement</code>.
+                </small>
+              </div>
+            </div>
+          </details>
+
           <div class="form-actions" style="margin-top:16px">
             <button type="submit" class="btn btn--primary">Guardar plantilla</button>
           </div>
@@ -194,6 +218,11 @@ function renderPage(container, settings, categories) {
         api_key: fd.get('ai_api_key') || '',
         model: fd.get('ai_model') || '',
         system_prompt: fd.get('ai_system_prompt') || ''
+      },
+      facebook: {
+        page_id: fd.get('fb_page_id') || '',
+        instagram_id: fd.get('fb_instagram_id') || '',
+        access_token: fd.get('fb_access_token') || ''
       }
     };
 

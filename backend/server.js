@@ -11,6 +11,7 @@ import providersRouter from './routes/providers.js';
 import salesRouter from './routes/sales.js';
 import categoriesRouter from './routes/categories.js';
 import backupRouter from './routes/backup.js';
+import publicationsRouter from './routes/publications.js';
 import { generateCatalogFile } from './lib/catalogGenerator.js';
 import { ensureWebp } from './lib/imageUtils.js';
 
@@ -69,6 +70,7 @@ app.use('/api/providers', providersRouter);
 app.use('/api/sales', salesRouter);
 app.use('/api/categories', categoriesRouter);
 app.use('/api/backup', backupRouter);
+app.use('/api/publications', publicationsRouter);
 
 app.post('/api/upload', (req, res) => {
   upload.single('image')(req, res, async (err) => {

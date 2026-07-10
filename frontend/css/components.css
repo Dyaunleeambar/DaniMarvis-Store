@@ -583,3 +583,79 @@ tr:hover td { background: rgba(201,132,122,.03); }
   font-size: .85rem;
   font-weight: 500;
 }
+
+/* ── Publications grid ─────────────────────────────────────── */
+.publications-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
+.publication-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+.publication-card-img {
+  width: 100%;
+  height: 180px;
+  overflow: hidden;
+  background: var(--bg);
+}
+.publication-card-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.publication-card-img--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+.publication-card-body {
+  padding: 14px 16px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.publication-card-title {
+  font-weight: 600;
+  font-size: .9rem;
+  margin-bottom: 2px;
+}
+.publication-card-date {
+  font-size: .75rem;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.publication-card-text {
+  font-size: .82rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  flex: 1;
+  margin-bottom: 10px;
+}
+.publication-card-actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+/* ── Publication detail ────────────────────────────────────── */
+.publication-detail-gallery {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.publication-detail-img {
+  width: 100%;
+  max-height: 300px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+.publication-detail-info {
+  margin-bottom: 16px;
+}

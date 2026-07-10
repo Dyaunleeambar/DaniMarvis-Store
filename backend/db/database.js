@@ -154,6 +154,16 @@ function createSchema() {
       sort_order INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now'))
     );
+    CREATE TABLE IF NOT EXISTS publications (
+      id TEXT PRIMARY KEY,
+      product_id TEXT,
+      product_name TEXT DEFAULT '',
+      publish_text TEXT DEFAULT '',
+      images TEXT DEFAULT '[]',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (product_id) REFERENCES products(id)
+    );
   `);
   seedCategories();
 }

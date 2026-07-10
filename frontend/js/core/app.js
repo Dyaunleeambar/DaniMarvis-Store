@@ -12,6 +12,7 @@ import { render as renderCatalogImages } from '../views/catalogImagesView.js';
 import { render as renderSettings } from '../views/settingsView.js';
 import { render as renderLogin } from '../views/loginView.js';
 import { render as renderBackup } from '../views/backupView.js';
+import { render as renderPublications } from '../views/publicationsView.js';
 
 const toastEl = document.getElementById('toast');
 let _toastTimer = null;
@@ -174,6 +175,7 @@ async function bootstrap() {
   route('#/catalog-images', protect((_, c) => renderCatalogImages(c)));
   route('#/settings', protect((_, c) => renderSettings(c)));
   route('#/backup', protect((_, c) => renderBackup(c)));
+  route('#/publications', protect((_, c) => renderPublications(c)));
 
   window.addEventListener('routeChanged', (e) => {
     updateActiveLink(e.detail.hash);

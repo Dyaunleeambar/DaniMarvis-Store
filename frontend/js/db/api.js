@@ -99,6 +99,14 @@ export const api = {
     return data;
   },
 
+  // Publications
+  getPublications: () => request('GET', '/publications'),
+  getPublication: (id) => request('GET', `/publications/${id}`),
+  createPublication: (data) => request('POST', '/publications', data),
+  updatePublication: (id, data) => request('PUT', `/publications/${id}`, data),
+  deletePublication: (id) => request('DELETE', `/publications/${id}`),
+  publishPublication: (id, platform = 'facebook') => request('POST', `/publications/${id}/publish`, { platform }),
+
   // AI
   generateDescription: (data) => request('POST', '/generate-description', data),
 
