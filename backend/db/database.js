@@ -72,6 +72,7 @@ export async function initDB() {
   migrateProviderInfo();
   migrateCatalogVisible();
   migratePublishConfig();
+  migratePublicationDate();
   saveDB();
 }
 
@@ -236,6 +237,19 @@ function migratePublishConfig() {
       }
     });
     db.prepare("UPDATE settings SET publish_config = ? WHERE id = 1").run(defaults);
+  }
+}
+
+function migratePublicationDate() {
+  try {
+    db.exec("ALTER TABLE publications ADD COLUMN publication_date TEXT");
+  } catch (_) {}
+  try {
+    db.exec("ALTER TABLE publications ADD COLUMN sort_order INTEGER DEFAULT 0");
+  } catch (_) {}
+  const pubs = db.prepare("SELECT id, created_at FROM publications WHERE publication_date IS NULL").all();
+  for (const p of pubs) {
+    db.prepare("UPDATE publications SET publication_date = ? WHERE id = ?").run(p.created_at, p.id);
   }
 }
 

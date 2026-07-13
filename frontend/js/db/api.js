@@ -105,6 +105,7 @@ export const api = {
   createPublication: (data) => request('POST', '/publications', data),
   updatePublication: (id, data) => request('PUT', `/publications/${id}`, data),
   deletePublication: (id) => request('DELETE', `/publications/${id}`),
+  reorderPublications: (order) => request('PATCH', '/publications/reorder', { order }),
   publishPublication: (id, platform = 'facebook') => request('POST', `/publications/${id}/publish`, { platform }),
 
   // AI

@@ -18,6 +18,18 @@ function truncate(text, len = 120) {
   return text.length > len ? text.slice(0, len) + '...' : text;
 }
 
+function formatDateInput(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (isNaN(d)) return dateStr.slice(0, 16);
+  return d.toISOString().slice(0, 16);
+}
+
+function toSqlDatetime(localValue) {
+  if (!localValue) return new Date().toISOString().slice(0, 19).replace('T', ' ');
+  return localValue.replace('T', ' ');
+}
+
 export async function render(container) {
   currentContainer = container;
   container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-secondary)">Cargando publicaciones...</div>';
@@ -41,7 +53,7 @@ function renderPage(container) {
       <div class="page-header">
         <div>
           <h1>Publicaciones</h1>
-          <p>${allPublications.length} publicación(es) realizadas</p>
+          <p>${allPublications.length} publicación(es)</p>
         </div>
         <button class="btn btn--primary" onclick="window._openPublicationForm(null)">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -49,11 +61,14 @@ function renderPage(container) {
         </button>
       </div>
 
-      <div class="publications-grid">
+      <div class="publications-grid" id="publications-grid">
         ${allPublications.length === 0
           ? '<div class="empty-state" style="grid-column:1/-1;padding:48px"><h3>No hay publicaciones</h3><p>Creá tu primera publicación para comenzar</p></div>'
-          : allPublications.map(p => `
-            <div class="card publication-card">
+          : allPublications.map((p, idx) => `
+            <div class="card publication-card" draggable="true" data-id="${p.id}" data-idx="${idx}">
+              <div class="publication-card-drag" title="Arrastrar para reordenar">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>
+              </div>
               ${p.images?.[0]
                 ? `<div class="publication-card-img">
                     <img src="${escAttr(p.images[0])}" alt="" />
@@ -64,7 +79,7 @@ function renderPage(container) {
               }
               <div class="publication-card-body">
                 <div class="publication-card-title">${escHtml(p.product_name || 'Sin producto')}</div>
-                <div class="publication-card-date">${formatDate(p.created_at)}</div>
+                <div class="publication-card-date">${formatDate(p.publication_date || p.created_at)}</div>
                 <div class="publication-card-text">${escHtml(truncate(p.publish_text))}</div>
                 <div class="publication-card-actions">
                   <button class="btn btn--sm btn--ghost" onclick="window._viewPublication('${p.id}')" title="Ver">
@@ -91,6 +106,51 @@ function renderPage(container) {
       </div>
     </div>
   `;
+
+  initDragAndDrop();
+}
+
+function initDragAndDrop() {
+  const grid = document.getElementById('publications-grid');
+  if (!grid) return;
+  let dragId = null;
+
+  grid.querySelectorAll('.publication-card').forEach(card => {
+    card.addEventListener('dragstart', (e) => {
+      dragId = card.dataset.id;
+      card.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    card.addEventListener('dragend', () => {
+      dragId = null;
+      card.classList.remove('dragging');
+      grid.querySelectorAll('.publication-card').forEach(c => c.classList.remove('drag-over'));
+    });
+    card.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      card.classList.add('drag-over');
+    });
+    card.addEventListener('dragleave', () => {
+      card.classList.remove('drag-over');
+    });
+    card.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      card.classList.remove('drag-over');
+      if (!dragId || dragId === card.dataset.id) return;
+      const fromIdx = allPublications.findIndex(p => p.id === dragId);
+      const toIdx = allPublications.findIndex(p => p.id === card.dataset.id);
+      if (fromIdx === -1 || toIdx === -1) return;
+      const [moved] = allPublications.splice(fromIdx, 1);
+      allPublications.splice(toIdx, 0, moved);
+      renderPage(currentContainer);
+      try {
+        await api.reorderPublications(allPublications.map(p => p.id));
+      } catch (err) {
+        showToast('Error al reordenar: ' + err.message, 'error');
+      }
+    });
+  });
 }
 
 window._openPublicationForm = function(pub) {
@@ -98,6 +158,10 @@ window._openPublicationForm = function(pub) {
   const productOptions = allProducts.map(pr =>
     `<option value="${pr.id}" ${pub?.product_id === pr.id ? 'selected' : ''}>${escHtml(pr.name)}</option>`
   ).join('');
+
+  const currentDate = pub?.publication_date
+    ? formatDateInput(pub.publication_date)
+    : new Date().toISOString().slice(0, 16);
 
   openModal(`
     <div class="modal-header">
@@ -108,22 +172,29 @@ window._openPublicationForm = function(pub) {
     </div>
     <form id="publication-form">
       <input type="hidden" name="id" value="${pub?.id || ''}" />
-      <div class="form-group">
-        <label>Producto asociado</label>
-        <select name="product_id" class="form-control" id="pub-product-select">
-          <option value="">Sin producto</option>
-          ${productOptions}
-        </select>
+      <div class="form-row" style="grid-template-columns:1fr 1fr">
+        <div class="form-group">
+          <label>Producto asociado</label>
+          <select name="product_id" class="form-control" id="pub-product-select">
+            <option value="">Sin producto</option>
+            ${productOptions}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Fecha de publicación</label>
+          <input type="datetime-local" name="publication_date" class="form-control" value="${currentDate}" />
+          <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">Elegí la fecha para organizar tus publicaciones</small>
+        </div>
       </div>
       <div class="form-group">
         <label>Texto de publicación</label>
         <textarea name="publish_text" class="form-control" id="pub-publish-text" style="min-height:150px">${escHtml(pub?.publish_text || '')}</textarea>
         <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
           <button type="button" class="btn btn--sm btn--secondary" id="pub-btn-generate">
-            📝 Generar desde producto
+            Generar desde producto
           </button>
           <button type="button" class="btn btn--sm btn--ghost" id="pub-btn-copy">
-            📋 Copiar
+            Copiar
           </button>
         </div>
       </div>
@@ -259,6 +330,7 @@ window._openPublicationForm = function(pub) {
     const fd = new FormData(e.target);
     const data = Object.fromEntries(fd);
     data.images = pubImages;
+    data.publication_date = toSqlDatetime(data.publication_date);
 
     if (!data.publish_text?.trim()) {
       showToast('El texto de publicación es obligatorio', 'error');
@@ -306,7 +378,7 @@ window._viewPublication = async function(id) {
         </div>
         <div class="detail-row">
           <span class="detail-label">Fecha</span>
-          <span class="detail-value">${formatDate(p.created_at)}</span>
+          <span class="detail-value">${formatDate(p.publication_date || p.created_at)}</span>
         </div>
       </div>
       <div class="publish-text-section">
@@ -315,8 +387,8 @@ window._viewPublication = async function(id) {
       </div>
       <div class="form-actions">
         <button type="button" class="btn btn--secondary" onclick="closeModal()">Cerrar</button>
-        <button type="button" class="btn btn--primary" id="view-copy-btn">📋 Copiar texto</button>
-        <button type="button" class="btn btn--primary" id="view-fb-btn" style="background:#1877f2">🌐 Publicar en Facebook</button>
+        <button type="button" class="btn btn--primary" id="view-copy-btn">Copiar texto</button>
+        <button type="button" class="btn btn--primary" id="view-fb-btn" style="background:#1877f2">Publicar en Facebook</button>
       </div>
     `);
     setModalCloseGuard(null);
@@ -350,7 +422,7 @@ window._publishPublication = async function(id, platform = 'facebook') {
   if (!ok) return;
   try {
     const result = await api.publishPublication(id, platform);
-    showToast(`Publicado en ${result.platform} ✓`, 'success');
+    showToast(`Publicado en ${result.platform}`, 'success');
     if (result.post_url) {
       const view = await confirmDialog('Publicación exitosa. ¿Abrir en el navegador?', {
         title: 'Publicado',

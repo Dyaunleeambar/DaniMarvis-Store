@@ -641,6 +641,28 @@ tr:hover td { background: rgba(201,132,122,.03); }
   gap: 4px;
   flex-wrap: wrap;
 }
+.publication-card-drag {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,.45);
+  color: #fff;
+  border-radius: var(--radius-sm);
+  cursor: grab;
+  opacity: 0;
+  transition: opacity .15s;
+  z-index: 2;
+}
+.publication-card:hover .publication-card-drag { opacity: 1; }
+.publication-card-drag:active { cursor: grabbing; }
+.publication-card { position: relative; }
+.publication-card.dragging { opacity: .4; border-style: dashed; }
+.publication-card.drag-over { box-shadow: 0 0 0 2px var(--rose); }
 
 /* ── Publication detail ────────────────────────────────────── */
 .publication-detail-gallery {
