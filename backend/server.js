@@ -93,7 +93,7 @@ app.post('/api/upload', (req, res) => {
 app.get('/api/counts', (req, res) => {
   const db = getDB();
   res.json({
-    products: db.prepare('SELECT COUNT(*) as c FROM products').get().c,
+    products: db.prepare('SELECT COUNT(*) as c FROM products WHERE catalog_visible = 1').get().c,
     providers: db.prepare('SELECT COUNT(*) as c FROM providers').get().c,
     sales: db.prepare('SELECT COUNT(*) as c FROM sales').get().c,
   });
@@ -198,7 +198,7 @@ app.get('/api/dashboard', (req, res) => {
 
   const stats = db.prepare(`
     SELECT
-      (SELECT COUNT(*) FROM products WHERE status = 'active') as total_products,
+      (SELECT COUNT(*) FROM products WHERE catalog_visible = 1) as total_products,
       (SELECT COUNT(*) FROM providers) as total_providers,
       (SELECT COUNT(*) FROM sales) as total_sales,
       (SELECT COALESCE(SUM(total_amount), 0) FROM sales) as total_revenue,

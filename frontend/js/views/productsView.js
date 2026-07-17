@@ -18,7 +18,7 @@ function categoryOptions(selected = '') {
 function filterProducts(products, filter) {
   return products.filter(p => {
     if (filter.category && p.category !== filter.category) return false;
-    if (filter.status && p.status !== filter.status) return false;
+    if (filter.catalog_visible !== undefined && filter.catalog_visible !== '' && String(p.catalog_visible) !== String(filter.catalog_visible)) return false;
     if (filter.q) {
       const q = filter.q.toLowerCase();
       const name = (p.name || '').toLowerCase();
@@ -30,7 +30,7 @@ function filterProducts(products, filter) {
 }
 
 function hasActiveFilter(filter) {
-  return !!(filter.q || filter.category || filter.status);
+  return !!(filter.q || filter.category || (filter.catalog_visible !== undefined && filter.catalog_visible !== ''));
 }
 
 function escHtml(str) {
@@ -88,9 +88,9 @@ function renderTable(container, products, providers) {
           ${categoryOptions(currentFilter.category)}
         </select>
         <select id="filter-status" class="form-control form-control--small">
-          <option value="">Todos los estados</option>
-          <option value="active" ${currentFilter.status === 'active' ? 'selected' : ''}>Activos</option>
-          <option value="archived" ${currentFilter.status === 'archived' ? 'selected' : ''}>Archivados</option>
+          <option value="">Todos</option>
+          <option value="1" ${currentFilter.catalog_visible === '1' ? 'selected' : ''}>Visibles (catálogo)</option>
+          <option value="0" ${currentFilter.catalog_visible === '0' ? 'selected' : ''}>Ocultos</option>
         </select>
       </div>
 
@@ -174,7 +174,7 @@ function renderTable(container, products, providers) {
     currentFilter = {};
     if (searchInput.value.trim()) currentFilter.q = searchInput.value.trim();
     if (catSelect.value) currentFilter.category = catSelect.value;
-    if (statusSelect.value) currentFilter.status = statusSelect.value;
+    if (statusSelect.value) currentFilter.catalog_visible = statusSelect.value;
     renderTable(currentContainer, filterProducts(allProducts, currentFilter), currentProviders);
 
     if (searchHadFocus) {

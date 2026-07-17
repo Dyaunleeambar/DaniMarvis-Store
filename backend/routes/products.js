@@ -19,7 +19,7 @@ function imagesJson(images) {
 
 router.get('/', (req, res) => {
   const db = getDB();
-  const { category, status, provider_id, q } = req.query;
+  const { category, catalog_visible, provider_id, q } = req.query;
   let sql = `SELECT p.*, pr.name as provider_name, pr.commission_rate as provider_commission_rate
              FROM products p
              LEFT JOIN providers pr ON pr.id = p.provider_id`;
@@ -27,7 +27,7 @@ router.get('/', (req, res) => {
   const params = [];
 
   if (category) { conditions.push('p.category = ?'); params.push(category); }
-  if (status) { conditions.push('p.status = ?'); params.push(status); }
+  if (catalog_visible !== undefined && catalog_visible !== '') { conditions.push('p.catalog_visible = ?'); params.push(parseInt(catalog_visible)); }
   if (provider_id) { conditions.push('p.provider_id = ?'); params.push(provider_id); }
   if (q) { conditions.push('(p.name LIKE ? OR p.description LIKE ?)'); params.push(`%${q}%`, `%${q}%`); }
 
@@ -134,7 +134,7 @@ router.delete('/:id', (req, res) => {
 
   const hasSales = db.prepare('SELECT COUNT(*) as c FROM sales WHERE product_id = ?').get(req.params.id);
   if (hasSales.c > 0) {
-    db.prepare('UPDATE products SET status = ? WHERE id = ?').run('archived', req.params.id);
+    db.prepare('UPDATE products SET catalog_visible = 0, updated_at = datetime(\'now\') WHERE id = ?').run(req.params.id);
     return res.json({ message: 'Producto archivado (tiene ventas asociadas)' });
   }
 
