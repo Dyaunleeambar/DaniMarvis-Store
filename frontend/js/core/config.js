@@ -12,4 +12,5 @@ export const ROUTE_TITLES = {
   '#/settings': 'Configuración',
   '#/backup': 'Respaldos',
   '#/publications': 'Publicaciones',
+  '#/exports': 'Exportaciones',
 };

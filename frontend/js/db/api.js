@@ -115,6 +115,12 @@ export const api = {
   generateCatalog: () => request('POST', '/generate-catalog'),
   toggleVisibility: (id) => request('PATCH', `/products/${id}/visibility`),
 
+  // Exports
+  getExports: () => request('GET', '/exports'),
+  getExport: (id) => request('GET', `/exports/${id}`),
+  createExport: (data) => request('POST', '/exports', data),
+  deleteExport: (id) => request('DELETE', `/exports/${id}`),
+
   // Auth
   login: (username, password) => request('POST', '/login', { username, password }),
 };

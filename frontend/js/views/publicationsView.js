@@ -1,6 +1,6 @@
 import { api } from '../db/api.js';
 import { openModal, closeModal, setModalCloseGuard, showToast, confirmDialog } from '../core/app.js';
-import { formatDate } from '../utils/utils.js';
+import { formatDate, debounce } from '../utils/utils.js';
 
 function escHtml(str) {
   return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -55,10 +55,6 @@ function renderPage(container) {
           <h1>Publicaciones</h1>
           <p>${allPublications.length} publicación(es)</p>
         </div>
-        <button class="btn btn--primary" onclick="window._openPublicationForm(null)">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          Nueva publicación
-        </button>
       </div>
 
       <div class="publications-grid" id="publications-grid">
@@ -104,6 +100,9 @@ function renderPage(container) {
           `).join('')
         }
       </div>
+      <button class="btn btn--primary btn--fab" onclick="window._openPublicationForm(null)" title="Nueva publicación">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </button>
     </div>
   `;
 
@@ -153,6 +152,13 @@ function initDragAndDrop() {
   });
 }
 
+function categoryOptions(selected = '') {
+  const cats = [...new Set(allProducts.map(p => p.category).filter(Boolean))].sort();
+  return cats.map(c =>
+    `<option value="${escAttr(c)}" ${selected === c ? 'selected' : ''}>${escHtml(c)}</option>`
+  ).join('');
+}
+
 window._openPublicationForm = function(pub) {
   const isEdit = !!pub;
   const productOptions = allProducts.map(pr =>
@@ -173,8 +179,15 @@ window._openPublicationForm = function(pub) {
     <form id="publication-form">
       <input type="hidden" name="id" value="${pub?.id || ''}" />
       <div class="form-row" style="grid-template-columns:1fr 1fr">
-        <div class="form-group">
+        <div class="form-group" style="grid-column:1/-1">
           <label>Producto asociado</label>
+          <div style="display:flex;gap:8px;margin-bottom:6px">
+            <input type="text" id="pub-product-search" class="form-control" placeholder="Buscar producto..." style="flex:1" />
+            <select id="pub-product-category" class="form-control form-control--small" style="max-width:200px">
+              <option value="">Todas las categorías</option>
+              ${categoryOptions('')}
+            </select>
+          </div>
           <select name="product_id" class="form-control" id="pub-product-select">
             <option value="">Sin producto</option>
             ${productOptions}
@@ -242,6 +255,29 @@ window._openPublicationForm = function(pub) {
   const fileInput = document.getElementById('pub-image-file');
   const urlInput = document.getElementById('pub-image-url-input');
   const addUrlBtn = document.getElementById('pub-btn-add-url');
+
+  const searchInput = document.getElementById('pub-product-search');
+  const catSelect = document.getElementById('pub-product-category');
+  const productSelect = document.getElementById('pub-product-select');
+
+  function renderProductSelect() {
+    const q = searchInput.value.toLowerCase();
+    const cat = catSelect.value;
+    const currentVal = productSelect.value;
+    const filtered = allProducts.filter(p => {
+      if (cat && p.category !== cat) return false;
+      if (q && !p.name.toLowerCase().includes(q)) return false;
+      return true;
+    });
+    productSelect.innerHTML = '<option value="">Sin producto</option>' +
+      filtered.map(pr =>
+        `<option value="${pr.id}" ${pr.id === currentVal ? 'selected' : ''}>${escHtml(pr.name)}</option>`
+      ).join('');
+  }
+
+  const debouncedRender = debounce(renderProductSelect, 200);
+  searchInput.addEventListener('input', debouncedRender);
+  catSelect.addEventListener('change', renderProductSelect);
 
   function renderThumbs() {
     thumbsContainer.innerHTML = pubImages.map((url, i) =>

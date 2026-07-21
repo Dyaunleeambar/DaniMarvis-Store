@@ -75,10 +75,6 @@ function renderTable(container, products, providers) {
             ? `${products.length} producto(s) encontrados de ${allProducts.length}`
             : `${products.length} producto(s) registrados`}</p>
         </div>
-        <button class="btn btn--primary" onclick="window._openProductForm(null)">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          Nuevo producto
-        </button>
       </div>
 
       <div class="filter-bar">
@@ -159,6 +155,9 @@ function renderTable(container, products, providers) {
           </table>
         </div>
       </div>
+      <button class="btn btn--primary btn--fab" onclick="window._openProductForm(null)" title="Nuevo producto">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </button>
     </div>
   `;
 

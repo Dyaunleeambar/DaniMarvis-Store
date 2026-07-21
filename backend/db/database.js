@@ -165,6 +165,15 @@ function createSchema() {
       updated_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (product_id) REFERENCES products(id)
     );
+    CREATE TABLE IF NOT EXISTS exports (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      style TEXT DEFAULT 'table',
+      fields TEXT DEFAULT '[]',
+      product_ids TEXT DEFAULT '[]',
+      product_count INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
   `);
   seedCategories();
 }

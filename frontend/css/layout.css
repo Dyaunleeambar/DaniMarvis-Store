@@ -100,6 +100,12 @@
 }
 .sidebar-link--active svg { stroke: var(--rose-light); }
 
+.sidebar-divider {
+  height: 1px;
+  background: rgba(255,255,255,.06);
+  margin: 8px 16px;
+}
+
 .sidebar-footer {
   padding: 12px 16px;
   border-top: 1px solid rgba(255,255,255,.06);
