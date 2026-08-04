@@ -13,6 +13,7 @@ import categoriesRouter from './routes/categories.js';
 import backupRouter from './routes/backup.js';
 import publicationsRouter from './routes/publications.js';
 import exportsRouter from './routes/exports.js';
+import copilotRouter from './routes/copilot.js';
 import { generateCatalogFile } from './lib/catalogGenerator.js';
 import { ensureWebp } from './lib/imageUtils.js';
 
@@ -73,6 +74,7 @@ app.use('/api/categories', categoriesRouter);
 app.use('/api/backup', backupRouter);
 app.use('/api/publications', publicationsRouter);
 app.use('/api/exports', exportsRouter);
+app.use('/api/copilot', copilotRouter);
 
 app.post('/api/upload', (req, res) => {
   upload.single('image')(req, res, async (err) => {
@@ -192,6 +194,41 @@ app.post('/api/generate-description', async (req, res) => {
   } catch (err) {
     console.error('[AI] Error:', err);
     res.status(500).json({ error: 'Error al generar descripción: ' + err.message });
+  }
+});
+
+app.post('/api/generate-image', async (req, res) => {
+  const { prompt } = req.body;
+  if (!prompt || !prompt.trim()) {
+    return res.status(400).json({ error: 'El prompt es obligatorio' });
+  }
+
+  const q = encodeURIComponent(prompt.trim());
+  const seed = Math.floor(Math.random() * 1e9);
+  const url = `https://image.pollinations.ai/prompt/${q}?width=1080&height=1080&seed=${seed}&nologo=true&model=flux`;
+  const timeout = 90;
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout * 1000);
+
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => '');
+      throw new Error(`Pollinations ${response.status}: ${errBody.slice(0, 200)}`);
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const dataUrl = `data:image/jpeg;base64,${buffer.toString('base64')}`;
+    res.json({ dataUrl });
+  } catch (err) {
+    console.error('[Image] Error:', err);
+    if (err.name === 'AbortError') {
+      return res.status(504).json({ error: 'Tiempo de espera agotado (el modelo tarda en iniciarse). Intentá de nuevo.' });
+    }
+    res.status(500).json({ error: 'Error al generar imagen: ' + err.message });
   }
 });
 

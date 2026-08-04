@@ -110,6 +110,7 @@ export const api = {
 
   // AI
   generateDescription: (data) => request('POST', '/generate-description', data),
+  generateImage: (data) => request('POST', '/generate-image', data),
 
   // Catalog
   generateCatalog: () => request('POST', '/generate-catalog'),
@@ -120,6 +121,9 @@ export const api = {
   getExport: (id) => request('GET', `/exports/${id}`),
   createExport: (data) => request('POST', '/exports', data),
   deleteExport: (id) => request('DELETE', `/exports/${id}`),
+
+  // Copilot / Dreamina
+  copilotImport: (data) => request('POST', '/copilot/import', data),
 
   // Auth
   login: (username, password) => request('POST', '/login', { username, password }),

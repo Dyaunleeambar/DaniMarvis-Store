@@ -25,12 +25,12 @@ router.get('/:id', (req, res) => {
 
 router.post('/', (req, res) => {
   const db = getDB();
-  const { title, style, fields, product_ids, product_count } = req.body;
+  const { title, style, kind, fields, product_ids, product_count } = req.body;
   if (!title) return res.status(400).json({ error: 'El título es obligatorio' });
   const id = uuid();
   db.prepare(
-    'INSERT INTO exports (id, title, style, fields, product_ids, product_count) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run(id, title, style || 'table', JSON.stringify(fields || []), JSON.stringify(product_ids || []), product_count || 0);
+    'INSERT INTO exports (id, title, style, kind, fields, product_ids, product_count) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(id, title, style || 'table', kind || 'pdf', JSON.stringify(fields || []), JSON.stringify(product_ids || []), product_count || 0);
   const created = db.prepare('SELECT * FROM exports WHERE id = ?').get(id);
   try { created.fields = JSON.parse(created.fields || '[]'); } catch { created.fields = []; }
   try { created.product_ids = JSON.parse(created.product_ids || '[]'); } catch { created.product_ids = []; }

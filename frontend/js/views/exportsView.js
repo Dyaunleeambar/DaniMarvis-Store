@@ -2,6 +2,7 @@ import { api } from '../db/api.js';
 import { openModal, closeModal, showToast, confirmDialog } from '../core/app.js';
 import { renderConfig } from './exportsConfigView.js';
 import { renderNew } from './exportsNewView.js';
+import { renderImages } from './exportsImagesView.js';
 
 let currentContainer = null;
 let currentTab = 'history';
@@ -30,19 +31,21 @@ export async function render(container) {
 function renderPage(container) {
   const isConfig = currentTab === 'config';
   const isNew = currentTab === 'new';
+  const isImages = currentTab === 'images';
 
   container.innerHTML = `
     <div class="page">
       <div class="page-header">
         <div>
           <h1>Exportaciones</h1>
-          <p>Generá reportes PDF de tus productos</p>
+          <p>Generá reportes PDF e imágenes promocionales de tus productos</p>
         </div>
       </div>
       <div class="filter-bar" style="gap:4px">
         <button class="btn btn--sm ${currentTab === 'history' ? 'btn--primary' : 'btn--secondary'}" id="tab-history">Historial</button>
         <button class="btn btn--sm ${isNew ? 'btn--primary' : 'btn--secondary'}" id="tab-new">Nueva exportación</button>
         <button class="btn btn--sm ${isConfig ? 'btn--primary' : 'btn--secondary'}" id="tab-config">Configuración</button>
+        <button class="btn btn--sm ${isImages ? 'btn--primary' : 'btn--secondary'}" id="tab-images">Imágenes</button>
       </div>
       <div id="exports-tab-content"></div>
     </div>
@@ -51,6 +54,7 @@ function renderPage(container) {
   document.getElementById('tab-history').addEventListener('click', () => { currentTab = 'history'; renderPage(container); });
   document.getElementById('tab-new').addEventListener('click', () => { currentTab = 'new'; renderPage(container); });
   document.getElementById('tab-config').addEventListener('click', () => { currentTab = 'config'; renderPage(container); });
+  document.getElementById('tab-images').addEventListener('click', () => { currentTab = 'images'; renderPage(container); });
 
   const content = document.getElementById('exports-tab-content');
 
@@ -58,6 +62,8 @@ function renderPage(container) {
     renderConfig(content);
   } else if (isNew) {
     renderNew(content, () => { currentTab = 'history'; renderPage(container); });
+  } else if (isImages) {
+    renderImages(content, () => { currentTab = 'history'; renderPage(container); });
   } else {
     renderHistory(content);
   }
@@ -72,7 +78,7 @@ async function renderHistory(container) {
         <div class="empty-state" style="padding:48px">
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
           <h3>Sin exportaciones</h3>
-          <p>Creá tu primera exportación para generar un PDF</p>
+          <p>Creá tu primera exportación (PDF o imágenes promocionales)</p>
         </div>`;
       return;
     }
@@ -81,9 +87,16 @@ async function renderHistory(container) {
         ${exports.map(e => `
           <div class="card" style="padding:16px;display:flex;align-items:center;gap:16px">
             <div style="flex:1">
-              <div style="font-weight:600;font-size:.9rem">${escHtml(e.title)}</div>
+              <div style="font-weight:600;font-size:.9rem">
+                ${e.kind === 'images' ? '<span style="color:var(--rose)">🖼</span> ' : ''}${escHtml(e.title)}
+              </div>
               <div style="font-size:.78rem;color:var(--text-muted);margin-top:2px">
-                ${e.product_count} producto(s) · ${e.style === 'list' ? 'Lista detallada' : 'Tabla simple'} · ${formatDate(e.created_at)}
+                ${e.kind === 'images'
+                  ? (e.style === 'copilot'
+                      ? `${e.product_count} anuncio(s) · Copilot / Dreamina`
+                      : `${e.product_count} producto(s) · Plantilla ${e.style}`)
+                  : `${e.product_count} producto(s) · ${e.style === 'list' ? 'Lista detallada' : 'Tabla simple'}`}
+                 · ${formatDate(e.created_at)}
               </div>
             </div>
             <button class="btn btn--sm btn--ghost" onclick="window._deleteExport('${e.id}')" title="Eliminar" style="color:var(--error)">

@@ -1,128 +1,395 @@
 const CANVAS_SIZE = 1080;
 const ROSE = '#c9847a';
-const ROSE_DARK = '#a8645a';
 const DARK = '#221815';
 const WHITE = '#ffffff';
 const BG = '#faf8f6';
 const TEXT_MUTED = '#8a7e7a';
 
-export async function generateProductImage(product) {
+export const TEMPLATES = [
+  { id: 'clasica', name: 'Clásica', description: 'Degradado claro, logo, círculo y barra de información' },
+  { id: 'moderna', name: 'Moderna', description: 'Fondo oscuro con acento de color' },
+  { id: 'minimal', name: 'Minimal', description: 'Imagen grande y texto limpio' },
+  { id: 'oferta', name: 'Oferta', description: 'Insignia OFERTA con precio destacado' },
+];
+
+export const ACCENT_COLORS = [
+  { id: 'rose', name: 'Rosa', value: '#c9847a' },
+  { id: 'red', name: 'Rojo', value: '#e63946' },
+  { id: 'green', name: 'Verde', value: '#25d366' },
+  { id: 'blue', name: 'Azul', value: '#1877f2' },
+  { id: 'purple', name: 'Púrpura', value: '#6c5ce7' },
+  { id: 'orange', name: 'Naranja', value: '#f39c12' },
+];
+
+export const DEFAULT_OPTIONS = {
+  template: 'clasica',
+  ctaText: '📲  Escríbeme y llévate este producto',
+  whatsappText: '💬  Comprar por WhatsApp',
+  showLogo: true,
+  accentColor: '#c9847a',
+  backgroundImage: null,
+};
+
+const TEMPLATE_DRAWERS = {
+  clasica: { scheme: 'light', draw: drawClasica },
+  moderna: { scheme: 'dark', draw: drawModerna },
+  minimal: { scheme: 'light', draw: drawMinimal },
+  oferta: { scheme: 'light', draw: drawOferta },
+};
+
+export async function generateProductImage(product, options = {}) {
+  const opts = { ...DEFAULT_OPTIONS, ...options };
   const canvas = document.createElement('canvas');
   canvas.width = CANVAS_SIZE;
   canvas.height = CANVAS_SIZE;
   const ctx = canvas.getContext('2d');
 
-  // ── Background ──────────────────────────────────────────────
-  const grad = ctx.createLinearGradient(0, 0, 0, CANVAS_SIZE);
-  grad.addColorStop(0, WHITE);
-  grad.addColorStop(1, BG);
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-
-  // Subtle decorative border
-  ctx.strokeStyle = ROSE;
-  ctx.lineWidth = 3;
-  ctx.strokeRect(20, 20, CANVAS_SIZE - 40, CANVAS_SIZE - 40);
-
-  // ── Logo ────────────────────────────────────────────────────
-  drawLogo(ctx, 60, 50);
-
-  // ── Product Image ───────────────────────────────────────────
-  const imgAreaY = 150;
-  const imgSize = 540;
-  const imgX = (CANVAS_SIZE - imgSize) / 2;
-
-  if (product.image_url) {
-    try {
-      const img = await loadImage(product.image_url);
-      drawImageCropped(ctx, img, imgX, imgAreaY, imgSize, imgSize);
-    } catch {
-      drawImagePlaceholder(ctx, imgX, imgAreaY, imgSize, imgSize);
+  let bgImg = null;
+  if (opts.backgroundImage) {
+    if (opts.backgroundImage instanceof HTMLImageElement) {
+      bgImg = opts.backgroundImage;
+    } else if (typeof opts.backgroundImage === 'string') {
+      try {
+        bgImg = await loadImage(opts.backgroundImage);
+      } catch { bgImg = null; }
     }
-  } else {
-    drawImagePlaceholder(ctx, imgX, imgAreaY, imgSize, imgSize);
   }
 
-  // ── Product Name ────────────────────────────────────────────
-  ctx.textAlign = 'center';
-  ctx.fillStyle = DARK;
-  ctx.font = 'bold 42px "Georgia", "Times New Roman", serif';
-  const nameLines = wrapText(ctx, product.name, 900);
-  let textY = imgAreaY + imgSize + 36;
-  nameLines.forEach(line => {
-    ctx.fillText(line, CANVAS_SIZE / 2, textY);
-    textY += 52;
-  });
+  let productImg = null;
+  const candidates = [];
+  if (Array.isArray(product.images)) candidates.push(...product.images);
+  if (product.image_url) candidates.push(product.image_url);
+  for (const src of candidates) {
+    if (!src) continue;
+    try {
+      productImg = await loadImage(src);
+      if (productImg) break;
+    } catch { /* probar siguiente */ }
+  }
 
-  // ── Price ───────────────────────────────────────────────────
-  textY += 12;
-  ctx.fillStyle = ROSE_DARK;
-  ctx.font = 'bold 58px "Georgia", serif';
-  const priceText = formatPrice(product.price);
-  ctx.fillText(priceText, CANVAS_SIZE / 2, textY);
-
-  // ── Commission + Warranty bar ───────────────────────────────
-  textY += 70;
-  const barY = textY;
-  const barW = 700;
-  const barH = 52;
-  const barX = (CANVAS_SIZE - barW) / 2;
-
-  ctx.fillStyle = DARK;
-  roundRect(ctx, barX, barY, barW, barH, 26);
-  ctx.fill();
-
-  ctx.fillStyle = WHITE;
-  ctx.font = 'bold 24px "Inter", "Arial", sans-serif';
-  ctx.textAlign = 'center';
-
-  const commText = product.commission_value > 0
-    ? `Comisión: ${formatPrice(product.commission_value)}`
-    : 'Sin comisión';
-  ctx.fillText(commText, CANVAS_SIZE / 2 - 110, barY + 34);
-
-  // Separator
-  ctx.fillStyle = 'rgba(255,255,255,.25)';
-  ctx.fillRect(CANVAS_SIZE / 2 + 20, barY + 12, 1.5, barH - 24);
-
-  const warrantyText = product.warranty ? `Garantía: ${product.warranty}` : 'Sin garantía';
-  ctx.fillStyle = WHITE;
-  ctx.fillText(warrantyText, CANVAS_SIZE / 2 + 150, barY + 34);
-
-  // ── CTA ─────────────────────────────────────────────────────
-  textY = barY + barH + 48;
-  ctx.fillStyle = ROSE;
-  ctx.font = '600 28px "Inter", "Arial", sans-serif';
-  ctx.fillText('📲  Escríbeme y llévate este producto', CANVAS_SIZE / 2, textY);
-
-  // WhatsApp button
-  textY += 64;
-  const btnW = 460;
-  const btnH = 64;
-  const btnX = (CANVAS_SIZE - btnW) / 2;
-  ctx.fillStyle = '#25D366';
-  roundRect(ctx, btnX, textY, btnW, btnH, 32);
-  ctx.fill();
-
-  ctx.fillStyle = WHITE;
-  ctx.font = 'bold 30px "Inter", "Arial", sans-serif';
-  ctx.fillText('💬  Comprar por WhatsApp', CANVAS_SIZE / 2, textY + 41);
-
-  // ── Footer brand ────────────────────────────────────────────
-  ctx.fillStyle = TEXT_MUTED;
-  ctx.font = '18px "Inter", "Arial", sans-serif';
-  ctx.fillText('DaniMarvis Store — Tu gestor de confianza', CANVAS_SIZE / 2, CANVAS_SIZE - 44);
+  const tpl = TEMPLATE_DRAWERS[opts.template] || TEMPLATE_DRAWERS.clasica;
+  prepareCanvas(ctx, bgImg, tpl.scheme);
+  await tpl.draw(ctx, product, opts, bgImg, productImg);
 
   return canvas;
 }
 
-function drawLogo(ctx, x, y) {
+export function canvasToBlob(canvas, type = 'image/png') {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(b => (b ? resolve(b) : reject(new Error('No se pudo generar el archivo'))), type);
+  });
+}
+
+export async function downloadCanvas(canvas, filename) {
+  const blob = await canvasToBlob(canvas);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export function slugify(text) {
+  return String(text || 'imagen')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 50) || 'imagen';
+}
+
+// ── Background ─────────────────────────────────────────────────
+
+function prepareCanvas(ctx, bgImg, scheme) {
+  if (!bgImg) return;
+  drawCover(ctx, bgImg);
+  const dark = scheme === 'dark';
+  const grad = ctx.createLinearGradient(0, 0, 0, CANVAS_SIZE);
+  grad.addColorStop(0, 'rgba(0,0,0,0)');
+  grad.addColorStop(0.62, dark ? 'rgba(26,20,18,.4)' : 'rgba(250,248,246,.45)');
+  grad.addColorStop(1, dark ? 'rgba(26,20,18,.88)' : 'rgba(250,248,246,.92)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+}
+
+function drawCover(ctx, img) {
+  const scale = Math.max(CANVAS_SIZE / img.width, CANVAS_SIZE / img.height);
+  const w = img.width * scale;
+  const h = img.height * scale;
+  ctx.drawImage(img, (CANVAS_SIZE - w) / 2, (CANVAS_SIZE - h) / 2, w, h);
+}
+
+// ── Templates ──────────────────────────────────────────────────
+
+function drawClasica(ctx, product, opts, bgImg, productImg) {
+  const accent = opts.accentColor;
+
+  if (!bgImg) {
+    const grad = ctx.createLinearGradient(0, 0, 0, CANVAS_SIZE);
+    grad.addColorStop(0, WHITE);
+    grad.addColorStop(1, BG);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+  }
+
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(20, 20, CANVAS_SIZE - 40, CANVAS_SIZE - 40);
+
+  if (opts.showLogo) drawLogo(ctx, 60, 50);
+
+  const imgAreaY = 160;
+  const imgSize = 500;
+  const imgX = (CANVAS_SIZE - imgSize) / 2;
+  drawProductImage(ctx, product, productImg, imgX, imgAreaY, imgSize, Math.min(imgSize / 2, 60));
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = DARK;
+  ctx.font = 'bold 42px "Georgia", "Times New Roman", serif';
+  const nameLines = wrapText(ctx, product.name, 900);
+  let y = imgAreaY + imgSize + 32;
+  nameLines.forEach(line => {
+    ctx.fillText(line, CANVAS_SIZE / 2, y);
+    y += 52;
+  });
+
+  y += 10;
+  ctx.fillStyle = accent;
+  ctx.font = 'bold 58px "Georgia", serif';
+  ctx.fillText(formatPrice(product.price), CANVAS_SIZE / 2, y);
+
+  y += 66;
+  const barW = 700;
+  const barH = 52;
+  const barX = (CANVAS_SIZE - barW) / 2;
+  ctx.fillStyle = DARK;
+  roundRect(ctx, barX, y, barW, barH, 26);
+  ctx.fill();
+
+  ctx.fillStyle = WHITE;
+  ctx.font = 'bold 24px "Inter", "Arial", sans-serif';
+  const commText = product.commission_value > 0
+    ? `Comisión: ${formatPrice(product.commission_value)}`
+    : 'Sin comisión';
+  ctx.fillText(commText, CANVAS_SIZE / 2 - 110, y + 34);
+
+  ctx.fillStyle = 'rgba(255,255,255,.25)';
+  ctx.fillRect(CANVAS_SIZE / 2 + 20, y + 12, 1.5, barH - 24);
+
+  ctx.fillStyle = WHITE;
+  const warrantyText = product.warranty ? `Garantía: ${product.warranty}` : 'Sin garantía';
+  ctx.fillText(warrantyText, CANVAS_SIZE / 2 + 150, y + 34);
+
+  y = y + barH + 44;
+  ctx.fillStyle = accent;
+  ctx.font = '600 28px "Inter", "Arial", sans-serif';
+  ctx.fillText(opts.ctaText, CANVAS_SIZE / 2, y);
+
+  y += 62;
+  const btnW = 460;
+  const btnH = 64;
+  const btnX = (CANVAS_SIZE - btnW) / 2;
+  ctx.fillStyle = '#25D366';
+  roundRect(ctx, btnX, y, btnW, btnH, 32);
+  ctx.fill();
+  ctx.fillStyle = WHITE;
+  ctx.font = 'bold 30px "Inter", "Arial", sans-serif';
+  ctx.fillText(opts.whatsappText, CANVAS_SIZE / 2, y + 41);
+
+  ctx.fillStyle = TEXT_MUTED;
+  ctx.font = '18px "Inter", "Arial", sans-serif';
+  ctx.fillText('DaniMarvis Store — Tu gestor de confianza', CANVAS_SIZE / 2, CANVAS_SIZE - 44);
+}
+
+function drawModerna(ctx, product, opts, bgImg, productImg) {
+  const accent = opts.accentColor;
+
+  if (!bgImg) {
+    ctx.fillStyle = DARK;
+    ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+    ctx.fillStyle = accent;
+    ctx.fillRect(0, 0, CANVAS_SIZE, 18);
+  }
+
+  if (opts.showLogo) drawLogo(ctx, 60, 46, { color: WHITE, accent, muted: '#b9adaa' });
+
+  const imgAreaY = 150;
+  const imgSize = 600;
+  const imgX = (CANVAS_SIZE - imgSize) / 2;
+  drawProductImage(ctx, product, productImg, imgX, imgAreaY, imgSize, 36);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = WHITE;
+  ctx.font = 'bold 44px "Inter", "Arial", sans-serif';
+  const nameLines = wrapText(ctx, product.name, 880);
+  let y = imgAreaY + imgSize + 40;
+  nameLines.forEach(line => {
+    ctx.fillText(line, CANVAS_SIZE / 2, y);
+    y += 54;
+  });
+
+  y += 14;
+  ctx.fillStyle = accent;
+  ctx.font = 'bold 72px "Inter", "Arial", sans-serif';
+  ctx.fillText(formatPrice(product.price), CANVAS_SIZE / 2, y);
+
+  y += 40;
+  ctx.strokeStyle = 'rgba(255,255,255,.15)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(CANVAS_SIZE / 2 - 160, y);
+  ctx.lineTo(CANVAS_SIZE / 2 + 160, y);
+  ctx.stroke();
+
+  y += 44;
+  ctx.fillStyle = accent;
+  ctx.font = '600 28px "Inter", "Arial", sans-serif';
+  ctx.fillText(opts.ctaText, CANVAS_SIZE / 2, y);
+
+  y += 64;
+  const btnW = 460;
+  const btnH = 68;
+  const btnX = (CANVAS_SIZE - btnW) / 2;
+  ctx.fillStyle = '#25D366';
+  roundRect(ctx, btnX, y, btnW, btnH, 34);
+  ctx.fill();
+  ctx.fillStyle = WHITE;
+  ctx.font = 'bold 30px "Inter", "Arial", sans-serif';
+  ctx.fillText(opts.whatsappText, CANVAS_SIZE / 2, y + 44);
+
+  ctx.fillStyle = '#b9adaa';
+  ctx.font = '18px "Inter", "Arial", sans-serif';
+  ctx.fillText('DaniMarvis Store — Tu gestor de confianza', CANVAS_SIZE / 2, CANVAS_SIZE - 44);
+}
+
+function drawMinimal(ctx, product, opts, bgImg, productImg) {
+  const accent = opts.accentColor;
+
+  if (!bgImg) {
+    ctx.fillStyle = WHITE;
+    ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+  }
+
+  const hasLogo = opts.showLogo;
+  const imgY = hasLogo ? 190 : 60;
+  const imgW = 940;
+  const imgH = 520;
+  const imgX = (CANVAS_SIZE - imgW) / 2;
+
+  if (hasLogo) drawLogo(ctx, 60, 46);
+  drawProductImage(ctx, product, productImg, imgX, imgY, imgW, imgH, 20);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = DARK;
+  ctx.font = 'bold 44px "Inter", "Arial", sans-serif';
+  const nameLines = wrapText(ctx, product.name, 900);
+  let y = imgY + imgH + 40;
+  nameLines.forEach(line => {
+    ctx.fillText(line, CANVAS_SIZE / 2, y);
+    y += 54;
+  });
+
+  y += 12;
+  ctx.fillStyle = accent;
+  ctx.font = 'bold 62px "Inter", "Arial", sans-serif';
+  ctx.fillText(formatPrice(product.price), CANVAS_SIZE / 2, y);
+
+  y += 42;
+  ctx.fillStyle = TEXT_MUTED;
+  ctx.font = '26px "Inter", "Arial", sans-serif';
+  ctx.fillText(opts.ctaText, CANVAS_SIZE / 2, y);
+
+  y += 60;
+  const btnW = 400;
+  const btnH = 62;
+  const btnX = (CANVAS_SIZE - btnW) / 2;
+  ctx.fillStyle = '#25D366';
+  roundRect(ctx, btnX, y, btnW, btnH, 31);
+  ctx.fill();
+  ctx.fillStyle = WHITE;
+  ctx.font = 'bold 28px "Inter", "Arial", sans-serif';
+  ctx.fillText(opts.whatsappText, CANVAS_SIZE / 2, y + 40);
+
+  ctx.fillStyle = TEXT_MUTED;
+  ctx.font = '16px "Inter", "Arial", sans-serif';
+  ctx.fillText('DaniMarvis Store', CANVAS_SIZE / 2, CANVAS_SIZE - 36);
+}
+
+function drawOferta(ctx, product, opts, bgImg, productImg) {
+  const accent = opts.accentColor;
+
+  if (!bgImg) {
+    const grad = ctx.createLinearGradient(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+    grad.addColorStop(0, WHITE);
+    grad.addColorStop(1, hexToRgba(accent, 0.18));
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+  }
+
+  ctx.fillStyle = accent;
+  roundRect(ctx, 770, 56, 250, 82, 16);
+  ctx.fill();
+  ctx.fillStyle = WHITE;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 38px "Inter", "Arial", sans-serif';
+  ctx.fillText('OFERTA', 895, 98);
+  ctx.textBaseline = 'alphabetic';
+
+  if (opts.showLogo) drawLogo(ctx, 60, 50);
+
+  const imgSize = 520;
+  const imgX = (CANVAS_SIZE - imgSize) / 2;
+  drawProductImage(ctx, product, productImg, imgX, 170, imgSize, Math.min(imgSize / 2, 60));
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = DARK;
+  ctx.font = 'bold 42px "Georgia", "Times New Roman", serif';
+  const nameLines = wrapText(ctx, product.name, 900);
+  let y = 170 + imgSize + 34;
+  nameLines.forEach(line => {
+    ctx.fillText(line, CANVAS_SIZE / 2, y);
+    y += 52;
+  });
+
+  y += 12;
+  ctx.fillStyle = accent;
+  ctx.font = 'bold 68px "Inter", "Arial", sans-serif';
+  ctx.fillText(formatPrice(product.price), CANVAS_SIZE / 2, y);
+
+  y += 42;
+  ctx.fillStyle = TEXT_MUTED;
+  ctx.font = '26px "Inter", "Arial", sans-serif';
+  ctx.fillText('Precio especial por tiempo limitado', CANVAS_SIZE / 2, y);
+
+  y += 62;
+  const btnW = 440;
+  const btnH = 64;
+  const btnX = (CANVAS_SIZE - btnW) / 2;
+  ctx.fillStyle = '#25D366';
+  roundRect(ctx, btnX, y, btnW, btnH, 32);
+  ctx.fill();
+  ctx.fillStyle = WHITE;
+  ctx.font = 'bold 30px "Inter", "Arial", sans-serif';
+  ctx.fillText(opts.whatsappText, CANVAS_SIZE / 2, y + 42);
+
+  ctx.fillStyle = TEXT_MUTED;
+  ctx.font = '18px "Inter", "Arial", sans-serif';
+  ctx.fillText('DaniMarvis Store — Tu gestor de confianza', CANVAS_SIZE / 2, CANVAS_SIZE - 44);
+}
+
+// ── Shared drawing helpers ─────────────────────────────────────
+
+function drawLogo(ctx, x, y, { color = DARK, accent = ROSE, muted = TEXT_MUTED } = {}) {
   const logoSize = 56;
   ctx.save();
   ctx.translate(x, y);
 
-  // Bag icon
-  ctx.strokeStyle = DARK;
+  ctx.strokeStyle = color;
   ctx.lineWidth = 2.5;
   ctx.lineCap = 'round';
   ctx.beginPath();
@@ -132,17 +399,15 @@ function drawLogo(ctx, x, y) {
   ctx.stroke();
   ctx.strokeRect(4, 22, logoSize - 8, logoSize - 22);
 
-  // DM text
-  ctx.fillStyle = DARK;
+  ctx.fillStyle = color;
   ctx.font = 'bold 28px "Georgia", serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText('D', 14, 42);
-  ctx.fillStyle = ROSE;
+  ctx.fillStyle = accent;
   ctx.fillText('M', 36, 42);
 
-  // Heart
-  ctx.fillStyle = ROSE;
+  ctx.fillStyle = accent;
   ctx.beginPath();
   ctx.moveTo(49, 38);
   ctx.quadraticCurveTo(49, 33, 46, 33);
@@ -155,55 +420,61 @@ function drawLogo(ctx, x, y) {
 
   ctx.restore();
 
-  // Brand text next to logo
-  ctx.fillStyle = DARK;
+  ctx.fillStyle = color;
   ctx.font = 'bold 28px "Georgia", serif';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   ctx.fillText('DANI ', x + logoSize + 14, y + logoSize / 2);
-  ctx.fillStyle = ROSE;
+  ctx.fillStyle = accent;
   ctx.fillText('MARVIS', x + logoSize + 90, y + logoSize / 2);
-  ctx.fillStyle = TEXT_MUTED;
+  ctx.fillStyle = muted;
   ctx.font = '16px "Inter", "Arial", sans-serif';
   ctx.fillText('Store', x + logoSize + 178, y + logoSize / 2);
 }
 
-function drawImageCropped(ctx, img, x, y, size, radius) {
-  ctx.save();
-  roundRect(ctx, x, y, size, size, radius);
-  ctx.clip();
-  ctx.drawImage(img, x, y, size, size);
-  ctx.restore();
-
-  // Border
-  ctx.strokeStyle = 'rgba(0,0,0,.04)';
-  ctx.lineWidth = 2;
-  roundRect(ctx, x, y, size, size, radius);
-  ctx.stroke();
+function drawProductImage(ctx, product, img, x, y, w, h, radius) {
+  if (img) {
+    ctx.save();
+    roundRect(ctx, x, y, w, h, radius);
+    ctx.clip();
+    coverIntoRect(ctx, img, x, y, w, h);
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(0,0,0,.05)';
+    ctx.lineWidth = 2;
+    roundRect(ctx, x, y, w, h, radius);
+    ctx.stroke();
+  } else {
+    drawImagePlaceholder(ctx, x, y, w, h, radius);
+  }
 }
 
-function drawImagePlaceholder(ctx, x, y, size, radius) {
+function coverIntoRect(ctx, img, x, y, w, h) {
+  const scale = Math.max(w / img.width, h / img.height);
+  const iw = img.width * scale;
+  const ih = img.height * scale;
+  ctx.drawImage(img, x + (w - iw) / 2, y + (h - ih) / 2, iw, ih);
+}
+
+function drawImagePlaceholder(ctx, x, y, w, h, radius) {
   ctx.save();
-  roundRect(ctx, x, y, size, size, radius);
+  roundRect(ctx, x, y, w, h, radius);
   ctx.clip();
 
-  // Gradient background
-  const grad = ctx.createLinearGradient(x, y, x + size, y + size);
+  const grad = ctx.createLinearGradient(x, y, x + w, y + h);
   grad.addColorStop(0, '#f0edeb');
   grad.addColorStop(1, '#e5e0dc');
   ctx.fillStyle = grad;
-  ctx.fillRect(x, y, size, size);
+  ctx.fillRect(x, y, w, h);
 
-  // Icon
   ctx.fillStyle = '#c0b5b0';
   ctx.font = '80px "Inter", "Arial", sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('📷', x + size / 2, y + size / 2 - 10);
+  ctx.fillText('📷', x + w / 2, y + h / 2 - 10);
 
   ctx.fillStyle = '#9e918d';
   ctx.font = '20px "Inter", "Arial", sans-serif';
-  ctx.fillText('Sin imagen', x + size / 2, y + size / 2 + 50);
+  ctx.fillText('Sin imagen', x + w / 2, y + h / 2 + 50);
 
   ctx.restore();
 }
@@ -223,7 +494,7 @@ function roundRect(ctx, x, y, w, h, r) {
 }
 
 function wrapText(ctx, text, maxWidth) {
-  const words = text.split(' ');
+  const words = String(text || 'Producto').split(' ');
   const lines = [];
   let line = '';
   for (const word of words) {
@@ -236,11 +507,17 @@ function wrapText(ctx, text, maxWidth) {
     }
   }
   if (line) lines.push(line);
-  return lines.length ? lines : [text];
+  return lines.length ? lines : [text || 'Producto'];
 }
 
 function formatPrice(price) {
-  return '$' + Number(price).toLocaleString('es-CO');
+  return '$' + Number(price || 0).toLocaleString('es-CO');
+}
+
+function hexToRgba(hex, alpha = 1) {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  if (!m) return `rgba(201,132,122,${alpha})`;
+  return `rgba(${parseInt(m[1], 16)},${parseInt(m[2], 16)},${parseInt(m[3], 16)},${alpha})`;
 }
 
 function loadImage(url) {

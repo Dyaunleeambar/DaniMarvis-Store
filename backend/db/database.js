@@ -73,6 +73,7 @@ export async function initDB() {
   migrateCatalogVisible();
   migratePublishConfig();
   migratePublicationDate();
+  migrateExportsKind();
   saveDB();
 }
 
@@ -169,6 +170,7 @@ function createSchema() {
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
       style TEXT DEFAULT 'table',
+      kind TEXT DEFAULT 'pdf',
       fields TEXT DEFAULT '[]',
       product_ids TEXT DEFAULT '[]',
       product_count INTEGER DEFAULT 0,
@@ -260,6 +262,13 @@ function migratePublicationDate() {
   for (const p of pubs) {
     db.prepare("UPDATE publications SET publication_date = ? WHERE id = ?").run(p.created_at, p.id);
   }
+}
+
+function migrateExportsKind() {
+  try {
+    db.exec("ALTER TABLE exports ADD COLUMN kind TEXT DEFAULT 'pdf'");
+  } catch (_) {}
+  db.exec("UPDATE exports SET kind = 'pdf' WHERE kind IS NULL OR kind = ''");
 }
 
 function seedIfEmpty() {
