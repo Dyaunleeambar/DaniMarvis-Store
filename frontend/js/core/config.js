@@ -13,4 +13,5 @@ export const ROUTE_TITLES = {
   '#/backup': 'Respaldos',
   '#/publications': 'Publicaciones',
   '#/exports': 'Exportaciones',
+  '#/import': 'Importar / Sincronizar',
 };

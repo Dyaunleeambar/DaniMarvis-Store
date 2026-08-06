@@ -10,7 +10,6 @@ function escHtml(str) {
 const STORAGE_KEY = 'danimarvis_images_config';
 const PROMPT_KEY = 'danimarvis_images_prompt';
 const COPILOT_FOLDER_KEY = 'danimarvis_images_copilot_folder';
-const COPILOT_STYLE_KEY = 'danimarvis_images_copilot_style';
 
 function loadConfig() {
   try {
@@ -59,7 +58,6 @@ function renderForm(container, products, onDone) {
   let aiPrompt = localStorage.getItem(PROMPT_KEY) || '';
   let aiBusy = false;
   let copilotFolder = localStorage.getItem(COPILOT_FOLDER_KEY) || 'D:\\Proyectos\\DaniMarvisStore\\generadas\\copilot';
-  let copilotStyle = localStorage.getItem(COPILOT_STYLE_KEY) || '';
   let previewCounter = 0;
 
   function getFiltered() {
@@ -298,10 +296,6 @@ function renderForm(container, products, onDone) {
               2) Generá el anuncio en Copilot o Dreamina y guardalo en la carpeta con ese nombre.<br />
               3) Importá la carpeta: las imágenes se archivan en el historial y se asocian al producto.
             </p>
-            <div>
-              <label style="font-size:.82rem;color:var(--text-secondary);display:block;margin-bottom:4px">Estilo de tus anuncios (opcional, se agrega al prompt)</label>
-              <textarea id="img-copilot-style" class="form-control" rows="2" placeholder="Ej: fondo pastel rosa, foto realista del producto centrada, tipografía elegante, sin texto decorativo">${escHtml(copilotStyle)}</textarea>
-            </div>
             <div style="display:flex;gap:8px;margin-top:10px">
               <input type="text" id="img-copilot-folder" class="form-control" value="${escHtml(copilotFolder)}" style="flex:1" placeholder="Ruta de la carpeta con los anuncios" />
               <button type="button" class="btn btn--primary" id="img-copilot-import">Importar</button>
@@ -465,11 +459,6 @@ function renderForm(container, products, onDone) {
 
   // ── Copilot / Dreamina ────────────────────────────────────────
 
-  document.getElementById('img-copilot-style').addEventListener('input', debounce((e) => {
-    copilotStyle = e.target.value;
-    localStorage.setItem(COPILOT_STYLE_KEY, copilotStyle);
-  }, 300));
-
   document.getElementById('img-product-list').addEventListener('click', (e) => {
     const btn = e.target.closest('button.img-copilot-copy');
     if (!btn) return;
@@ -477,7 +466,7 @@ function renderForm(container, products, onDone) {
     e.stopPropagation();
     const product = products.find(p => p.id === btn.dataset.id);
     if (!product) return;
-    const prompt = buildCopilotPrompt(product, copilotStyle);
+    const prompt = buildCopilotPrompt(product);
     const slug = slugify(product.name);
     copyText(prompt).then(() => {
       showToast(`Prompt copiado. Guardá la imagen como ${slug}.png`, 'success');
@@ -616,20 +605,11 @@ function copyText(text) {
   return Promise.resolve();
 }
 
-function buildCopilotPrompt(product, style) {
-  const lines = [
-    'Creá un anuncio publicitario cuadrado 1:1 (1080×1080) para vender el siguiente producto de DaniMarvis Store.',
-    '',
-    `PRODUCTO: ${product.name}`,
-    product.category ? `Categoría: ${product.category}` : null,
-    product.price ? `Precio: ${formatPrice(product.price)}` : null,
-    product.warranty ? `Garantía: ${product.warranty}` : null,
-    product.description ? `Descripción: ${product.description}` : null,
-    '',
-    'La imagen debe incluir una foto realista del producto destacada en el centro, el nombre del producto, el precio en grande, un botón verde de WhatsApp y la marca "DaniMarvis Store". Sin texto decorativo.',
-    style ? `ESTILO: ${style}` : null,
-  ].filter(Boolean).join('\n');
-  return lines;
+function buildCopilotPrompt(product) {
+  const warrantyLine = product.warranty
+    ? `sello de garantía ${product.warranty}`
+    : 'sello con texto OFERTA';
+  return `Generá una pieza publicitaria horizontal 16:9 estilo DaniMarvis Store con fondo galáctico azul naranja, mostrando un ${product.name}, con sello DaniMarvis Store, ${warrantyLine}, contenedor del precio sin números, botones Compra Ya y Envío Gratis, y footer con logo DM, con arco dorado encima, texto DaniMarvis Store e íconos de redes sociales (Facebook, Instagram y WhatsApp).`;
 }
 
 function renderCopilotResults(el, data) {

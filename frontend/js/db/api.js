@@ -125,6 +125,10 @@ export const api = {
   // Copilot / Dreamina
   copilotImport: (data) => request('POST', '/copilot/import', data),
 
+  // Sincronización desde imágenes (proveedor)
+  importAnalyze: (data) => request('POST', '/import/analyze', data),
+  importApply: (data) => request('POST', '/import/apply', data),
+
   // Auth
   login: (username, password) => request('POST', '/login', { username, password }),
 };

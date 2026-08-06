@@ -33,8 +33,10 @@ class Statement {
   run(...params) {
     if (params.length) this.#stmt.bind(params);
     this.#stmt.step();
+    const modified = db.getRowsModified();
     this.#stmt.free();
     saveDB();
+    return modified;
   }
 }
 

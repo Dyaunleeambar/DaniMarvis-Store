@@ -27,7 +27,10 @@ function matchProduct(products, fileSlug) {
   for (const p of products) {
     const base = slugify(p.name);
     if (!base) continue;
-    if (fileSlug === base || fileSlug.startsWith(base + '-') || fileSlug.includes('-' + base)) return p;
+    if (fileSlug === base ||
+        fileSlug.startsWith(base + '-') ||
+        fileSlug.includes('-' + base) ||
+        base.startsWith(fileSlug + '-')) return p;
   }
   return null;
 }

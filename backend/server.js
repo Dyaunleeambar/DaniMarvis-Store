@@ -14,6 +14,7 @@ import backupRouter from './routes/backup.js';
 import publicationsRouter from './routes/publications.js';
 import exportsRouter from './routes/exports.js';
 import copilotRouter from './routes/copilot.js';
+import importRouter from './routes/import.js';
 import { generateCatalogFile } from './lib/catalogGenerator.js';
 import { ensureWebp } from './lib/imageUtils.js';
 
@@ -75,6 +76,7 @@ app.use('/api/backup', backupRouter);
 app.use('/api/publications', publicationsRouter);
 app.use('/api/exports', exportsRouter);
 app.use('/api/copilot', copilotRouter);
+app.use('/api/import', importRouter);
 
 app.post('/api/upload', (req, res) => {
   upload.single('image')(req, res, async (err) => {
@@ -127,8 +129,31 @@ app.put('/api/settings', (req, res) => {
   }
 
   if (publish_config !== undefined) {
+    let merged = publish_config;
+    if (typeof publish_config === 'object' && publish_config !== null) {
+      let existing = {};
+      try { existing = JSON.parse(db.prepare('SELECT publish_config FROM settings WHERE id = 1').get().publish_config || '{}'); } catch {}
+      merged = {
+        ...existing,
+        ...publish_config,
+        ai: { ...(existing.ai || {}), ...(publish_config.ai || {}) },
+        facebook: { ...(existing.facebook || {}), ...(publish_config.facebook || {}) },
+      };
+      // Protección: no perder la key/token si se guarda con el campo vacío SIN
+      // haber cambiado el resto de la sección. Si cambió algo (otro proveedor,
+      // modelo, etc.), el vacío se respeta para poder limpiar a propósito.
+      for (const [section, field] of [['ai', 'api_key'], ['facebook', 'access_token']]) {
+        const oldSec = existing[section] || {};
+        const newSec = merged[section] || {};
+        if (!newSec[field] && oldSec[field]) {
+          const { [field]: _a, ...oldRest } = oldSec;
+          const { [field]: _b, ...newRest } = newSec;
+          if (JSON.stringify(oldRest) === JSON.stringify(newRest)) newSec[field] = oldSec[field];
+        }
+      }
+    }
     db.prepare("UPDATE settings SET publish_config = ?, updated_at = datetime('now') WHERE id = 1")
-      .run(JSON.stringify(publish_config));
+      .run(JSON.stringify(merged));
   }
 
   const settings = db.prepare('SELECT exchange_rate, publish_config FROM settings WHERE id = 1').get();
