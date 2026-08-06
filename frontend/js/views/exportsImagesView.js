@@ -609,7 +609,8 @@ function buildCopilotPrompt(product) {
   const warrantyLine = product.warranty
     ? `sello de garantía ${product.warranty}`
     : 'sello con texto OFERTA';
-  return `Generá una pieza publicitaria horizontal 16:9 estilo DaniMarvis Store con fondo galáctico azul naranja, mostrando un ${product.name}, con sello DaniMarvis Store, ${warrantyLine}, contenedor del precio sin números, botones Compra Ya y Envío Gratis, y footer con logo DM, con arco dorado encima, texto DaniMarvis Store e íconos de redes sociales (Facebook, Instagram y WhatsApp).`;
+  const priceText = `$${Math.round(Number(product.price) || 0)}`;
+  return `Generá una pieza publicitaria horizontal 16:9 estilo DaniMarvis Store con fondo galáctico azul naranja, mostrando un ${product.name}, con sello DaniMarvis Store, ${warrantyLine}, contenedor del precio con el valor ${priceText}, botones Compra Ya y Envío Gratis.`;
 }
 
 function renderCopilotResults(el, data) {
