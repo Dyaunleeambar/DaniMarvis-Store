@@ -263,6 +263,7 @@ app.get('/api/dashboard', (req, res) => {
   const stats = db.prepare(`
     SELECT
       (SELECT COUNT(*) FROM products WHERE catalog_visible = 1) as total_products,
+      (SELECT COUNT(*) FROM products) as total_products_all,
       (SELECT COUNT(*) FROM providers) as total_providers,
       (SELECT COUNT(*) FROM sales) as total_sales,
       (SELECT COALESCE(SUM(total_amount), 0) FROM sales) as total_revenue,

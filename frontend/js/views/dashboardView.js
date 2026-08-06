@@ -35,7 +35,8 @@ function renderDashboard(container, data) {
           </div>
           <div>
             <div class="stat-value">${stats.total_products}</div>
-            <div class="stat-label">Productos activos</div>
+            <div class="stat-label">Productos activos (catálogo)</div>
+            <div style="font-size:.72rem;color:var(--text-muted)">${stats.total_products_all} totales registrados</div>
           </div>
         </div>
         <div class="card card--stat">
