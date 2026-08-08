@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { v4 as uuid } from 'uuid';
-import { existsSync, readdirSync, statSync, mkdirSync, copyFileSync } from 'fs';
-import { join, dirname, extname, resolve } from 'path';
+import { existsSync, readdirSync, statSync, mkdirSync, copyFileSync, unlinkSync } from 'fs';
+import { join, dirname, extname, basename, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { getDB } from '../db/database.js';
 import { ocrImage, bestMatch, extractPrice } from '../lib/ocr.js';
@@ -82,13 +82,14 @@ router.post('/analyze', async (req, res) => {
 });
 
 router.post('/apply', (req, res) => {
-  const { provider_id, items, hideAbsent } = req.body || {};
+  const { provider_id, items, hideAbsent, folder } = req.body || {};
   if (!provider_id) return res.status(400).json({ error: 'Falta el proveedor' });
 
   const db = getDB();
   const applied = [];
   const errors = [];
   const appliedIds = new Set();
+  const appliedByProduct = new Map();
 
   for (const it of items || []) {
     if (!it || !it.product_id || it.price === undefined || it.price === null || it.price === '') continue;
@@ -102,6 +103,7 @@ router.post('/apply', (req, res) => {
     ).run(val, it.catalog_visible === 0 ? 0 : 1, it.product_id, provider_id);
     if (changed > 0) {
       appliedIds.add(it.product_id);
+      appliedByProduct.set(it.product_id, it);
       applied.push({ product_id: it.product_id, price: val, name: it.product_name || '', visible: it.catalog_visible !== 0 });
     }
   }
@@ -118,7 +120,28 @@ router.post('/apply', (req, res) => {
     }
   }
 
-  res.json({ applied, hidden, errors });
+  const deleted = [];
+  if (folder && typeof folder === 'string' && appliedByProduct.size > 0) {
+    const dir = resolve(folder);
+    if (existsSync(dir) && statSync(dir).isDirectory()) {
+      for (const it of appliedByProduct.values()) {
+        const name = String(it.filename || '');
+        if (!name || basename(name) !== name) continue;
+        if (!IMAGE_EXT.has(extname(name).toLowerCase())) continue;
+        const target = join(dir, name);
+        try {
+          if (existsSync(target) && statSync(target).isFile()) {
+            unlinkSync(target);
+            deleted.push(name);
+          }
+        } catch (err) {
+          console.error('[Import] No se pudo eliminar', target, err.message);
+        }
+      }
+    }
+  }
+
+  res.json({ applied, hidden, errors, deleted });
 });
 
 export default router;

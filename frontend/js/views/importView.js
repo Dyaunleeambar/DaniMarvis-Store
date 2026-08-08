@@ -56,7 +56,7 @@ function renderForm(container, providers) {
         <p style="margin:0 0 16px;font-size:.8rem;color:var(--text-secondary)">
           1) Elegí el proveedor y la carpeta donde guardaste las imágenes (una por producto).<br />
           2) El sistema lee cada imagen (nombre + precio USD) y propone el producto y el precio.<br />
-          3) Revisás, corregís si hace falta y aplicás: actualiza precio y define si el producto está visible en el catálogo. Con el botón <b>+</b> creás un producto nuevo directamente desde la imagen.
+          3) Revisás, corregís si hace falta y aplicás: actualiza precio, define si el producto está visible en el catálogo y elimina de la carpeta las imágenes ya aplicadas. Con el botón <b>+</b> creás un producto nuevo directamente desde la imagen.
         </p>
         <div style="display:flex;flex-direction:column;gap:12px">
           <div>
@@ -250,9 +250,11 @@ function renderResults(container, data) {
 
   document.getElementById('imp-apply').addEventListener('click', async () => {
     const providerId = document.getElementById('imp-provider').value;
+    const folder = document.getElementById('imp-folder').value.trim();
     const hideAbsent = document.getElementById('imp-hide-absent').checked;
     const cards = results.querySelectorAll('[data-idx]');
     const items = [];
+    const appliedCards = [];
     cards.forEach(card => {
       const apply = card.querySelector('.imp-apply');
       if (!apply.checked) return;
@@ -261,8 +263,16 @@ function renderResults(container, data) {
       if (!productId) return;
       const idx = Number(card.dataset.idx);
       const product = data.products.find(p => p.id === productId);
-      items.push({ product_id: productId, product_name: product ? product.name : '', price, catalog_visible: card.dataset.visible === '0' ? 0 : 1 });
+      const it = data.items[idx];
+      items.push({
+        product_id: productId,
+        product_name: product ? product.name : '',
+        price,
+        catalog_visible: card.dataset.visible === '0' ? 0 : 1,
+        filename: it ? it.filename : '',
+      });
       card.dataset.applied = '1';
+      appliedCards.push(card);
     });
     if (!items.length) { showToast('Marcá al menos un producto para aplicar', 'error'); return; }
     const btn = document.getElementById('imp-apply');
@@ -270,10 +280,14 @@ function renderResults(container, data) {
     btn.disabled = true;
     status.textContent = 'Aplicando...';
     try {
-      const res = await api.importApply({ provider_id: providerId, items, hideAbsent });
+      const res = await api.importApply({ provider_id: providerId, items, hideAbsent, folder });
       status.textContent = '';
+      appliedCards.forEach(card => card.remove());
       renderSummary(document.getElementById('imp-apply-summary'), res);
-      showToast(`${res.applied.length} producto(s) actualizado(s)`, 'success');
+      const deletedNote = (res.deleted || []).length
+        ? ` · ${res.deleted.length} imagen(es) eliminada(s) de la carpeta`
+        : '';
+      showToast(`${res.applied.length} producto(s) actualizado(s)${deletedNote}`, 'success');
     } catch (err) {
       status.textContent = '';
       showToast(err.message, 'error');
@@ -293,11 +307,15 @@ function renderSummary(el, res) {
   const errRows = (res.errors || []).map(e =>
     `<div style="font-size:.8rem;color:var(--error)">✗ ${escHtml(e.name || e.product_id)}: ${escHtml(e.error)}</div>`
   ).join('');
+  const deletedRows = (res.deleted || []).length
+    ? `<div style="font-size:.8rem;color:var(--text-muted)">🗑 ${res.deleted.length} imagen(es) eliminada(s) de la carpeta</div>`
+    : '';
   el.innerHTML = `
     <div class="card" style="padding:16px;display:flex;flex-direction:column;gap:4px">
       ${appliedRows || '<div style="font-size:.8rem;color:var(--text-muted)">Ningún producto aplicado</div>'}
       ${hiddenRows}
       ${errRows}
+      ${deletedRows}
       <div style="margin-top:10px;display:flex;gap:8px">
         <button class="btn btn--secondary btn--sm" id="imp-regenerate-catalog">Regenerar catálogo público</button>
       </div>
