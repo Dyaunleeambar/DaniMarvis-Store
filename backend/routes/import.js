@@ -98,11 +98,11 @@ router.post('/apply', (req, res) => {
       continue;
     }
     const changed = db.prepare(
-      "UPDATE products SET price = ?, catalog_visible = 1, updated_at = datetime('now') WHERE id = ? AND provider_id = ?"
-    ).run(val, it.product_id, provider_id);
+      "UPDATE products SET price = ?, catalog_visible = ?, updated_at = datetime('now') WHERE id = ? AND provider_id = ?"
+    ).run(val, it.catalog_visible === 0 ? 0 : 1, it.product_id, provider_id);
     if (changed > 0) {
       appliedIds.add(it.product_id);
-      applied.push({ product_id: it.product_id, price: val, name: it.product_name || '' });
+      applied.push({ product_id: it.product_id, price: val, name: it.product_name || '', visible: it.catalog_visible !== 0 });
     }
   }
 

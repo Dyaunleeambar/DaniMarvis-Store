@@ -189,7 +189,25 @@ function renderTable(container, products, providers) {
 }
 
 // ── Global handlers ───────────────────────────────────────────
-window._openProductForm = function(product) {
+let formMetaLoaded = false;
+
+async function ensureFormMeta() {
+  if (formMetaLoaded) return;
+  const [providers, categories] = await Promise.all([api.getProviders(), api.getCategories()]);
+  currentProviders = providers;
+  currentCategories = categories;
+  formMetaLoaded = true;
+}
+
+export async function openProductForm(product, options = {}) {
+  await ensureFormMeta();
+  const presetName = options.name;
+  const presetPrice = options.price;
+  const presetProviderId = options.providerId;
+  const presetCatalogVisible = options.catalogVisible;
+  const presetImages = Array.isArray(options.images) ? [...options.images] : [];
+  const onCreated = options.onCreated;
+  const initialImages = product?.images ? [...product.images] : presetImages;
   openModal(`
     <div class="modal-header">
       <h2>${product ? 'Editar producto' : 'Nuevo producto'}</h2>
@@ -201,12 +219,12 @@ window._openProductForm = function(product) {
       <input type="hidden" name="id" value="${product?.id || ''}" />
       <div class="form-group">
         <label>Nombre del producto *</label>
-        <input type="text" name="name" class="form-control" value="${product?.name || ''}" required />
+        <input type="text" name="name" class="form-control" value="${escAttr(product?.name || presetName || '')}" required />
       </div>
       <div class="form-row">
         <div class="form-group">
           <label>Precio (USD) *</label>
-          <input type="number" name="price" class="form-control" value="${product?.price || ''}" step="any" required />
+          <input type="number" name="price" class="form-control" value="${escAttr(product?.price ?? presetPrice ?? '')}" step="any" required />
         </div>
         <div class="form-group">
           <label>Categoría</label>
@@ -234,7 +252,7 @@ window._openProductForm = function(product) {
           <select name="provider_id" class="form-control">
             <option value="">Sin proveedor</option>
             ${currentProviders.map(pr =>
-              `<option value="${pr.id}" ${product?.provider_id === pr.id ? 'selected' : ''}>${pr.name}</option>`
+              `<option value="${pr.id}" ${(product?.provider_id || presetProviderId) === pr.id ? 'selected' : ''}>${pr.name}</option>`
             ).join('')}
           </select>
         </div>
@@ -250,14 +268,14 @@ window._openProductForm = function(product) {
         </div>
         <div class="form-group">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:8px 0">
-            <input type="checkbox" name="catalog_visible" value="1" ${product?.catalog_visible !== 0 ? 'checked' : ''} style="width:16px;height:16px" />
+            <input type="checkbox" name="catalog_visible" value="1" ${product ? (product.catalog_visible !== 0 ? 'checked' : '') : (presetCatalogVisible !== false ? 'checked' : '')} style="width:16px;height:16px" />
             Mostrar en catálogo público
           </label>
         </div>
         <div class="form-group">
           <label>Imágenes</label>
           <div id="product-images-thumbs" class="image-thumbnails">
-            ${(product?.images || []).map(url =>
+            ${initialImages.map(url =>
               `<div class="img-thumb" data-url="${escAttr(url)}">
                 <img src="${escAttr(url)}" alt="" />
                 <button type="button" class="img-thumb-remove" data-url="${escAttr(url)}">&times;</button>
@@ -313,7 +331,7 @@ window._openProductForm = function(product) {
     });
   });
 
-  const productImages = product?.images ? [...product.images] : [];
+  const productImages = [...initialImages];
   const thumbsContainer = document.getElementById('product-images-thumbs');
   const fileInput = document.getElementById('product-image-file');
   const urlInput = document.getElementById('product-image-url-input');
@@ -499,6 +517,8 @@ window._openProductForm = function(product) {
     data.commission_type = 'fixed';
     data.commission_value = parseFloat(data.commission_value) || 0;
     data.images = productImages;
+    const catalogCb = e.target.querySelector('[name="catalog_visible"]');
+    data.catalog_visible = catalogCb && catalogCb.checked ? 1 : 0;
 
     try {
       if (product) {
@@ -512,11 +532,19 @@ window._openProductForm = function(product) {
       await invalidateProductsCache();
       closeModal(true);
       refreshSidebarCounts();
-      render(currentContainer);
+      if (onCreated) {
+        await onCreated(data.id, data.name);
+      } else {
+        render(currentContainer);
+      }
     } catch (err) {
       showToast(err.message, 'error');
     }
   });
+}
+
+window._openProductForm = function(product) {
+  openProductForm(product);
 };
 
 function snapshotForm(form) {

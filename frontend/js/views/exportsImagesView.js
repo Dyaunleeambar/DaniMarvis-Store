@@ -605,12 +605,34 @@ function copyText(text) {
   return Promise.resolve();
 }
 
+function extractSlogan(product) {
+  const name = (product.name || '').trim();
+  const desc = (product.description || '').trim();
+  if (!desc) return '';
+
+  const lowerName = name.toLowerCase();
+  const lowerDesc = desc.toLowerCase();
+  const nameIdx = lowerName ? lowerDesc.indexOf(lowerName) : -1;
+
+  if (nameIdx === -1) return '';
+  const after = desc.slice(nameIdx + name.length);
+  const match = after.match(/^\s*[–—-]\s*([^\n.]+)/);
+  if (!match) return '';
+
+  const slogan = match[1].trim();
+  if (!slogan || /^[💥✨‼️⭐🎁]/u.test(slogan)) return '';
+  return slogan;
+}
+
 function buildCopilotPrompt(product) {
   const warrantyLine = product.warranty
     ? `sello de garantía ${product.warranty}`
     : 'sello con texto OFERTA';
-  const priceText = `$${Math.round(Number(product.price) || 0)}`;
-  return `Generá una pieza publicitaria horizontal 16:9 estilo DaniMarvis Store con fondo galáctico azul naranja, mostrando un ${product.name}, con sello DaniMarvis Store, ${warrantyLine}, contenedor del precio con el valor ${priceText}, botones Compra Ya y Envío Gratis.`;
+  const nameUpper = (product.name || '').trim().toUpperCase();
+  const priceText = `$${Math.round(Number(product.price) || 0)} USD`;
+  const slogan = extractSlogan(product);
+  const sloganText = slogan ? ` con el eslogan "${slogan}"` : '';
+  return `Generá una pieza publicitaria horizontal 16:9 estilo DaniMarvis Store con fondo galáctico azul naranja, mostrando ${nameUpper}${sloganText}, con sello DaniMarvis Store, ${warrantyLine}, contenedor del precio con el valor ${priceText}, botones Compra Ya y Envío Gratis.`;
 }
 
 function renderCopilotResults(el, data) {

@@ -1,8 +1,25 @@
 import { api } from '../db/api.js';
 import { showToast, openModal } from '../core/app.js';
+import { openProductForm } from './productsView.js';
 
 function escHtml(str) {
   return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+const EYE_OPEN = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_CLOSED = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+
+function suggestName(text) {
+  const line = String(text || '').split('\n').map(l => l.trim()).find(l => l && !/^[💥✨‼️⭐🎁▪️•*#]/u.test(l));
+  if (!line) return '';
+  return line.replace(/^[💥✨‼️⭐🎁▪️•*#\s]+/u, '').replace(/\s+/g, ' ').slice(0, 80);
+}
+
+function updateEyeIcon(btn, card) {
+  const visible = card.dataset.visible !== '0';
+  btn.innerHTML = visible ? EYE_OPEN : EYE_CLOSED;
+  btn.title = visible ? 'Visible en catálogo. Clic para ocultar.' : 'Oculto del catálogo. Clic para mostrar.';
+  btn.style.color = visible ? 'var(--success)' : 'var(--text-muted)';
 }
 
 const FOLDER_KEY = 'danimarvis_import_folder';
@@ -39,7 +56,7 @@ function renderForm(container, providers) {
         <p style="margin:0 0 16px;font-size:.8rem;color:var(--text-secondary)">
           1) Elegí el proveedor y la carpeta donde guardaste las imágenes (una por producto).<br />
           2) El sistema lee cada imagen (nombre + precio USD) y propone el producto y el precio.<br />
-          3) Revisás, corregís si hace falta y aplicás: actualiza precio y deja el producto disponible.
+          3) Revisás, corregís si hace falta y aplicás: actualiza precio y define si el producto está visible en el catálogo. Con el botón <b>+</b> creás un producto nuevo directamente desde la imagen.
         </p>
         <div style="display:flex;flex-direction:column;gap:12px">
           <div>
@@ -119,7 +136,7 @@ function renderResults(container, data) {
     const priceVal = it.detected_price ? it.detected_price.value : (it.product ? it.product.current_price : '');
     const checked = it.product ? 'checked' : '';
     return `
-      <div class="card" style="padding:16px;display:flex;gap:14px;align-items:flex-start" data-idx="${i}">
+      <div class="card" style="padding:16px;display:flex;gap:14px;align-items:flex-start" data-idx="${i}" data-visible="${it.product && !it.product.visible ? '0' : '1'}">
         <img src="${it.url}" alt="" class="imp-thumb" data-preview="${it.url}" title="Ver imagen ampliada" />
         <div style="flex:1;display:flex;flex-direction:column;gap:8px;min-width:0">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -130,11 +147,17 @@ function renderResults(container, data) {
             <span style="font-size:.72rem;color:var(--text-muted);word-break:break-all;flex:1">${escHtml(it.filename)}</span>
           </div>
           <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-            <select class="imp-product form-control form-control--small" style="flex:1;min-width:220px">
-              <option value="">— Sin producto / no aplicar —</option>
-              ${productOptions}
-            </select>
-            <input type="number" step="any" min="1" class="imp-price form-control form-control--small" value="${priceVal}" style="max-width:120px" placeholder="Precio USD" />
+            <div style="display:flex;gap:6px;align-items:center;flex:1;min-width:260px">
+              <select class="imp-product form-control form-control--small" style="flex:1;min-width:150px">
+                <option value="">— Sin producto / no aplicar —</option>
+                ${productOptions}
+              </select>
+              <button type="button" class="btn btn--sm btn--ghost imp-new" title="Crear producto nuevo con los datos de esta imagen" style="padding:4px 7px;color:var(--rose);flex-shrink:0">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
+              <button type="button" class="btn btn--sm btn--ghost imp-eye" title="Mostrar/ocultar en catálogo" style="padding:4px 7px;flex-shrink:0"></button>
+            </div>
+            <input type="number" step="any" min="1" class="imp-price form-control form-control--small" value="${priceVal}" style="max-width:110px" placeholder="Precio USD" />
             <span style="font-size:.78rem;color:var(--text-muted)">actual: ${current}</span>
           </div>
           <details style="font-size:.72rem;color:var(--text-muted)">
@@ -181,6 +204,50 @@ function renderResults(container, data) {
     });
   });
 
+  results.querySelectorAll('.imp-eye').forEach(btn => {
+    const card = btn.closest('[data-idx]');
+    if (!card) return;
+    updateEyeIcon(btn, card);
+    btn.addEventListener('click', () => {
+      card.dataset.visible = card.dataset.visible === '0' ? '1' : '0';
+      updateEyeIcon(btn, card);
+    });
+  });
+
+  results.querySelectorAll('.imp-new').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const card = btn.closest('[data-idx]');
+      if (!card) return;
+      const idx = Number(card.dataset.idx);
+      const it = data.items[idx];
+      if (!it) return;
+      const providerId = document.getElementById('imp-provider')?.value || '';
+      const price = card.querySelector('.imp-price')?.value;
+      try {
+        await openProductForm(null, {
+          providerId,
+          images: it.url ? [it.url] : [],
+          catalogVisible: card.dataset.visible !== '0',
+          name: suggestName(it.text),
+          price: price || undefined,
+          onCreated: async (newId) => {
+            const created = await api.getProduct(newId);
+            if (!data.products.some(p => p.id === created.id)) data.products.push(created);
+            const select = card.querySelector('.imp-product');
+            if (select) {
+              select.insertAdjacentHTML('beforeend', `<option value="${created.id}" selected>${escHtml(created.name)}</option>`);
+              select.value = created.id;
+            }
+            const apply = card.querySelector('.imp-apply');
+            if (apply && !apply.checked) apply.checked = true;
+          },
+        });
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+  });
+
   document.getElementById('imp-apply').addEventListener('click', async () => {
     const providerId = document.getElementById('imp-provider').value;
     const hideAbsent = document.getElementById('imp-hide-absent').checked;
@@ -194,7 +261,7 @@ function renderResults(container, data) {
       if (!productId) return;
       const idx = Number(card.dataset.idx);
       const product = data.products.find(p => p.id === productId);
-      items.push({ product_id: productId, product_name: product ? product.name : '', price });
+      items.push({ product_id: productId, product_name: product ? product.name : '', price, catalog_visible: card.dataset.visible === '0' ? 0 : 1 });
       card.dataset.applied = '1';
     });
     if (!items.length) { showToast('Marcá al menos un producto para aplicar', 'error'); return; }
@@ -218,7 +285,7 @@ function renderResults(container, data) {
 
 function renderSummary(el, res) {
   const appliedRows = res.applied.map(a =>
-    `<div style="font-size:.8rem">✓ <b>${escHtml(a.name || a.product_id)}</b> → $${Number(a.price).toLocaleString('es-CO')} y disponible</div>`
+    `<div style="font-size:.8rem">✓ <b>${escHtml(a.name || a.product_id)}</b> → $${Number(a.price).toLocaleString('es-CO')}${a.visible === false ? ' y oculto del catálogo' : ' y disponible'}</div>`
   ).join('');
   const hiddenRows = (res.hidden || []).map(h =>
     `<div style="font-size:.8rem;color:#b8860b">👁 Ocultado: ${escHtml(h.name)}</div>`
