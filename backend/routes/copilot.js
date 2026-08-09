@@ -36,7 +36,7 @@ function matchProduct(products, fileSlug) {
 }
 
 router.post('/import', (req, res) => {
-  const { folder } = req.body || {};
+  const { folder, assignToProduct } = req.body || {};
   if (!folder || typeof folder !== 'string') {
     return res.status(400).json({ error: 'Indicá la carpeta donde guardaste las imágenes' });
   }
@@ -53,7 +53,7 @@ router.post('/import', (req, res) => {
   if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
 
   const db = getDB();
-  const products = db.prepare('SELECT id, name FROM products').all();
+  const products = db.prepare('SELECT id, name, images FROM products').all();
   const files = readdirSync(dir).filter(f => IMAGE_EXT.has(extname(f).toLowerCase()));
 
   if (files.length === 0) {
@@ -91,6 +91,15 @@ router.post('/import', (req, res) => {
         product ? [product.id] : [],
         product ? 1 : 0
       );
+
+      if (product && assignToProduct) {
+        let images = [];
+        try { images = JSON.parse(product.images || '[]'); } catch { images = []; }
+        if (!images.includes(url)) {
+          images.unshift(url);
+          db.prepare("UPDATE products SET images = ?, updated_at = datetime('now') WHERE id = ?").run(JSON.stringify(images), product.id);
+        }
+      }
 
       const rec = { id, filename: f, url, product: product ? { id: product.id, name: product.name } : null };
       if (product) imported.push(rec);

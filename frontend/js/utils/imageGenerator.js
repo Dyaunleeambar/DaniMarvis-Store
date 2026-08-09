@@ -10,6 +10,7 @@ export const TEMPLATES = [
   { id: 'moderna', name: 'Moderna', description: 'Fondo oscuro con acento de color' },
   { id: 'minimal', name: 'Minimal', description: 'Imagen grande y texto limpio' },
   { id: 'oferta', name: 'Oferta', description: 'Insignia OFERTA con precio destacado' },
+  { id: 'postal', name: 'Postal DM', description: 'Estilo DaniMarvis Store con gradiente azul-naranja' },
 ];
 
 export const ACCENT_COLORS = [
@@ -35,6 +36,7 @@ const TEMPLATE_DRAWERS = {
   moderna: { scheme: 'dark', draw: drawModerna },
   minimal: { scheme: 'light', draw: drawMinimal },
   oferta: { scheme: 'light', draw: drawOferta },
+  postal: { scheme: 'dark', draw: drawPostal },
 };
 
 export async function generateProductImage(product, options = {}) {
@@ -380,6 +382,105 @@ function drawOferta(ctx, product, opts, bgImg, productImg) {
   ctx.fillStyle = TEXT_MUTED;
   ctx.font = '18px "Inter", "Arial", sans-serif';
   ctx.fillText('DaniMarvis Store — Tu gestor de confianza', CANVAS_SIZE / 2, CANVAS_SIZE - 44);
+}
+
+function drawPostal(ctx, product, opts, bgImg, productImg) {
+  if (!bgImg) {
+    const grad = ctx.createLinearGradient(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+    grad.addColorStop(0, '#1a5276');
+    grad.addColorStop(0.5, '#2471a3');
+    grad.addColorStop(1, '#f39c12');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+  }
+
+  const slogan = extractSloganText(product);
+
+  if (opts.showLogo) drawLogo(ctx, 60, 40, { color: WHITE, accent: '#f1c40f', muted: 'rgba(255,255,255,.7)' });
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = WHITE;
+  ctx.font = 'bold 48px "Inter", "Arial", sans-serif';
+  const nameLines = wrapText(ctx, product.name, 860);
+  let y = 140;
+  nameLines.forEach(line => {
+    ctx.fillText(line, CANVAS_SIZE / 2, y);
+    y += 58;
+  });
+
+  if (slogan) {
+    y += 8;
+    ctx.fillStyle = 'rgba(255,255,255,.85)';
+    ctx.font = 'italic 28px "Georgia", "Times New Roman", serif';
+    ctx.fillText(slogan, CANVAS_SIZE / 2, y);
+    y += 10;
+  }
+
+  const imgSize = 440;
+  const imgX = (CANVAS_SIZE - imgSize) / 2;
+  const imgY = y + 20;
+  drawProductImage(ctx, product, productImg, imgX, imgY, imgSize, 32);
+
+  const priceY = imgY + imgSize + 50;
+  ctx.fillStyle = 'rgba(0,0,0,.35)';
+  const priceContainerW = 280;
+  const priceContainerH = 64;
+  roundRect(ctx, CANVAS_SIZE - priceContainerW - 60, priceY, priceContainerW, priceContainerH, 12);
+  ctx.fill();
+  ctx.fillStyle = WHITE;
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 38px "Inter", "Arial", sans-serif';
+  ctx.fillText(formatPrice(product.price) + ' USD', CANVAS_SIZE - priceContainerW / 2 - 60, priceY + 42);
+
+  if (product.warranty) {
+    const badgeX = 120;
+    const badgeY = priceY + 32;
+    const badgeR = 56;
+    ctx.beginPath();
+    ctx.arc(badgeX, badgeY, badgeR, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,0,0,.4)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.3)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = WHITE;
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 14px "Inter", "Arial", sans-serif';
+    ctx.fillText('GARANTÍA', badgeX, badgeY - 12);
+    ctx.font = 'bold 22px "Inter", "Arial", sans-serif';
+    ctx.fillText(product.warranty, badgeX, badgeY + 14);
+  }
+
+  const envioY = priceY + priceContainerH + 30;
+  ctx.fillStyle = '#f1c40f';
+  ctx.font = '40px "Inter", "Arial", sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('🚚', 60, envioY);
+  ctx.fillStyle = WHITE;
+  ctx.font = 'italic bold 32px "Georgia", "Times New Roman", serif';
+  ctx.fillText('Envío', 105, envioY - 8);
+  ctx.fillText('Gratis', 105, envioY + 28);
+
+  ctx.fillStyle = 'rgba(255,255,255,.5)';
+  ctx.font = '16px "Inter", "Arial", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('DaniMarvis Store', CANVAS_SIZE / 2, CANVAS_SIZE - 30);
+}
+
+function extractSloganText(product) {
+  const name = (product.name || '').trim();
+  const desc = (product.description || '').trim();
+  if (!desc) return '';
+  const lowerName = name.toLowerCase();
+  const lowerDesc = desc.toLowerCase();
+  const nameIdx = lowerName ? lowerDesc.indexOf(lowerName) : -1;
+  if (nameIdx === -1) return '';
+  const after = desc.slice(nameIdx + name.length);
+  const match = after.match(/^\s*[–—-]\s*([^\n.]+)/);
+  if (!match) return '';
+  const slogan = match[1].trim();
+  if (!slogan || /^[💥✨‼️⭐🎁]/u.test(slogan)) return '';
+  return slogan;
 }
 
 // ── Shared drawing helpers ─────────────────────────────────────

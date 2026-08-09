@@ -41,3 +41,22 @@ export function debounce(fn, ms = 300) {
     timer = setTimeout(() => fn(...args), ms);
   };
 }
+
+export function extractSlogan(product) {
+  const name = (product.name || '').trim();
+  const desc = (product.description || '').trim();
+  if (!desc) return '';
+
+  const lowerName = name.toLowerCase();
+  const lowerDesc = desc.toLowerCase();
+  const nameIdx = lowerName ? lowerDesc.indexOf(lowerName) : -1;
+
+  if (nameIdx === -1) return '';
+  const after = desc.slice(nameIdx + name.length);
+  const match = after.match(/^\s*[–—-]\s*([^\n.]+)/);
+  if (!match) return '';
+
+  const slogan = match[1].trim();
+  if (!slogan || /^[💥✨‼️⭐🎁]/u.test(slogan)) return '';
+  return slogan;
+}

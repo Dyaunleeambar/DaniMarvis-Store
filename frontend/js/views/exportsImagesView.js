@@ -1,7 +1,7 @@
 import { api } from '../db/api.js';
 import { showToast } from '../core/app.js';
 import { generateProductImage, canvasToBlob, downloadCanvas, slugify, TEMPLATES, ACCENT_COLORS } from '../utils/imageGenerator.js';
-import { debounce } from '../utils/utils.js';
+import { debounce, extractSlogan } from '../utils/utils.js';
 
 function escHtml(str) {
   return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -300,6 +300,10 @@ function renderForm(container, products, onDone) {
               <input type="text" id="img-copilot-folder" class="form-control" value="${escHtml(copilotFolder)}" style="flex:1" placeholder="Ruta de la carpeta con los anuncios" />
               <button type="button" class="btn btn--primary" id="img-copilot-import">Importar</button>
             </div>
+            <label style="display:flex;align-items:center;gap:6px;font-size:.78rem;color:var(--text-secondary);margin-top:8px;cursor:pointer">
+              <input type="checkbox" id="img-copilot-assign" checked style="width:14px;height:14px" />
+              Asignar imagen principal al producto (prepende en la galería)
+            </label>
             <div id="img-copilot-status" style="font-size:.78rem;color:var(--text-muted);margin-top:8px"></div>
             <div id="img-copilot-results" style="margin-top:12px"></div>
           </div>
@@ -477,6 +481,7 @@ function renderForm(container, products, onDone) {
 
   document.getElementById('img-copilot-import').addEventListener('click', async () => {
     const folder = document.getElementById('img-copilot-folder').value.trim();
+    const assignToProduct = document.getElementById('img-copilot-assign').checked;
     const status = document.getElementById('img-copilot-status');
     const results = document.getElementById('img-copilot-results');
     const btn = document.getElementById('img-copilot-import');
@@ -486,7 +491,7 @@ function renderForm(container, products, onDone) {
     status.textContent = 'Importando...';
     results.innerHTML = '';
     try {
-      const data = await api.copilotImport({ folder });
+      const data = await api.copilotImport({ folder, assignToProduct });
       status.textContent = '';
       renderCopilotResults(results, data);
       showToast('Importación completada', 'success');
@@ -603,25 +608,6 @@ function copyText(text) {
   document.execCommand('copy');
   ta.remove();
   return Promise.resolve();
-}
-
-function extractSlogan(product) {
-  const name = (product.name || '').trim();
-  const desc = (product.description || '').trim();
-  if (!desc) return '';
-
-  const lowerName = name.toLowerCase();
-  const lowerDesc = desc.toLowerCase();
-  const nameIdx = lowerName ? lowerDesc.indexOf(lowerName) : -1;
-
-  if (nameIdx === -1) return '';
-  const after = desc.slice(nameIdx + name.length);
-  const match = after.match(/^\s*[–—-]\s*([^\n.]+)/);
-  if (!match) return '';
-
-  const slogan = match[1].trim();
-  if (!slogan || /^[💥✨‼️⭐🎁]/u.test(slogan)) return '';
-  return slogan;
 }
 
 function buildCopilotPrompt(product) {
