@@ -1,6 +1,6 @@
 # DaniMarvis Store — Panel de Gestión
 
-Panel de gestión para gestores de ventas que trabajan con importadores de electrodomésticos y productos para el hogar. Permite administrar productos, proveedores, ventas, generar imágenes promocionales para redes sociales y publicar directamente en Facebook e Instagram.
+Panel de gestión para gestores de ventas que trabajan con importadores de electrodomésticos y productos para el hogar. Permite administrar productos, proveedores, ventas, generar imágenes promocionales para redes sociales, exportar reportes PDF, importar precios desde imágenes con OCR, y publicar directamente en Facebook e Instagram.
 
 ---
 
@@ -14,6 +14,9 @@ Panel de gestión para gestores de ventas que trabajan con importadores de elect
 - [API REST](#api-rest)
 - [Panel de Gestión (Frontend)](#panel-de-gestión-frontend)
 - [Generador de Imágenes](#generador-de-imágenes)
+- [Exportaciones PDF](#exportaciones-pdf)
+- [Importación / Sincronización OCR](#importación--sincronización-ocr)
+- [Copilot / Dreamina](#copilot--dreamina)
 - [Catálogo Público (GitHub Pages)](#catálogo-público-github-pages)
 - [Publicaciones en Redes Sociales](#publicaciones-en-redes-sociales)
 - [Sistema de Respaldos](#sistema-de-respaldos)
@@ -30,13 +33,16 @@ Este sistema permite a un **gestor de ventas**:
 1. **Registrar productos** de múltiples importadores con precio, comisión, garantía y múltiples imágenes.
 2. **Administrar proveedores** con sus datos de contacto, información adicional y tasa de comisión.
 3. **Registrar ventas** con cálculo automático de comisiones y seguimiento de entregas.
-4. **Generar imágenes promocionales** 1080x1080 para Facebook/Instagram/WhatsApp con el logo de la marca, precio, comisión y CTA.
-5. **Generar textos de publicación** con IA (compatible con OpenAI) usando plantillas personalizables.
-6. **Publicar directamente en Facebook e Instagram** mediante la Graph API.
-7. **Generar un catálogo web público** con todos los productos activos, filtros por categoría, búsqueda y botón directo a WhatsApp. Se despliega en GitHub Pages.
-8. **Dar seguimiento** a entregas y comisiones pendientes.
-9. **Configurar el tipo de cambio** USD → MN para mostrar precios en moneda nacional.
-10. **Respaldar y restaurar** todos los datos del sistema como archivos JSON.
+4. **Generar imágenes promocionales** 1080x1080 con 5 plantillas distintas, fondo con IA y personalización completa de colores y textos.
+5. **Exportar reportes PDF** de productos con selección de campos y estilos (tabla o lista detallada).
+6. **Importar precios desde imágenes** del proveedor usando OCR (tesseract.js), con detección automática de productos y precios.
+7. **Generar textos de publicación** con IA (compatible con OpenAI) usando plantillas personalizables.
+8. **Publicar directamente en Facebook e Instagram** mediante la Graph API.
+9. **Generar un catálogo web público** con todos los productos activos, filtros por categoría, búsqueda y botón directo a WhatsApp. Se despliega en GitHub Pages.
+10. **Crear anuncios con Copilot/Dreamina** — copiar prompts generados por producto e importar los resultados.
+11. **Dar seguimiento** a entregas y comisiones pendientes.
+12. **Configurar el tipo de cambio** USD → MN para mostrar precios en moneda nacional.
+13. **Respaldar y restaurar** todos los datos del sistema como archivos JSON.
 
 El negocio funciona así:
 
@@ -60,6 +66,7 @@ Los importadores proporcionan productos y se encargan del envío directo al clie
 | **multer** | Subida de archivos de imágenes |
 | **sharp** | Conversión de imágenes a WebP |
 | **canvas** | Generación de íconos (Node.js) |
+| **tesseract.js** v7 | OCR para lectura de precios en imágenes |
 
 ### Frontend
 | Tecnología | Uso |
@@ -69,6 +76,8 @@ Los importadores proporcionan productos y se encargan del envío directo al clie
 | **CSS3** (nativo) | Sin preprocesadores |
 | **Canvas API** | Generación de imágenes 1080x1080 |
 | **IndexedDB** | Caché offline en navegador |
+| **jsPDF** + jsPDF-AutoTable | Generación de reportes PDF |
+| **JSZip** | Empaquetado ZIP para descarga masiva de imágenes |
 
 ---
 
@@ -87,7 +96,8 @@ Los importadores proporcionan productos y se encargan del envío directo al clie
 │  │  ┌────▼────┐                           │   │
 │  │  │  Views  │  (Dashboard, Products,    │   │
 │  │  │         │   Providers, Sales,        │   │
-│  │  │         │   Publications, Backup,    │   │
+│  │  │         │   Publications, Exports,   │   │
+│  │  │         │   Import, Backup,          │   │
 │  │  │         │   Catalog, Settings)       │   │
 │  │  └────┬────┘                           │   │
 │  │       │                                │   │
@@ -107,6 +117,10 @@ Los importadores proporcionan productos y se encargan del envío directo al clie
 │  ┌────▼─────┐  ┌──────────────────────┐     │
 │  │  SQLite  │  │  Facebook Graph API  │     │
 │  │  .db     │  │  (publicaciones)     │     │
+│  └──────────┘  └──────────────────────┘     │
+│  ┌──────────┐  ┌──────────────────────┐     │
+│  │ Tesseract│  │  Pollinations API    │     │
+│  │ (OCR)    │  │  (imágenes IA)       │     │
 │  └──────────┘  └──────────────────────┘     │
 └──────────────────────────────────────────────┘
 ```
@@ -157,6 +171,8 @@ DaniMarvisStore/
 ├── public-catalog/
 │   ├── index.html             # Catálogo web estático generado (GitHub Pages)
 │   └── images/                # Imágenes de productos copiadas para el catálogo
+├── electron/
+│   └── main.js                # Placeholder para aplicación Electron (próximamente)
 ├── backend/
 │   ├── server.js              # Servidor Express (puerto 3456)
 │   ├── package.json           # Dependencias Node.js
@@ -168,13 +184,17 @@ DaniMarvisStore/
 │   │   ├── catalogGenerator.js # Generador de HTML estático del catálogo público
 │   │   ├── currency.js         # Formateador de precios en USD
 │   │   ├── facebook.js         # Integración con Facebook Graph API
-│   │   └── imageUtils.js       # Conversión de imágenes a WebP con sharp
+│   │   ├── imageUtils.js       # Conversión de imágenes a WebP con sharp
+│   │   └── ocr.js              # OCR con tesseract.js + fuzzy matching
 │   ├── routes/
 │   │   ├── products.js        # CRUD productos + visibilidad
 │   │   ├── providers.js       # CRUD proveedores
 │   │   ├── sales.js           # CRUD ventas + PATCH estado
 │   │   ├── categories.js      # CRUD categorías
-│   │   ├── publications.js    # CRUD publicaciones + publicar en FB/IG
+│   │   ├── publications.js    # CRUD publicaciones + publicar en FB/IG + reorder
+│   │   ├── exports.js         # CRUD historial de exportaciones
+│   │   ├── import.js          # Análisis OCR + aplicación de precios
+│   │   ├── copilot.js         # Importación de imágenes Copilot/Dreamina
 │   │   └── backup.js          # Exportar/restaurar datos como JSON
 │   └── scripts/
 │       └── generate-icon.js   # Generador de ícono PNG con canvas
@@ -196,8 +216,13 @@ DaniMarvisStore/
 │       ├── services/
 │       │       └── index.js   # Auth, caché + invalidación de productos
 │       ├── utils/
-│       │   ├── utils.js       # formatUSD, formatMN, fechas, IDs, debounce
-│       │   └── imageGenerator.js  # Motor Canvas para imágenes 1080x1080
+│       │   ├── utils.js       # formatUSD, formatMN, fechas, IDs, debounce, extractSlogan
+│       │   ├── imageGenerator.js  # Motor Canvas para imágenes 1080x1080 (5 plantillas)
+│       │   └── pdfGenerator.js    # Generador de PDF con jsPDF
+│       ├── lib/
+│       │   ├── jspdf.umd.min.js           # jsPDF
+│       │   ├── jspdf.plugin.autotable.min.js  # jsPDF AutoTable
+│       │   └── jszip.min.js               # JSZip
 │       └── views/
 │           ├── loginView.js          # Pantalla de inicio de sesión
 │           ├── dashboardView.js      # Estadísticas y gráficos
@@ -207,7 +232,12 @@ DaniMarvisStore/
 │           ├── publicationsView.js   # CRUD publicaciones + publicar en FB/IG
 │           ├── catalogImagesView.js  # Generador de catálogo público
 │           ├── settingsView.js       # Configuración general
-│           └── backupView.js         # Exportar/restaurar datos
+│           ├── backupView.js         # Exportar/restaurar datos
+│           ├── exportsView.js        # Panel de exportaciones (PDF + imágenes)
+│           ├── exportsNewView.js     # Nueva exportación PDF
+│           ├── exportsConfigView.js  # Configuración de exportaciones
+│           ├── exportsImagesView.js  # Generador de imágenes promocionales
+│           └── importView.js         # Importar/sincronizar precios con OCR
 │
 └── README.md
 ```
@@ -306,12 +336,57 @@ Response: { "user": {...}, "token": "..." }
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| `GET` | `/api/publications` | Listar todas las publicaciones |
+| `GET` | `/api/publications` | Listar publicaciones (ordenadas por `sort_order` y `publication_date`) |
 | `GET` | `/api/publications/:id` | Obtener publicación por ID |
 | `POST` | `/api/publications` | Crear publicación (asocia a producto, almacena texto e imágenes) |
 | `PUT` | `/api/publications/:id` | Actualizar publicación |
+| `PATCH` | `/api/publications/reorder` | Reordenar publicaciones (`{ "order": ["id1", "id2", ...] }`) |
 | `POST` | `/api/publications/:id/publish` | Publicar en Facebook o Instagram |
 | `DELETE` | `/api/publications/:id` | Eliminar publicación |
+
+**Campos de publicación:**
+
+| Campo | Tipo | Descripción |
+|-------|------|-------------|
+| `product_id` | TEXT | ID del producto asociado (opcional) |
+| `product_name` | TEXT | Nombre del producto (auto-generado) |
+| `publish_text` | TEXT | Texto de la publicación |
+| `images` | TEXT | Array JSON de URLs de imágenes |
+| `publication_date` | TEXT | Fecha de publicación |
+| `sort_order` | INTEGER | Orden de visualización |
+
+### Exportaciones
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/exports` | Listar historial de exportaciones |
+| `GET` | `/api/exports/:id` | Obtener exportación por ID |
+| `POST` | `/api/exports` | Crear registro de exportación |
+| `DELETE` | `/api/exports/:id` | Eliminar exportación del historial |
+
+**Campos de exportación:**
+
+| Campo | Tipo | Descripción |
+|-------|------|-------------|
+| `title` | TEXT | Título de la exportación |
+| `style` | TEXT | Estilo: `table`, `list`, `clasica`, `moderna`, etc. |
+| `kind` | TEXT | Tipo: `pdf` o `images` |
+| `fields` | TEXT | Array JSON de campos incluidos |
+| `product_ids` | TEXT | Array JSON de IDs de productos |
+| `product_count` | INTEGER | Cantidad de productos |
+
+### Importación / Sincronización
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `POST` | `/api/import/analyze` | Analizar imágenes de una carpeta con OCR (requiere `folder` y `provider_id`) |
+| `POST` | `/api/import/apply` | Aplicar precios detectados a productos (actualiza precio y visibilidad) |
+
+### Copilot / Dreamina
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `POST` | `/api/copilot/import` | Importar imágenes desde una carpeta (asociación automática por nombre) |
 
 ### Dashboard
 
@@ -334,13 +409,8 @@ Response: { "user": {...}, "token": "..." }
 
 **publish_config** incluye:
 - `template`: Plantilla de texto para publicaciones con placeholders (`{NAME}`, `{PRICE}`, `{DESCRIPTION}`, `{WARRANTY}`, `{CATEGORY}`, `{STOCK}`)
-- `ai_url`: URL de la API de IA compatible con OpenAI
-- `ai_key`: Clave de API de IA
-- `ai_model`: Modelo de IA a utilizar
-- `ai_prompt`: Prompt del sistema para generación de texto
-- `fb_page_id`: ID de página de Facebook
-- `fb_access_token`: Token de acceso de Facebook
-- `ig_account_id`: ID de cuenta de Instagram
+- `ai`: Configuración de IA (`enabled`, `api_url`, `api_key`, `model`, `system_prompt`)
+- `facebook`: Configuración de Facebook (`page_id`, `access_token`, `instagram_id`)
 
 ### Imágenes
 
@@ -353,6 +423,7 @@ Response: { "user": {...}, "token": "..." }
 | Método | Ruta | Descripción |
 |--------|------|-------------|
 | `POST` | `/api/generate-description` | Generar descripción de producto con IA |
+| `POST` | `/api/generate-image` | Generar fondo de imagen con IA (Pollinations, gratuito) |
 
 ### Catálogo público
 
@@ -382,10 +453,12 @@ El frontend es una **SPA** (Single Page Application) construida con JavaScript v
 | `#/products` | Productos | CRUD completo con filtros, gestión de múltiples imágenes, generación de descripciones con IA, texto de publicación, visibilidad en catálogo |
 | `#/providers` | Proveedores | CRUD con información de contacto y conteo de productos |
 | `#/sales` | Ventas | CRUD con cálculo automático de comisiones, seguimiento de entregas y filtros |
-| `#/publications` | Publicaciones | CRUD de publicaciones con texto, imágenes, generación con IA y publicación directa en Facebook/Instagram |
+| `#/publications` | Publicaciones | CRUD de publicaciones con texto, imágenes, generación con IA, reordenamiento y publicación directa en Facebook/Instagram |
 | `#/catalog-images` | Catálogo público | Generador de catálogo web estático + despliegue en GitHub Pages |
+| `#/import` | Importar / Sincronizar | OCR de imágenes del proveedor, detección de precios, actualización masiva |
 | `#/settings` | Configuración | Tipo de cambio, plantilla de publicación, configuración de IA, configuración de Facebook/Instagram, gestión de categorías |
 | `#/backup` | Respaldos | Exportar e importar todos los datos del sistema como JSON |
+| `#/exports` | Exportaciones | Generación de PDF, imágenes promocionales, historial de exportaciones |
 
 ### Funcionalidades
 
@@ -412,42 +485,116 @@ El frontend es una **SPA** (Single Page Application) construida con JavaScript v
 
 ## Generador de Imágenes
 
-El generador produce imágenes **1080x1080px** (formato estándar para Facebook e Instagram) con el siguiente diseño:
+El generador produce imágenes **1080x1080px** (formato estándar para Facebook e Instagram) con **5 plantillas** distintas:
 
-```
-┌──────────────────────────────┐
-│  DANI MARVIS Store           │  ← Logo
-│                              │
-│      ┌──────────────┐        │
-│      │              │        │
-│      │   Producto   │        │  ← Imagen del producto
-│      │              │        │     (o placeholder)
-│      └──────────────┘        │
-│                              │
-│     Nombre del Producto      │  ← Nombre en Georgia bold
-│                              │
-│       $ 2.500.000            │  ← Precio destacado (rose)
-│                              │
-│  ┌────────────────────────┐  │
-│  │ Comisión: $10 USD │ Gtía│  │  ← Barra oscura
-│  └────────────────────────┘  │
-│                              │
-│   Escríbeme y llévate       │
-│   Comprar por WhatsApp      │  ← CTA verde WhatsApp
-│                              │
-│  DaniMarvis Store — Footer  │
-└──────────────────────────────┘
-```
+### Plantillas disponibles
+
+| Plantilla | Estilo | Descripción |
+|-----------|--------|-------------|
+| **Clásica** | Claro | Degradado claro, logo, círculo y barra de información |
+| **Moderna** | Oscuro | Fondo oscuro con acento de color |
+| **Minimal** | Limpio | Imagen grande y texto limpio |
+| **Oferta** | Claro | Insignia OFERTA con precio destacado |
+| **Postal DM** | Oscuro | Estilo DaniMarvis Store con gradiente azul-naranja |
+
+### Características
+
+- **Fondo con IA** — Genera fondos creativos gratuitos con Pollinations (sin token ni cuenta)
+- **6 colores de acento** — Rosa, rojo, verde, azul, púrpura, naranja
+- **Texto CTA configurable** — Personalizar texto del llamado a la acción
+- **Logo configurable** — Mostrar/ocultar logo de la tienda
+- **Vista previa en tiempo real** — Previsualizar antes de descargar
+- **Descarga individual** — PNG de cada producto seleccionado
+- **Descarga masiva ZIP** — Empaquetar todas las imágenes en un archivo ZIP
 
 ### Cómo usarlo
 
-1. Ve a **Productos** en el panel.
-2. Haz clic en **"Generar imagen"** en cualquier producto.
-3. La imagen se renderiza en el navegador (no se envía al servidor).
-4. Previsualiza y descarga como PNG.
-5. Usa **"Generar todas"** para descargar imágenes de todos los productos activos (se descargan una por una automáticamente).
+1. Ve a **Exportaciones** → pestaña **Imágenes** en el panel.
+2. Selecciona los productos (filtros por categoría y búsqueda).
+3. Elige la plantilla, colores y textos.
+4. Opcionalmente genera un fondo con IA.
+5. Previsualiza y descarga como PNG o ZIP.
 
 Las imágenes se generan **100% en el cliente** usando Canvas API — no ocupan recursos del servidor.
+
+---
+
+## Exportaciones PDF
+
+Permite generar reportes PDF de productos con personalización completa.
+
+### Características
+
+- **2 estilos de PDF** — Tabla simple (profesional compacto) o Lista detallada (un producto por bloque)
+- **Selección de campos** — Producto, categoría, precio, proveedor, stock, descripción, garantía, comisión, estado
+- **Filtros** — Buscar por nombre, filtrar por categoría
+- **Selección masiva** — Seleccionar/deseleccionar todos los productos filtrados
+- **Historial** — Cada generación se registra en el historial de exportaciones
+- **Configuración persistente** — Estilo, campos y encabezado se guardan en localStorage
+
+### Cómo usarlo
+
+1. Ve a **Exportaciones** → pestaña **Nueva exportación**.
+2. Filtra y selecciona los productos.
+3. Elige los campos a incluir.
+4. Haz clic en **Generar PDF**.
+5. El PDF se descarga automáticamente y se registra en el historial.
+
+---
+
+## Importación / Sincronización OCR
+
+Funcionalidad para actualizar precios y disponibilidad de productos a partir de las imágenes que publica el proveedor (listas de precios en foto).
+
+### Flujo
+
+1. **Configurar** — Elegir proveedor y carpeta donde se guardaron las imágenes (una por producto).
+2. **Analizar** — El sistema lee cada imagen con OCR (tesseract.js), detecta el texto y busca coincidencia con los productos existentes. También detecta precios en USD.
+3. **Revisar** — Para cada imagen se muestra: producto detectado (con % de coincidencia), precio detectado, precio actual y texto OCR. Se puede corregir manualmente.
+4. **Aplicar** — Actualiza precios, define visibilidad en catálogo y elimina de la carpeta las imágenes ya procesadas. Opcionalmente oculta productos del proveedor que no aparecen en la lista.
+
+### Características
+
+- **OCR en español e inglés** con tesseract.js v7
+- **Coincidencia fuzzy** — Algoritmo de matching que tolera errores de escritura y variaciones en nombres
+- **Detección de precios** — Reconoce montos en USD con contexto (distingue precios de especificaciones técnicas)
+- **Creación de productos** — Botón `+` para crear un producto nuevo directamente desde la imagen
+- **Toggle de visibilidad** — Controlar si cada producto queda visible en el catálogo
+- **Eliminación de imágenes procesadas** — Limpieza automática de la carpeta tras aplicar
+- **Regenerar catálogo** — Botón para regenerar el catálogo público tras la sincronización
+
+### Cómo usarlo
+
+1. Ve a **Importar / Sincronizar** en el panel.
+2. Selecciona el proveedor y la carpeta con las imágenes.
+3. Haz clic en **Analizar imágenes**.
+4. Revisa cada resultado, corrige si hace falta.
+5. Marca los productos a actualizar y haz clic en **Aplicar seleccionados**.
+
+---
+
+## Copilot / Dreamina
+
+Integración con herramientas de generación de imágenes con IA (Microsoft Copilot, ByteDance Dreamina) para crear anuncios publicitarios.
+
+### Flujo
+
+1. **Copiar prompt** — Junto a cada producto hay un botón 📋 que copia un prompt detallado para generar un anuncio publicitario. Incluye nombre del producto, precio, garantía y estilo visual.
+2. **Generar en Copilot/Dreamina** — Usar el prompt copiado en la herramienta de IA para generar la imagen.
+3. **Guardar** — Guardar la imagen generada en una carpeta local con el nombre sugerido (slug del producto).
+4. **Importar** — Indicar la ruta de la carpeta y hacer clic en **Importar**. El sistema:
+   - Copia las imágenes a `uploads/copilot/`
+   - Registra cada imagen en el historial de exportaciones
+   - Opcionalmente asocia la imagen al producto (prepende en la galería)
+   - Detecta el producto por coincidencia del nombre del archivo
+
+### Cómo usarlo
+
+1. Ve a **Exportaciones** → pestaña **Imágenes**.
+2. Haz clic en 📋 junto al producto que querés anunciar.
+3. Genera la imagen en Copilot o Dreamina.
+4. Guarda la imagen en la carpeta indicada.
+5. Importa la carpeta desde el panel.
 
 ---
 
@@ -477,14 +624,6 @@ El sistema genera un **catálogo web estático** con todos los productos activos
 node scripts/generate-catalog.js
 ```
 
-### Estructura generada
-
-```
-public-catalog/
-├── index.html        # Catálogo completo (autocontenido)
-└── images/           # Imágenes de productos copiadas desde backend/uploads/
-```
-
 ### Despliegue en GitHub Pages
 
 1. Pushear el proyecto (incluyendo `public-catalog/`) a GitHub.
@@ -502,7 +641,8 @@ El sistema permite crear publicaciones y publicarlas directamente en Facebook e 
 
 1. **Crear publicación** — Asocia un producto, genera o escribe el texto de publicación, agrega imágenes.
 2. **Generar texto con IA** — Usa la configuración de IA para generar automáticamente un texto de publicación basado en la plantilla configurada.
-3. **Publicar** — Envía la publicación a Facebook (Graph API) o Instagram.
+3. **Reordenar** — Cambiar el orden de las publicaciones con drag-and-drop.
+4. **Publicar** — Envía la publicación a Facebook (Graph API) o Instagram.
 
 ### Configuración necesaria
 
@@ -512,13 +652,6 @@ En **Configuración** del panel, configura:
 - **Token de acceso** de Facebook (con permisos `pages_publish_posts` y `instagram_basic`, `instagram_content_publish`)
 - **Plantilla de publicación** con placeholders: `{NAME}`, `{PRICE}`, `{DESCRIPTION}`, `{WARRANTY}`, `{CATEGORY}`, `{STOCK}`
 - **Configuración de IA** (URL, clave, modelo, prompt) para generación automática de textos
-
-### API de publicaciones
-
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| `POST` | `/api/publications` | Crear publicación |
-| `POST` | `/api/publications/:id/publish` | Publicar en FB/IG (`{ "platform": "facebook" }` o `{ "platform": "instagram" }`) |
 
 ---
 
@@ -530,7 +663,7 @@ Permite exportar e importar todos los datos del sistema.
 
 1. Ve a **Respaldos** en el panel.
 2. Haz clic en **"Exportar datos"**.
-3. Se descarga un archivo JSON con todos los productos, proveedores, ventas, categorías, configuración y publicaciones.
+3. Se descarga un archivo JSON con todos los productos, proveedores, ventas, categorías, configuración, publicaciones y exportaciones.
 
 ### Importar
 
@@ -573,38 +706,50 @@ Actualiza el valor de 1 USD en moneda nacional (MN). Se refleja en dashboard, ve
 
 ### 4. Generar imágenes promocionales
 ```
-Panel → Productos → Generar imagen
+Panel → Exportaciones → Imágenes
 ```
-Descarga la imagen y publícala en Facebook con un enlace a tu WhatsApp.
+Elige plantilla, colores y textos. Genera fondos con IA si lo deseás. Descarga individual o masiva (ZIP).
 
-### 5. Generar publicaciones
+### 5. Generar reportes PDF
+```
+Panel → Exportaciones → Nueva exportación
+```
+Selecciona productos, campos y estilo. Genera y descarga el PDF.
+
+### 6. Sincronizar precios del proveedor
+```
+Panel → Importar / Sincronizar
+```
+Guarda las imágenes de listas de precios en una carpeta. El sistema lee precios con OCR y actualiza los productos.
+
+### 7. Generar publicaciones
 ```
 Panel → Publicaciones → Nueva publicación
 ```
 Asocia un producto, genera el texto con IA o escríbelo manualmente, y publica directamente en Facebook o Instagram.
 
-### 6. Generar catálogo público
+### 8. Generar catálogo público
 ```
 Panel → Catálogo público → Generar catálogo
 ```
 El servidor genera un catálogo web estático con todos los productos activos, imágenes y botón de WhatsApp. Luego haz commit y push a GitHub para actualizar GitHub Pages.
 
-### 7. Registrar ventas
+### 9. Registrar ventas
 ```
 Panel → Ventas → Nueva venta
 ```
 Selecciona el producto, ingresa datos del cliente. El sistema calcula automáticamente el total y la comisión.
 
-### 8. Dar seguimiento
+### 10. Dar seguimiento
 Actualiza el estado de entrega (pendiente → enviado → entregado) y marca comisiones como pagadas.
 
-### 9. Respaldar datos
+### 11. Respaldar datos
 ```
 Panel → Respaldos → Exportar datos
 ```
 Descarga un archivo JSON con todos los datos para tener un respaldo de seguridad.
 
-### 10. Revisar dashboard
+### 12. Revisar dashboard
 El dashboard muestra ingresos totales, comisiones pendientes, productos más vendidos y ventas mensuales.
 
 ---
@@ -632,6 +777,7 @@ Edita `frontend/js/utils/imageGenerator.js` para cambiar:
 - Colores, fuentes, tamaños
 - Texto del CTA
 - Posición de los elementos
+- Agregar nuevas plantillas (objeto `TEMPLATE_DRAWERS`)
 
 ### Plantilla de publicaciones
 En **Configuración** del panel puedes definir una plantilla de texto con placeholders:
@@ -651,30 +797,39 @@ En **Configuración** del panel puedes definir una plantilla de texto con placeh
 - [x] CRUD completo de productos, proveedores, ventas y categorías
 - [x] Cálculo automático de comisiones
 - [x] Generación de imágenes promocionales 1080x1080 (Canvas API)
+- [x] 5 plantillas de imágenes (Clásica, Moderna, Minimal, Oferta, Postal DM)
+- [x] Fondo con IA gratuito (Pollinations)
+- [x] 6 colores de acento configurables
 - [x] Subida de imágenes al servidor con conversión automática a WebP
 - [x] Gestión de múltiples imágenes por producto con drag-and-drop
 - [x] Generación de catálogo web estático para GitHub Pages
 - [x] Modo oscuro en el catálogo público
 - [x] Enlace directo a WhatsApp por producto
 - [x] Sistema de publicaciones con publicación directa en Facebook e Instagram
+- [x] Reordenamiento de publicaciones
 - [x] Generación de textos de publicación con IA (compatible OpenAI)
 - [x] Plantilla de publicaciones personalizable
 - [x] Sistema de respaldos (exportar/importar JSON)
 - [x] Control de visibilidad de productos en catálogo público
 - [x] Caché offline con IndexedDB
 - [x] Configuración de tipo de cambio USD → MN
+- [x] Exportación de reportes PDF (tabla y lista detallada)
+- [x] Importación/sincronización de precios con OCR (tesseract.js)
+- [x] Integración con Copilot/Dreamina para anuncios publicitarios
+- [x] Generación de imágenes con IA (Pollinations)
+- [x] Descarga masiva de imágenes en ZIP (JSZip)
 
 ### Por implementar
 
+- [ ] **Aplicación Electron** funcional para escritorio
+- [ ] **Autenticación mejorada** con JWT y hashes de contraseñas
+- [ ] **Múltiples gestores** con roles y permisos
 - [ ] **Exportar reportes** a Excel/CSV
 - [ ] **Panel de comisiones** por proveedor con resumen mensual
-- [ ] **Autenticación mejorada** con JWT y hashes de contraseñas
 - [ ] **Notificaciones** cuando una venta cambia de estado
-- [ ] **Múltiples gestores** con roles y permisos
 - [ ] **Integración con Facebook Catalog** para Dynamic Ads
 - [ ] **Compartir módulo `escHtml()`/`escAttr()`** como utilidad centralizada
 - [ ] **Unificar generación de IDs** en el backend para todos los recursos
-- [ ] **Aplicación Electron** para escritorio
 
 ---
 

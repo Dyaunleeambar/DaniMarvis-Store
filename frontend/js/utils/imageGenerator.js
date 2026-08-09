@@ -385,56 +385,88 @@ function drawOferta(ctx, product, opts, bgImg, productImg) {
 }
 
 function drawPostal(ctx, product, opts, bgImg, productImg) {
+  const NAVY = '#0d2b4e';
+  const YELLOW = '#f5c518';
+
   if (!bgImg) {
-    ctx.fillStyle = '#0d2b4e';
+    ctx.fillStyle = NAVY;
     ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
   }
 
   const slogan = extractSloganText(product);
 
+  // ── Header ──────────────────────────────────────────────────
+  const headerH = 96;
   ctx.fillStyle = 'rgba(255,255,255,.06)';
-  ctx.fillRect(0, 0, CANVAS_SIZE, 90);
+  ctx.fillRect(0, 0, CANVAS_SIZE, headerH);
+  if (opts.showLogo) {
+    drawLogo(ctx, 60, (headerH - 56) / 2, { color: WHITE, accent: YELLOW, muted: 'rgba(255,255,255,.5)' });
+  }
 
-  if (opts.showLogo) drawLogo(ctx, 60, 22, { color: WHITE, accent: '#f5c518', muted: 'rgba(255,255,255,.5)' });
-
+  // ── Título + eslogan ────────────────────────────────────────
   ctx.textAlign = 'center';
   ctx.fillStyle = WHITE;
   ctx.font = '900 52px "Arial Black", "Helvetica Neue", "Arial", sans-serif';
   const nameUpper = (product.name || '').trim().toUpperCase();
-  const nameLines = wrapText(ctx, nameUpper, 880);
-  let y = 130;
+  const nameLines = wrapText(ctx, nameUpper, 860);
+  let y = headerH + 74;
   nameLines.forEach(line => {
     ctx.fillText(line, CANVAS_SIZE / 2, y);
-    y += 62;
+    y += 60;
   });
 
   if (slogan) {
-    y += 8;
+    y += 4;
     ctx.fillStyle = 'rgba(255,255,255,.8)';
     ctx.font = 'italic 30px "Georgia", "Times New Roman", serif';
     ctx.fillText(slogan, CANVAS_SIZE / 2, y);
-    y += 14;
+    y += 30;
+  } else {
+    y += 24;
   }
 
+  // ── Zona amarilla: altura dinámica anclada a un pie fijo ─────
+  // (antes era una altura fija de 440px, dejaba hueco vacío con
+  // nombres cortos o se podía desbordar con nombres largos)
   const zoneX = 60;
   const zoneW = CANVAS_SIZE - 120;
-  const zoneH = 440;
-  const zoneR = 50;
-  const zoneY = y + 20;
+  const zoneR = 46;
+  const zoneY = y + 6;
 
-  ctx.fillStyle = '#f5c518';
+  const footerRowY = CANVAS_SIZE - 124;
+  const brandY = CANVAS_SIZE - 34;
+  const zoneBottom = footerRowY - 34;
+  const zoneH = Math.max(300, zoneBottom - zoneY);
+
+  ctx.fillStyle = YELLOW;
   roundRect(ctx, zoneX, zoneY, zoneW, zoneH, zoneR);
   ctx.fill();
 
-  const imgSize = 380;
-  const imgX = (CANVAS_SIZE - imgSize) / 2;
-  const imgY = zoneY + (zoneH - imgSize) / 2;
-  drawProductImage(ctx, product, productImg, imgX, imgY, imgSize, 24);
+  // La foto ahora ocupa la mayor parte de la zona (antes era un
+  // cuadrado fijo de 380px flotando en medio de mucho amarillo vacío)
+  const imgPadSide = 40;
+  const imgPadTop = 58; // deja espacio para que la tarjeta de precio no tape la foto
+  const imgPadBottom = 40;
+  const imgX = zoneX + imgPadSide;
+  const imgW = zoneW - imgPadSide * 2;
+  const imgY = zoneY + imgPadTop;
+  const imgH = Math.max(140, zoneH - imgPadTop - imgPadBottom);
+  drawProductImage(ctx, product, productImg, imgX, imgY, imgW, imgH, 30);
 
-  const priceContainerW = 480;
-  const priceContainerH = 90;
+  // ── Tarjeta de precio flotante (ancho dinámico según el texto) ─
+  const priceMain = formatPrice(product.price);
+  const priceUnit = 'USD';
+  ctx.font = '900 46px "Arial Black", "Helvetica Neue", "Arial", sans-serif';
+  const mainW = ctx.measureText(priceMain).width;
+  ctx.font = '700 20px "Arial", "Helvetica Neue", sans-serif';
+  const unitW = ctx.measureText(priceUnit).width;
+  const gapPU = 8;
+  const padX = 28;
+  const contentW = mainW + gapPU + unitW;
+  const priceContainerW = Math.max(220, contentW + padX * 2);
+  const priceContainerH = 84;
   const priceX = zoneX + zoneW - priceContainerW + 20;
-  const priceY = zoneY - 30;
+  const priceY = zoneY - 28;
 
   ctx.shadowColor = 'rgba(0,0,0,.25)';
   ctx.shadowBlur = 16;
@@ -446,38 +478,44 @@ function drawPostal(ctx, product, opts, bgImg, productImg) {
   ctx.shadowBlur = 0;
   ctx.shadowOffsetY = 0;
 
-  ctx.fillStyle = '#0d2b4e';
-  ctx.textAlign = 'center';
-  ctx.font = '900 48px "Arial Black", "Helvetica Neue", "Arial", sans-serif';
-  ctx.fillText(formatPrice(product.price) + ' USD', priceX + priceContainerW / 2, priceY + 58);
+  ctx.textAlign = 'left';
+  const groupStartX = priceX + (priceContainerW - contentW) / 2;
+  const priceBaselineY = priceY + priceContainerH / 2 + 16;
+  ctx.fillStyle = NAVY;
+  ctx.font = '900 46px "Arial Black", "Helvetica Neue", "Arial", sans-serif';
+  ctx.fillText(priceMain, groupStartX, priceBaselineY);
+  ctx.fillStyle = '#5c7a99';
+  ctx.font = '700 20px "Arial", "Helvetica Neue", sans-serif';
+  ctx.fillText(priceUnit, groupStartX + mainW + gapPU, priceBaselineY - 2);
 
-  const footerY = zoneY + zoneH + 28;
-
+  // ── Pie (posición fija, ya no depende del largo del título) ──
   if (product.warranty) {
-    ctx.fillStyle = 'rgba(255,255,255,.15)';
-    const badgeW = 200;
+    ctx.font = 'bold 17px "Arial", "Helvetica Neue", sans-serif';
+    const warrantyText = `GARANTÍA ${product.warranty}`;
+    const warrantyTextW = ctx.measureText(warrantyText).width;
+    const badgeW = Math.max(160, warrantyTextW + 48);
     const badgeH = 52;
-    roundRect(ctx, 60, footerY, badgeW, badgeH, 12);
+    ctx.fillStyle = 'rgba(255,255,255,.15)';
+    roundRect(ctx, 60, footerRowY, badgeW, badgeH, 12);
     ctx.fill();
     ctx.fillStyle = WHITE;
     ctx.textAlign = 'center';
-    ctx.font = 'bold 17px "Arial", "Helvetica Neue", sans-serif';
-    ctx.fillText(`GARANTÍA ${product.warranty}`, 60 + badgeW / 2, footerY + 33);
+    ctx.fillText(warrantyText, 60 + badgeW / 2, footerRowY + 33);
   }
 
-  ctx.fillStyle = '#f5c518';
+  ctx.fillStyle = YELLOW;
   ctx.font = '34px "Arial", sans-serif';
   ctx.textAlign = 'right';
-  ctx.fillText('🚚', CANVAS_SIZE - 60, footerY + 36);
+  ctx.fillText('🚚', CANVAS_SIZE - 60, footerRowY + 36);
   ctx.fillStyle = WHITE;
   ctx.font = 'italic bold 30px "Georgia", "Times New Roman", serif';
   ctx.textAlign = 'right';
-  ctx.fillText('Envío Gratis', CANVAS_SIZE - 105, footerY + 36);
+  ctx.fillText('Envío Gratis', CANVAS_SIZE - 105, footerRowY + 36);
 
-  ctx.fillStyle = 'rgba(255,255,255,.35)';
-  ctx.font = '14px "Arial", sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,.4)';
+  ctx.font = '16px "Arial", sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('DaniMarvis Store — Tu gestor de confianza', CANVAS_SIZE / 2, CANVAS_SIZE - 20);
+  ctx.fillText('DaniMarvis Store — Tu gestor de confianza', CANVAS_SIZE / 2, brandY);
 }
 
 function extractSloganText(product) {

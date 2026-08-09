@@ -611,14 +611,47 @@ function copyText(text) {
 }
 
 function buildCopilotPrompt(product) {
-  const warrantyLine = product.warranty
-    ? `sello de garantía ${product.warranty}`
-    : 'sello con texto OFERTA';
   const nameUpper = (product.name || '').trim().toUpperCase();
   const priceText = `$${Math.round(Number(product.price) || 0)} USD`;
+  const warrantyTime = product.warranty || '15 días';
   const slogan = extractSlogan(product);
-  const sloganText = slogan ? ` con el eslogan "${slogan}"` : '';
-  return `Generá una pieza publicitaria horizontal 16:9 estilo DaniMarvis Store con fondo galáctico azul naranja, mostrando ${nameUpper}${sloganText}, con sello DaniMarvis Store, ${warrantyLine}, contenedor del precio con el valor ${priceText}, botones Compra Ya y Envío Gratis.`;
+  const sloganSection = slogan
+    ? `- Eslogan en cursiva blanca elegante: "${slogan}".`
+    : '- Sin eslogan (omitir esta línea).';
+
+  return `Diseño publicitario premium estilo DaniMarvis Store Simplificado Premium.
+Formato: 1:1 (cuadrado, 1080x1080).
+
+Fondo:
+Degradado diagonal azul oscuro (izquierda) → naranja vibrante (derecha),
+con línea divisoria suave en el footer.
+
+Composición:
+Producto principal centrado, recortado profesionalmente, sin fondo blanco.
+Sombra integrada realista y reflejo sutil bajo el producto.
+Si existen variantes (colores/modelos), colocarlas de forma simétrica.
+Si el producto NO tiene variantes visibles, mostrar UNA sola unidad centrada.
+
+Tipografía:
+- Nombre del producto en MAYÚSCULAS, blanco con efecto 3D suave: "${nameUpper}".
+${sloganSection}
+
+Precio:
+Texto dorado MUY GRANDE (tamaño destacado, protagonista), con sombra azul suave
+y línea fina dorada debajo: "${priceText}". Debe ser el elemento más visible
+después del producto.
+
+Sello de garantía:
+Círculo con fondo azul oscuro, borde dorado, texto:
+"GARANTÍA ${warrantyTime}" en blanco.
+
+Iluminación:
+Equilibrada, con reflejo sutil bajo el producto.
+
+Estética general:
+Limpia, moderna, técnica y coherente con el estilo premium DaniMarvis Store.
+Sin texto basura, sin watermarks, sin marcos innecesarios.
+Calidad de renderizado fotorrealista.`;
 }
 
 function renderCopilotResults(el, data) {
