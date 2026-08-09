@@ -392,86 +392,92 @@ function drawPostal(ctx, product, opts, bgImg, productImg) {
 
   const slogan = extractSloganText(product);
 
-  ctx.fillStyle = 'rgba(255,255,255,.08)';
-  ctx.fillRect(0, 0, CANVAS_SIZE, 100);
+  ctx.fillStyle = 'rgba(255,255,255,.06)';
+  ctx.fillRect(0, 0, CANVAS_SIZE, 90);
 
-  if (opts.showLogo) drawLogo(ctx, 60, 28, { color: WHITE, accent: '#f5c518', muted: 'rgba(255,255,255,.6)' });
+  if (opts.showLogo) drawLogo(ctx, 60, 22, { color: WHITE, accent: '#f5c518', muted: 'rgba(255,255,255,.5)' });
 
   ctx.textAlign = 'center';
   ctx.fillStyle = WHITE;
-  ctx.font = 'bold 46px "Inter", "Arial", sans-serif';
-  const nameLines = wrapText(ctx, product.name, 860);
-  let y = 150;
+  ctx.font = '900 52px "Arial Black", "Helvetica Neue", "Arial", sans-serif';
+  const nameUpper = (product.name || '').trim().toUpperCase();
+  const nameLines = wrapText(ctx, nameUpper, 880);
+  let y = 130;
   nameLines.forEach(line => {
     ctx.fillText(line, CANVAS_SIZE / 2, y);
-    y += 56;
+    y += 62;
   });
 
   if (slogan) {
-    y += 6;
-    ctx.fillStyle = 'rgba(255,255,255,.75)';
-    ctx.font = 'italic 26px "Georgia", "Times New Roman", serif';
+    y += 8;
+    ctx.fillStyle = 'rgba(255,255,255,.8)';
+    ctx.font = 'italic 30px "Georgia", "Times New Roman", serif';
     ctx.fillText(slogan, CANVAS_SIZE / 2, y);
-    y += 10;
+    y += 14;
   }
 
-  const zoneY = y + 16;
-  const zoneH = 480;
-  const zoneR = 40;
+  const zoneX = 60;
+  const zoneW = CANVAS_SIZE - 120;
+  const zoneH = 440;
+  const zoneR = 50;
+  const zoneY = y + 20;
+
   ctx.fillStyle = '#f5c518';
-  roundRect(ctx, 60, zoneY, CANVAS_SIZE - 120, zoneH, zoneR);
+  roundRect(ctx, zoneX, zoneY, zoneW, zoneH, zoneR);
   ctx.fill();
 
-  const imgSize = 400;
+  const imgSize = 380;
   const imgX = (CANVAS_SIZE - imgSize) / 2;
   const imgY = zoneY + (zoneH - imgSize) / 2;
-  drawProductImage(ctx, product, productImg, imgX, imgY, imgSize, 28);
+  drawProductImage(ctx, product, productImg, imgX, imgY, imgSize, 24);
 
-  const priceContainerW = 320;
-  const priceContainerH = 72;
-  const priceX = (CANVAS_SIZE - priceContainerW) / 2;
-  const priceY = zoneY + zoneH + 24;
-  ctx.shadowColor = 'rgba(0,0,0,.3)';
-  ctx.shadowBlur = 12;
-  ctx.shadowOffsetY = 4;
+  const priceContainerW = 480;
+  const priceContainerH = 90;
+  const priceX = zoneX + zoneW - priceContainerW + 20;
+  const priceY = zoneY - 30;
+
+  ctx.shadowColor = 'rgba(0,0,0,.25)';
+  ctx.shadowBlur = 16;
+  ctx.shadowOffsetY = 6;
   ctx.fillStyle = WHITE;
-  roundRect(ctx, priceX, priceY, priceContainerW, priceContainerH, 16);
+  roundRect(ctx, priceX, priceY, priceContainerW, priceContainerH, 20);
   ctx.fill();
   ctx.shadowColor = 'transparent';
   ctx.shadowBlur = 0;
   ctx.shadowOffsetY = 0;
+
   ctx.fillStyle = '#0d2b4e';
   ctx.textAlign = 'center';
-  ctx.font = 'bold 40px "Inter", "Arial", sans-serif';
-  ctx.fillText(formatPrice(product.price) + ' USD', CANVAS_SIZE / 2, priceY + 48);
+  ctx.font = '900 48px "Arial Black", "Helvetica Neue", "Arial", sans-serif';
+  ctx.fillText(formatPrice(product.price) + ' USD', priceX + priceContainerW / 2, priceY + 58);
 
-  const footerY = priceY + priceContainerH + 24;
+  const footerY = zoneY + zoneH + 28;
 
   if (product.warranty) {
-    ctx.fillStyle = 'rgba(255,255,255,.12)';
-    const badgeW = 180;
-    const badgeH = 48;
-    roundRect(ctx, 60, footerY, badgeW, badgeH, 10);
+    ctx.fillStyle = 'rgba(255,255,255,.15)';
+    const badgeW = 200;
+    const badgeH = 52;
+    roundRect(ctx, 60, footerY, badgeW, badgeH, 12);
     ctx.fill();
     ctx.fillStyle = WHITE;
     ctx.textAlign = 'center';
-    ctx.font = 'bold 16px "Inter", "Arial", sans-serif';
-    ctx.fillText(`GARANTÍA ${product.warranty}`, 60 + badgeW / 2, footerY + 31);
+    ctx.font = 'bold 17px "Arial", "Helvetica Neue", sans-serif';
+    ctx.fillText(`GARANTÍA ${product.warranty}`, 60 + badgeW / 2, footerY + 33);
   }
 
   ctx.fillStyle = '#f5c518';
-  ctx.font = '32px "Inter", "Arial", sans-serif';
+  ctx.font = '34px "Arial", sans-serif';
   ctx.textAlign = 'right';
-  ctx.fillText('🚚', CANVAS_SIZE - 60, footerY + 34);
+  ctx.fillText('🚚', CANVAS_SIZE - 60, footerY + 36);
   ctx.fillStyle = WHITE;
-  ctx.font = 'italic bold 28px "Georgia", "Times New Roman", serif';
+  ctx.font = 'italic bold 30px "Georgia", "Times New Roman", serif';
   ctx.textAlign = 'right';
-  ctx.fillText('Envío Gratis', CANVAS_SIZE - 100, footerY + 34);
+  ctx.fillText('Envío Gratis', CANVAS_SIZE - 105, footerY + 36);
 
-  ctx.fillStyle = 'rgba(255,255,255,.4)';
-  ctx.font = '14px "Inter", "Arial", sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,.35)';
+  ctx.font = '14px "Arial", sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('DaniMarvis Store — Tu gestor de confianza', CANVAS_SIZE / 2, CANVAS_SIZE - 24);
+  ctx.fillText('DaniMarvis Store — Tu gestor de confianza', CANVAS_SIZE / 2, CANVAS_SIZE - 20);
 }
 
 function extractSloganText(product) {
