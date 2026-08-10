@@ -31,6 +31,35 @@ export const DEFAULT_OPTIONS = {
   backgroundImage: null,
 };
 
+function shadeColor(hex, percent) {
+  let h = (hex || '#c9847a').replace('#', '');
+  if (h.length === 3) h = h.split('').map(c => c + c).join('');
+  const num = parseInt(h, 16);
+  let r = (num >> 16) & 0xff, g = (num >> 8) & 0xff, b = num & 0xff;
+  const amt = Math.round(2.55 * percent);
+  r = Math.min(255, Math.max(0, r + amt));
+  g = Math.min(255, Math.max(0, g + amt));
+  b = Math.min(255, Math.max(0, b + amt));
+  return `rgb(${r},${g},${b})`;
+}
+
+function metallicGradient(ctx, x0, y0, x1, y1, base) {
+  const g = ctx.createLinearGradient(x0, y0, x1, y1);
+  g.addColorStop(0, shadeColor(base, 42));
+  g.addColorStop(0.5, base);
+  g.addColorStop(1, shadeColor(base, -28));
+  return g;
+}
+
+function drawHeart(ctx, cx, cy, size) {
+  const s = size / 2;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy + s * 0.9);
+  ctx.bezierCurveTo(cx - s * 1.3, cy - s * 0.3, cx - s * 0.5, cy - s * 1.3, cx, cy - s * 0.45);
+  ctx.bezierCurveTo(cx + s * 0.5, cy - s * 1.3, cx + s * 1.3, cy - s * 0.3, cx, cy + s * 0.9);
+  ctx.closePath();
+}
+
 const TEMPLATE_DRAWERS = {
   clasica: { scheme: 'light', draw: drawClasica },
   moderna: { scheme: 'dark', draw: drawModerna },
@@ -434,18 +463,20 @@ function drawPostal(ctx, product, opts, bgImg, productImg) {
   //    borde derecho definen dónde "aterriza" sobre el amarillo ──
   const priceMain = formatPrice(product.price);
   const priceUnit = 'USD';
-  ctx.font = '900 46px "Arial Black", "Helvetica Neue", "Arial", sans-serif';
+  ctx.font = '900 62px "Arial Black", "Helvetica Neue", "Arial", sans-serif';
   const mainW = ctx.measureText(priceMain).width;
-  ctx.font = '700 20px "Arial", "Helvetica Neue", sans-serif';
+  ctx.font = '700 26px "Arial", "Helvetica Neue", sans-serif';
   const unitW = ctx.measureText(priceUnit).width;
-  const gapPU = 8;
-  const padX = 30;
+  const gapPU = 12;
+  const padX = 42;
   const contentW = mainW + gapPU + unitW;
-  const priceW = Math.max(220, contentW + padX * 2);
-  const priceH = 88;
+  const priceW = Math.max(280, contentW + padX * 2);
+  const priceH = 130;
 
-  const zoneX = 60;
-  const zoneW = CANVAS_SIZE - 120;
+  // Panel más cuadrado: ancho reducido y centrado (antes ocupaba
+  // todo el ancho del lienzo y quedaba muy apaisado)
+  const zoneW = Math.round(CANVAS_SIZE * 0.7);
+  const zoneX = Math.round((CANVAS_SIZE - zoneW) / 2);
 
   // Bordes derechos alineados sobre la misma vertical (arista continua)
   const priceX = zoneX + zoneW - priceW;
@@ -494,13 +525,13 @@ function drawPostal(ctx, product, opts, bgImg, productImg) {
 
   ctx.textAlign = 'left';
   const groupStartX = priceX + (priceW - contentW) / 2;
-  const priceBaselineY = priceY + priceH / 2 + 16;
+  const priceBaselineY = priceY + priceH / 2 + 22;
   ctx.fillStyle = NAVY;
-  ctx.font = '900 46px "Arial Black", "Helvetica Neue", "Arial", sans-serif';
+  ctx.font = '900 62px "Arial Black", "Helvetica Neue", "Arial", sans-serif';
   ctx.fillText(priceMain, groupStartX, priceBaselineY);
   ctx.fillStyle = '#5c7a99';
-  ctx.font = '700 20px "Arial", "Helvetica Neue", sans-serif';
-  ctx.fillText(priceUnit, groupStartX + mainW + gapPU, priceBaselineY - 2);
+  ctx.font = '700 26px "Arial", "Helvetica Neue", sans-serif';
+  ctx.fillText(priceUnit, groupStartX + mainW + gapPU, priceBaselineY - 3);
 
   // ── Pie (posición fija, ya no depende del largo del título) ──
   if (product.warranty) {
@@ -555,47 +586,62 @@ function drawLogo(ctx, x, y, { color = DARK, accent = ROSE, muted = TEXT_MUTED }
   ctx.save();
   ctx.translate(x, y);
 
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 2.5;
+  const metalGrad = metallicGradient(ctx, 0, 0, logoSize, logoSize, accent);
+
+  // Asa arqueada
+  ctx.strokeStyle = metalGrad;
+  ctx.lineWidth = 4;
   ctx.lineCap = 'round';
   ctx.beginPath();
-  ctx.moveTo(10, 22);
-  ctx.quadraticCurveTo(10, 8, logoSize / 2, 8);
-  ctx.quadraticCurveTo(logoSize - 10, 8, logoSize - 10, 22);
+  ctx.moveTo(13, 25);
+  ctx.quadraticCurveTo(13, 6, logoSize / 2, 6);
+  ctx.quadraticCurveTo(logoSize - 13, 6, logoSize - 13, 25);
   ctx.stroke();
-  ctx.strokeRect(4, 22, logoSize - 8, logoSize - 22);
 
-  ctx.fillStyle = color;
-  ctx.font = 'bold 28px "Georgia", serif';
+  // Cuerpo de la bolsa: fondo oscuro + borde metálico
+  const bagX = 2, bagY = 24, bagW = logoSize - 4, bagH = logoSize - 24;
+  ctx.fillStyle = 'rgba(0,0,0,.2)';
+  roundRect(ctx, bagX, bagY, bagW, bagH, 5);
+  ctx.fill();
+  ctx.strokeStyle = metalGrad;
+  ctx.lineWidth = 3;
+  roundRect(ctx, bagX, bagY, bagW, bagH, 5);
+  ctx.stroke();
+
+  // Letras D / M — grandes, llenando el cuerpo de la bolsa
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('D', 14, 42);
-  ctx.fillStyle = accent;
-  ctx.fillText('M', 36, 42);
+  ctx.font = '900 30px "Arial Black", "Helvetica Neue", Arial, sans-serif';
+  ctx.fillStyle = color;
+  ctx.fillText('D', bagX + bagW * 0.3, bagY + bagH / 2 + 1);
+  ctx.fillStyle = metalGrad;
+  ctx.fillText('M', bagX + bagW * 0.7, bagY + bagH / 2 + 1);
 
-  ctx.fillStyle = accent;
-  ctx.beginPath();
-  ctx.moveTo(49, 38);
-  ctx.quadraticCurveTo(49, 33, 46, 33);
-  ctx.quadraticCurveTo(43.5, 33, 43, 35.5);
-  ctx.quadraticCurveTo(42.5, 33, 40, 33);
-  ctx.quadraticCurveTo(37, 33, 37, 38);
-  ctx.quadraticCurveTo(37, 44, 46, 50);
-  ctx.quadraticCurveTo(49, 44, 49, 38);
+  // Corazón — cuelga de la esquina inferior derecha, como un dije
+  const heartCx = bagX + bagW - 3;
+  const heartCy = bagY + bagH + 1;
+  ctx.fillStyle = metallicGradient(ctx, heartCx - 10, heartCy - 10, heartCx + 10, heartCy + 10, accent);
+  drawHeart(ctx, heartCx, heartCy, 20);
   ctx.fill();
 
   ctx.restore();
 
-  ctx.fillStyle = color;
-  ctx.font = 'bold 28px "Georgia", serif';
+  // Wordmark — anchos medidos dinámicamente para que MARVIS/Store no se encimen
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  ctx.fillText('DANI ', x + logoSize + 14, y + logoSize / 2);
+  ctx.font = 'bold 28px "Georgia", serif';
+  const daniText = 'DANI ';
+  const marvisText = 'MARVIS';
+  const daniW = ctx.measureText(daniText).width;
+  ctx.fillStyle = color;
+  ctx.fillText(daniText, x + logoSize + 14, y + logoSize / 2);
+  const marvisX = x + logoSize + 14 + daniW;
   ctx.fillStyle = accent;
-  ctx.fillText('MARVIS', x + logoSize + 90, y + logoSize / 2);
+  ctx.fillText(marvisText, marvisX, y + logoSize / 2);
+  const marvisW = ctx.measureText(marvisText).width;
   ctx.fillStyle = muted;
   ctx.font = '16px "Inter", "Arial", sans-serif';
-  ctx.fillText('Store', x + logoSize + 178, y + logoSize / 2);
+  ctx.fillText('Store', marvisX + marvisW + 8, y + logoSize / 2);
 }
 
 function drawProductImage(ctx, product, img, x, y, w, h, radius) {
