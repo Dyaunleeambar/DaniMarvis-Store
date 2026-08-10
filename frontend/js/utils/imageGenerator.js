@@ -425,35 +425,13 @@ function drawPostal(ctx, product, opts, bgImg, productImg) {
     y += 24;
   }
 
-  // ── Zona amarilla: altura dinámica anclada a un pie fijo ─────
-  // (antes era una altura fija de 440px, dejaba hueco vacío con
-  // nombres cortos o se podía desbordar con nombres largos)
-  const zoneX = 60;
-  const zoneW = CANVAS_SIZE - 120;
-  const zoneR = 46;
-  const zoneY = y + 6;
+  // ── Sistema de radios 1:3 ─────────────────────────────────────
+  // grande = hombros diagonales del amarillo · contenido = esquinas del blanco
+  const RADIUS_BIG = Math.round(CANVAS_SIZE * 0.075);   // ≈81px (7.5% del lienzo)
+  const RADIUS_SMALL = Math.round(RADIUS_BIG / 3);      // ≈27px
 
-  const footerRowY = CANVAS_SIZE - 124;
-  const brandY = CANVAS_SIZE - 34;
-  const zoneBottom = footerRowY - 34;
-  const zoneH = Math.max(300, zoneBottom - zoneY);
-
-  ctx.fillStyle = YELLOW;
-  roundRect(ctx, zoneX, zoneY, zoneW, zoneH, zoneR);
-  ctx.fill();
-
-  // La foto ahora ocupa la mayor parte de la zona (antes era un
-  // cuadrado fijo de 380px flotando en medio de mucho amarillo vacío)
-  const imgPadSide = 40;
-  const imgPadTop = 58; // deja espacio para que la tarjeta de precio no tape la foto
-  const imgPadBottom = 40;
-  const imgX = zoneX + imgPadSide;
-  const imgW = zoneW - imgPadSide * 2;
-  const imgY = zoneY + imgPadTop;
-  const imgH = Math.max(140, zoneH - imgPadTop - imgPadBottom);
-  drawProductImage(ctx, product, productImg, imgX, imgY, imgW, imgH, 30);
-
-  // ── Tarjeta de precio flotante (ancho dinámico según el texto) ─
+  // ── Módulo de precio (blanco): se mide primero — su ancho y su
+  //    borde derecho definen dónde "aterriza" sobre el amarillo ──
   const priceMain = formatPrice(product.price);
   const priceUnit = 'USD';
   ctx.font = '900 46px "Arial Black", "Helvetica Neue", "Arial", sans-serif';
@@ -461,26 +439,62 @@ function drawPostal(ctx, product, opts, bgImg, productImg) {
   ctx.font = '700 20px "Arial", "Helvetica Neue", sans-serif';
   const unitW = ctx.measureText(priceUnit).width;
   const gapPU = 8;
-  const padX = 28;
+  const padX = 30;
   const contentW = mainW + gapPU + unitW;
-  const priceContainerW = Math.max(220, contentW + padX * 2);
-  const priceContainerH = 84;
-  const priceX = zoneX + zoneW - priceContainerW + 20;
-  const priceY = zoneY - 28;
+  const priceW = Math.max(220, contentW + padX * 2);
+  const priceH = 88;
 
+  const zoneX = 60;
+  const zoneW = CANVAS_SIZE - 120;
+
+  // Bordes derechos alineados sobre la misma vertical (arista continua)
+  const priceX = zoneX + zoneW - priceW;
+  const priceY = y + 16;
+  // Costura: el blanco aterriza de lleno sobre el borde superior del amarillo
+  const zoneY = priceY + priceH;
+
+  const footerRowY = CANVAS_SIZE - 124;
+  const brandY = CANVAS_SIZE - 34;
+  const zoneBottom = footerRowY - 34;
+  const zoneH = Math.max(300, zoneBottom - zoneY);
+
+  // ── Panel amarillo: hombros grandes en diagonal (arriba-izq / abajo-der),
+  //    esquinas rectas gemelas (abajo-izq / arriba-der, esta última se
+  //    disuelve bajo el módulo blanco) ──
+  ctx.fillStyle = YELLOW;
+  roundRectCorners(ctx, zoneX, zoneY, zoneW, zoneH, {
+    tl: RADIUS_BIG, tr: 0, br: RADIUS_BIG, bl: 0,
+  });
+  ctx.fill();
+
+  // Foto del producto: ~4.5% de aire interior, el conjunto respira
+  // apoyado sobre la zona baja del panel (más aire arriba que abajo)
+  const imgPad = Math.round(CANVAS_SIZE * 0.045);
+  const imgPadTop = Math.round(imgPad * 1.7);
+  const imgX = zoneX + imgPad;
+  const imgW = zoneW - imgPad * 2;
+  const imgY = zoneY + imgPadTop;
+  const imgH = Math.max(140, zoneH - imgPadTop - imgPad);
+  drawProductImage(ctx, product, productImg, imgX, imgY, imgW, imgH, RADIUS_SMALL);
+
+  // ── Módulo de precio: costura escalonada con el amarillo ──────
+  // abajo-izq recta (aterriza sobre el borde del amarillo) · abajo-der
+  // con radio contenido (recibe la esquina recta del amarillo)
   ctx.shadowColor = 'rgba(0,0,0,.25)';
   ctx.shadowBlur = 16;
   ctx.shadowOffsetY = 6;
   ctx.fillStyle = WHITE;
-  roundRect(ctx, priceX, priceY, priceContainerW, priceContainerH, 20);
+  roundRectCorners(ctx, priceX, priceY, priceW, priceH, {
+    tl: RADIUS_SMALL, tr: RADIUS_SMALL, br: RADIUS_SMALL, bl: 0,
+  });
   ctx.fill();
   ctx.shadowColor = 'transparent';
   ctx.shadowBlur = 0;
   ctx.shadowOffsetY = 0;
 
   ctx.textAlign = 'left';
-  const groupStartX = priceX + (priceContainerW - contentW) / 2;
-  const priceBaselineY = priceY + priceContainerH / 2 + 16;
+  const groupStartX = priceX + (priceW - contentW) / 2;
+  const priceBaselineY = priceY + priceH / 2 + 16;
   ctx.fillStyle = NAVY;
   ctx.font = '900 46px "Arial Black", "Helvetica Neue", "Arial", sans-serif';
   ctx.fillText(priceMain, groupStartX, priceBaselineY);
@@ -642,6 +656,25 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.quadraticCurveTo(x, y + h, x, y + h - r);
   ctx.lineTo(x, y + r);
   ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function roundRectCorners(ctx, x, y, w, h, r) {
+  const tl = r.tl || 0, tr = r.tr || 0, br = r.br || 0, bl = r.bl || 0;
+  ctx.beginPath();
+  ctx.moveTo(x + tl, y);
+  ctx.lineTo(x + w - tr, y);
+  if (tr) ctx.quadraticCurveTo(x + w, y, x + w, y + tr);
+  else ctx.lineTo(x + w, y);
+  ctx.lineTo(x + w, y + h - br);
+  if (br) ctx.quadraticCurveTo(x + w, y + h, x + w - br, y + h);
+  else ctx.lineTo(x + w, y + h);
+  ctx.lineTo(x + bl, y + h);
+  if (bl) ctx.quadraticCurveTo(x, y + h, x, y + h - bl);
+  else ctx.lineTo(x, y + h);
+  ctx.lineTo(x, y + tl);
+  if (tl) ctx.quadraticCurveTo(x, y, x + tl, y);
+  else ctx.lineTo(x, y);
   ctx.closePath();
 }
 

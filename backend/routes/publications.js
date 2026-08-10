@@ -8,7 +8,7 @@ const router = Router();
 router.get('/', (req, res) => {
   const db = getDB();
   const publications = db.prepare(
-    'SELECT * FROM publications ORDER BY sort_order ASC, publication_date DESC'
+    'SELECT * FROM publications ORDER BY publication_date DESC, sort_order ASC'
   ).all();
   for (const p of publications) {
     try { p.images = JSON.parse(p.images || '[]'); } catch { p.images = []; }
