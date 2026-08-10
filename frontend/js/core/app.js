@@ -15,6 +15,7 @@ import { render as renderBackup } from '../views/backupView.js';
 import { render as renderPublications } from '../views/publicationsView.js';
 import { render as renderExports } from '../views/exportsView.js';
 import { renderImport } from '../views/importView.js';
+import { render as renderPubQueue } from '../views/pubQueueView.js';
 
 const toastEl = document.getElementById('toast');
 let _toastTimer = null;
@@ -182,6 +183,7 @@ async function bootstrap() {
   route('#/publications', protect((_, c) => renderPublications(c)));
   route('#/exports', protect((_, c) => renderExports(c)));
   route('#/import', protect((_, c) => renderImport(c)));
+  route('#/pub-queue', protect((_, c) => renderPubQueue(c)));
 
   window.addEventListener('routeChanged', (e) => {
     updateActiveLink(e.detail.hash);

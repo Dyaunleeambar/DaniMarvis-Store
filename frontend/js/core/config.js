@@ -14,4 +14,5 @@ export const ROUTE_TITLES = {
   '#/publications': 'Publicaciones',
   '#/exports': 'Exportaciones',
   '#/import': 'Importar / Sincronizar',
+  '#/pub-queue': 'Cola de Publicaciones',
 };

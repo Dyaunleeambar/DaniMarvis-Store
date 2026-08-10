@@ -129,6 +129,13 @@ export const api = {
   importAnalyze: (data) => request('POST', '/import/analyze', data),
   importApply: (data) => request('POST', '/import/apply', data),
 
+  // Publication Queue
+  getPubQueue: () => request('GET', '/pub-queue'),
+  addToPubQueue: (data) => request('POST', '/pub-queue', data),
+  updatePubQueue: (id, data) => request('PATCH', `/pub-queue/${id}`, data),
+  deletePubQueue: (id) => request('DELETE', `/pub-queue/${id}`),
+  getPubQueueTimer: () => request('GET', '/pub-queue/timer'),
+
   // Auth
   login: (username, password) => request('POST', '/login', { username, password }),
 };

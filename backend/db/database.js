@@ -76,6 +76,7 @@ export async function initDB() {
   migratePublishConfig();
   migratePublicationDate();
   migrateExportsKind();
+  migratePubQueue();
   saveDB();
 }
 
@@ -178,6 +179,21 @@ function createSchema() {
       product_count INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now'))
     );
+    CREATE TABLE IF NOT EXISTS publication_queue (
+      id TEXT PRIMARY KEY,
+      publication_id TEXT,
+      group_name TEXT NOT NULL,
+      group_url TEXT DEFAULT '',
+      status TEXT DEFAULT 'pending',
+      scheduled_at TEXT,
+      published_at TEXT,
+      variant_index INTEGER DEFAULT 0,
+      variant_text TEXT DEFAULT '',
+      notes TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (publication_id) REFERENCES publications(id)
+    );
   `);
   seedCategories();
 }
@@ -271,6 +287,18 @@ function migrateExportsKind() {
     db.exec("ALTER TABLE exports ADD COLUMN kind TEXT DEFAULT 'pdf'");
   } catch (_) {}
   db.exec("UPDATE exports SET kind = 'pdf' WHERE kind IS NULL OR kind = ''");
+}
+
+function migratePubQueue() {
+  try {
+    db.exec("ALTER TABLE publication_queue ADD COLUMN variant_text TEXT DEFAULT ''");
+  } catch (_) {}
+  try {
+    db.exec("ALTER TABLE publication_queue ADD COLUMN notes TEXT DEFAULT ''");
+  } catch (_) {}
+  try {
+    db.exec("ALTER TABLE publication_queue ADD COLUMN updated_at TEXT DEFAULT (datetime('now'))");
+  } catch (_) {}
 }
 
 function seedIfEmpty() {
