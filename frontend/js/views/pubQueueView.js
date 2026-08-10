@@ -3,11 +3,11 @@ import { showToast, openModal, closeModal, confirmDialog } from '../core/app.js'
 import { formatDateTime, debounce } from '../utils/utils.js';
 
 function escHtml(str) {
-  return String(str ?? '').replace(/&/g, &amp;').replace(/</g, &lt;').replace(/>/g, &gt;');
+  return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function escAttr(str) {
-  return String(str ?? '').replace(/&/g, &amp;').replace(/"/g, &quot;').replace(/</g, &lt;');
+  return String(str ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 }
 
 let currentContainer = null;
