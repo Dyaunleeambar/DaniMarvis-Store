@@ -18,6 +18,7 @@ import importRouter from './routes/import.js';
 import pubQueueRouter from './routes/pubQueue.js';
 import { generateCatalogFile } from './lib/catalogGenerator.js';
 import { ensureWebp } from './lib/imageUtils.js';
+import { createBackup } from './scripts/backup.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -45,7 +46,7 @@ const upload = multer({
 });
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 app.use(express.static(join(__dirname, '..', 'frontend')));
 app.use('/uploads', express.static(uploadsDir));
 
@@ -368,6 +369,10 @@ async function start() {
     console.error('[DB] Error fatal al iniciar la BD:', err);
     process.exit(1);
   }
+
+  createBackup().catch((e) => {
+    console.error('[Backup] Error automático al iniciar:', e.message);
+  });
 
   app.listen(PORT, () => {
     console.log(`[Server] Panel DaniMarvis corriendo en http://localhost:${PORT}`);

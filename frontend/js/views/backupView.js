@@ -11,12 +11,19 @@ export async function render(container) {
         </div>
       </div>
 
+      <div class="card" style="margin-bottom:16px;padding:12px 16px;font-size:.82rem;color:var(--text-secondary)">
+        <strong>Respaldo automático:</strong> al iniciar el servidor se crea un respaldo completo
+        (BD + imágenes) en <code>backend/backups/</code>, con rotación de las 3 copias más recientes.
+        También podés generarlo manualmente con <code>npm run backup</code>.
+      </div>
+
       <div class="grid-2" style="align-items:start">
         <div class="card">
           <h3 style="margin:0 0 8px">Exportar respaldo</h3>
           <p style="font-size:.82rem;color:var(--text-secondary);margin:0 0 16px">
-            Descarga un archivo .json con todos los datos del sistema:
-            productos, proveedores, ventas, categorías y configuración.
+            Descarga un archivo .json con TODOS los datos del sistema:
+            productos, proveedores, ventas, categorías, configuración,
+            publicaciones, cola de publicaciones, exports y usuarios.
           </p>
           <button class="btn btn--primary" id="btn-export">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right:6px;vertical-align:middle"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -27,7 +34,8 @@ export async function render(container) {
         <div class="card">
           <h3 style="margin:0 0 8px">Importar respaldo</h3>
           <p style="font-size:.82rem;color:var(--text-secondary);margin:0 0 16px">
-            Reemplaza TODOS los datos actuales con los de un archivo .json
+            Reemplaza TODOS los datos actuales (incl. publicaciones, cola de
+            publicaciones, exports y usuarios) con los de un archivo .json
             previamente exportado. Esta acción no se puede deshacer.
           </p>
           <input type="file" id="backup-file-input" accept=".json" style="display:none" />

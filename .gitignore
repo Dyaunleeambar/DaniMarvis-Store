@@ -7,5 +7,7 @@ CLAUDE.md
 dist/
 backend/uploads/*
 !backend/uploads/.gitkeep
+backend/backups/*
+!backend/backups/.gitkeep
 dist2/
 dist3/
