@@ -1,0 +1,173 @@
+{
+  "schema_version": "1.0",
+  "source_document": "DaniMarvis Visual System v1.0",
+  "mode": "opcion_A_anuncio_completo",
+  "output_format": "cuadrado 1:1, 1080x1080 px",
+  "palette": {
+    "navy": "#0D2B4E",
+    "orange": "#F46B32",
+    "gold": "#C9A227",
+    "white": "#FFFFFF",
+    "coral": "#C9847A"
+  },
+  "brand_contract": "Eres un diseñador publicitario sénior de DaniMarvis-Store. Crea un anuncio publicitario fotorrealista a partir de la FOTOGRAFÍA REAL del producto que acompaña a esta instrucción (modo edición: úsala como referencia exacta del producto, no la redibujes desde cero).\n\nFORMATO DE SALIDA: cuadrado 1:1, 1080×1080 px.\n\nIDENTIDAD DE MARCA — DaniMarvis-Store\n- Estética: moderna, limpia, técnica y comercial. Premium accesible, nunca apariencia de flyer barato.\n- Paleta (usa estos colores exactos):\n  * Navy profundo #0D2B4E — color estructural dominante (confianza y seriedad).\n  * Naranja vibrante #F46B32 — acento dinámico (acción y energía).\n  * Dorado #C9A227 — uso selectivo, sobre todo en el precio (valor y protagonismo comercial).\n  * Blanco #FFFFFF — texto y espacios de respiración.\n  * Coral #C9847A — solo como firma cromática sutil del logo.\n- Iluminación: equilibrada y profesional. Sombras realistas y discretas, reflejo sutil bajo el producto.\n- Líneas y diagonales: limpias y controladas. Cohesión visual, sin elementos caóticos.\n\nREGLAS DE VERACIDAD (obligatorias)\n- El producto de la foto es la FUENTE DE VERDAD: no cambies proporciones, colores, forma, componentes ni accesorios.\n- No inventes características técnicas, funciones ni accesorios.\n- Sin marcas de agua, textos basura, logos inventados ni elementos irrelevantes.\n- Los únicos textos permitidos son los listados en [TEXTO EXACTO] y debes reproducirlos carácter por carácter. Si no puedes garantizarlos perfectos, NO escribas texto y deja el espacio vacío y limpio.\n- Márgenes seguros: mínimo 10% del marco libre de información en cada borde.",
+  "text_safety_clause": "Los únicos textos permitidos son los listados en [TEXTO EXACTO] y debes reproducirlos carácter por carácter. Si no puedes garantizarlos perfectos, NO escribas texto y deja el espacio vacío y limpio.",
+  "slots": {
+    "NOMBRE": { "descripcion": "Nombre del producto en MAYÚSCULAS", "origen": "producto.name", "ejemplo": "NEVERA PREMIER 3.5 PIES" },
+    "PRECIO": { "descripcion": "Precio formateado", "origen": "producto.price", "ejemplo": "$270 USD" },
+    "CTA": { "descripcion": "Llamado a la acción", "origen": "estrategia (configurable)", "ejemplo": "CONSULTA POR WHATSAPP" },
+    "GARANTIA": { "descripcion": "Garantía exacta. Solo si existe; si no hay garantía registrar omitir bloque", "origen": "producto.warranty", "ejemplo": "GARANTÍA 2 MESES" },
+    "CARACTERISTICAS": { "descripcion": "Máx. 4 especificaciones autorizadas, una por línea", "origen": "producto.caracteristicas (solo datos CRM)", "ejemplo": "1800W de salida nominal · 2700W pico" },
+    "ESCENA": { "descripcion": "Escenario sugerido (solo familia D)", "origen": "estrategia (configurable)", "ejemplo": "camino urbano soleado a la hora dorada" }
+  },
+  "warranty_map": {
+    "15 días": "GARANTÍA 15 DÍAS",
+    "1 mes": "GARANTÍA 1 MES",
+    "2 meses": "GARANTÍA 2 MESES",
+    "sin garantía": null
+  },
+  "families": {
+    "A1": {
+      "name": "HERO · A1 — IMPACT",
+      "selection": "Alto interés visual + información sencilla",
+      "objective": "Detener el scroll. Producto grande, nombre claro, precio protagonista, información mínima.",
+      "block": "COMPOSICIÓN — VARIANTE A1 (IMPACT):\n- Producto dominante: 60%–70% del encuadre, centrado o ligeramente desplazado.\n- Fondo: estudio minimalista premium. Degradado suave navy #0D2B4E a un tono más oscuro (o gris técnico claro si el producto es oscuro). Sin elementos que compitan con el producto.\n- Un único acento naranja #F46B32: franja o línea diagonal fina que recorra el fondo (controlada, no caótica).\n- Sombra realista bajo el producto y reflejo sutil.\n- Jerarquía de texto (bloque inferior, dentro del margen seguro):\n  1. NOMBRE: \"{NOMBRE}\" — blanco, mayúsculas, sans-serif limpia.\n  2. PRECIO: \"{PRECIO}\" — dorado #C9A227, el texto más grande y protagonista, con línea fina dorada debajo.\n  3. CTA: \"{CTA}\" — naranja #F46B32.\n  4. GARANTÍA (si existe): \"{GARANTIA}\" — blanco, pequeño y secundario.\n- Texto mínimo: nada más que lo indicado.\n\n[TEXTO EXACTO]\n- {NOMBRE}\n- {PRECIO}\n- {CTA}\n- {GARANTIA}   (solo si aplica)\n\nRESTRICCIONES:\n- No deformar el producto; proporciones estrictamente reales.\n- Sin otros textos, marcas de agua, logos ni iconos.\n- Sin sombras exageradas ni brillos falsos sobre el producto.",
+      "negative": ["texto basura", "watermark", "logos inventados", "producto deformado", "sombra exagerada", "brillos falsos"]
+    },
+    "A2": {
+      "name": "HERO · A2 — PREMIUM",
+      "selection": "Alto interés visual + confianza / tienda seria",
+      "objective": "Producto protagonista con contexto controlado. Refuerza confianza y percepción de tienda seria.",
+      "block": "COMPOSICIÓN — VARIANTE A2 (PREMIUM):\n- Producto protagonista: 45%–55% del encuadre, integrado en un contexto controlado y de calidad que refuerce confianza (un rincón de cocina, hogar o estudio sobrio, coherente con el producto).\n- Paleta del contexto: neutros + navy #0D2B4E como acento estructural; un único detalle naranja #F46B32 (objeto pequeño, franja, elemento decorativo).\n- El producto debe sentirse \"en su elemento\": sombra y contacto natural con la superficie real.\n- Iluminación profesional, cinematográfica suave.\n- Jerarquía de texto sobre franja navy semitransparente en el bloque inferior (legibilidad garantizada):\n  1. NOMBRE: \"{NOMBRE}\" — blanco, mayúsculas.\n  2. PRECIO: \"{PRECIO}\" — dorado #C9A227, protagonista.\n  3. CTA: \"{CTA}\" — naranja #F46B32.\n  4. GARANTÍA (si existe): \"{GARANTIA}\" — blanco, pequeño.\n\n[TEXTO EXACTO]\n- {NOMBRE}\n- {PRECIO}\n- {CTA}\n- {GARANTIA}   (solo si aplica)\n\nRESTRICCIONES:\n- Mantener fidelidad física total del producto real.\n- Sin texto inventado; si no puedes reproducir el texto exacto, déjalo vacío.",
+      "negative": ["producto alterado", "texto inventado", "entorno que tape el producto"]
+    },
+    "A3": {
+      "name": "HERO · A3 — FOCUS",
+      "selection": "Producto muy limpio y casi aislado",
+      "objective": "Producto casi aislado, máximo limpio. Proporciones estrictamente reales.",
+      "block": "COMPOSICIÓN — VARIANTE A3 (FOCUS):\n- Producto casi aislado sobre fondo neutro limpio (blanco #FFFFFF o gris claro #F2F2F2), centrado, ocupando 50%–60% del encuadre.\n- Sin objetos de fondo ni patrones. Solo sombra flotante sutil y reflejo suave bajo el producto.\n- Micro-acentos de marca: una línea dorada #C9A227 horizontal fina bajo el producto y/o un punto naranja #F46B32 pequeño en una esquina.\n- Proporciones estrictamente reales: NUNCA ensanchar, estirar ni deformar el producto para ganar impacto.\n- Jerarquía de texto (bloque inferior):\n  1. NOMBRE: \"{NOMBRE}\" — navy #0D2B4E si el fondo es claro, blanco si es navy. Mayúsculas.\n  2. PRECIO: \"{PRECIO}\" — dorado #C9A227.\n  3. CTA: \"{CTA}\" — naranja #F46B32, discreto.\n  4. GARANTÍA (si existe): \"{GARANTIA}\".\n\n[TEXTO EXACTO]\n- {NOMBRE}\n- {PRECIO}\n- {CTA}\n- {GARANTIA}   (solo si aplica)\n\nRESTRICCIONES:\n- Proporciones y geometría del producto idénticas a la foto real.\n- Minimalismo extremo: menos es más.",
+      "negative": ["objetos de fondo", "patrones", "producto deformado", "exceso de texto"]
+    },
+    "B": {
+      "name": "CATALOG · B",
+      "selection": "Producto técnico con varias especificaciones",
+      "objective": "Organizar especificaciones en módulos legibles sin saturar. Prioridad: producto → especificación principal → precio → CTA → secundarios.",
+      "block": "COMPOSICIÓN — VARIANTE B (CATALOG):\n- Estructura de ficha técnica publicitaria en 1:1. Producto a la izquierda o centro-superior, 40%–50% del encuadre.\n- Fondo: navy #0D2B4E oscuro o blanco, según contraste con el producto. Limpio, sin competir.\n- Prioridad visual estricta:\n  1. PRODUCTO (imagen real).\n  2. NOMBRE: \"{NOMBRE}\" — gran titular.\n  3. ESPECIFICACIONES (máx. 4 autorizadas), organizadas en módulos/píldoras legibles (tarjetas o líneas con iconos geométricos delgados, mismo estilo):\n     {CARACTERISTICAS}\n  4. PRECIO: \"{PRECIO}\" — dorado #C9A227, destacado.\n  5. CTA: \"{CTA}\" — naranja #F46B32.\n  6. GARANTÍA (si existe): \"{GARANTIA}\".\n- Las especificaciones se ORGANIZAN, no saturan: si hay más de 4, mostrar solo las 4 principales.\n\n[TEXTO EXACTO]\n- {NOMBRE}\n- {PRECIO}\n- {CTA}\n- {GARANTIA}   (solo si aplica)\n- Especificaciones: {CARACTERISTICAS}\n\nRESTRICCIONES:\n- No inventar especificaciones: solo las listadas.\n- Iconos simples y coherentes; nada complejo ni realista.",
+      "negative": ["especificaciones inventadas", "iconos complejos", "ficha saturada"]
+    },
+    "C": {
+      "name": "OFFER · C",
+      "selection": "Precio/oportunidad como argumento central",
+      "objective": "El precio y la oportunidad tienen mayor protagonismo. Debe parecer conveniente, no barato. Un solo mensaje comercial fuerte por pieza.",
+      "block": "COMPOSICIÓN — VARIANTE C (OFFER):\n- El PRECIO y la oportunidad son los protagonistas. Tono: oferta seria, NUNCA flyer barato.\n- Producto 40%–55% del encuadre, presentado con calidad premium (iluminación profesional, sombra realista).\n- Fondo: navy #0D2B4E con acento dorado #C9A227 suave o naranja #F46B32 moderado. Luz radial o degradado sutil que concentre la atención al centro.\n- UN solo mensaje comercial fuerte por pieza (regla C): no apilar ofertas, descuentos y beneficios a la vez.\n- Jerarquía:\n  1. PRECIO: \"{PRECIO}\" — dorado #C9A227, MUY grande, protagonista absoluto, con línea fina dorada.\n  2. NOMBRE: \"{NOMBRE}\" — blanco, mayúsculas, secundario.\n  3. CTA: \"{CTA}\" — naranja #F46B32, claro.\n  4. GARANTÍA (si existe): \"{GARANTIA}\" — pequeño, genera confianza.\n- Sin rayos, sin colores estridentes en exceso, sin emojis.\n\n[TEXTO EXACTO]\n- {PRECIO}\n- {NOMBRE}\n- {CTA}\n- {GARANTIA}   (solo si aplica)\n\nRESTRICCIONES:\n- No inventar descuentos, ofertas ni beneficios no registrados.",
+      "negative": ["flyer barato", "rayos", "emojis", "colores estridentes", "descuentos inventados"]
+    },
+    "D": {
+      "name": "LIFESTYLE · D",
+      "selection": "Producto recreativo o aspiracional",
+      "objective": "Vender la experiencia. Entorno aspiracional o cotidiano coherente, con fidelidad física total. Regla: vender sensación, no inventar especificaciones.",
+      "block": "COMPOSICIÓN — VARIANTE D (LIFESTYLE):\n- Vende la experiencia: el producto en un entorno aspiracional o cotidiano coherente con su uso real. Escenario sugerido: {ESCENA}.\n- El producto mantiene su fidelidad física al 100%: proporciones, colores, componentes y accesorios idénticos a la foto real.\n- Regla: vender sensación, NO inventar especificaciones.\n- Luz cinematográfica suave; atmósfera cálida o limpia según el producto. Las personas solo si se ven naturales y no tapan el producto.\n- Texto mínimo, discreto y elegante (bloque inferior con halo sutil para legibilidad):\n  1. NOMBRE: \"{NOMBRE}\" — blanco o navy según el fondo.\n  2. PRECIO: \"{PRECIO}\" — dorado #C9A227.\n  3. CTA: \"{CTA}\" — naranja #F46B32.\n  4. GARANTÍA (si existe): \"{GARANTIA}\".\n- La composición puede cambiar radicalmente, pero debe reconocerse como DaniMarvis-Store (paleta y limpieza).\n\n[TEXTO EXACTO]\n- {NOMBRE}\n- {PRECIO}\n- {CTA}\n- {GARANTIA}   (solo si aplica)\n\nRESTRICCIONES:\n- No inventar especificaciones técnicas.\n- El producto nunca debe verse alterado por el entorno.",
+      "negative": ["especificaciones inventadas", "producto alterado por el entorno"]
+    }
+  },
+  "rotation": {
+    "A": ["A1", "A2", "A3"],
+    "B": ["B"],
+    "C": ["C"],
+    "D": ["D"]
+  },
+  "pilot_examples": [
+    {
+      "product": "Nevera Premier 3.5 pies",
+      "price": 270,
+      "warranty": "2 meses",
+      "category": "neveras",
+      "family": "A1",
+      "slots": {
+        "NOMBRE": "NEVERA PREMIER 3.5 PIES",
+        "PRECIO": "$270 USD",
+        "CTA": "CONSULTA POR WHATSAPP",
+        "GARANTIA": "GARANTÍA 2 MESES"
+      }
+    },
+    {
+      "product": "Nevera Premier 3.5 pies",
+      "price": 270,
+      "warranty": "2 meses",
+      "category": "neveras",
+      "family": "A2",
+      "slots": {
+        "NOMBRE": "NEVERA PREMIER 3.5 PIES",
+        "PRECIO": "$270 USD",
+        "CTA": "CONSULTA POR WHATSAPP",
+        "GARANTIA": "GARANTÍA 2 MESES"
+      }
+    },
+    {
+      "product": "Nevera Premier 3.5 pies",
+      "price": 270,
+      "warranty": "2 meses",
+      "category": "neveras",
+      "family": "A3",
+      "slots": {
+        "NOMBRE": "NEVERA PREMIER 3.5 PIES",
+        "PRECIO": "$270 USD",
+        "CTA": "CONSULTA POR WHATSAPP",
+        "GARANTIA": "GARANTÍA 2 MESES"
+      }
+    },
+    {
+      "product": "Bluetti Elite 100 V2",
+      "price": 780,
+      "warranty": null,
+      "category": "energía",
+      "family": "B",
+      "slots": {
+        "NOMBRE": "BLUETTI ELITE 100 V2",
+        "PRECIO": "$780 USD",
+        "CTA": "CONSULTA POR WHATSAPP",
+        "CARACTERISTICAS": "1800W de salida nominal · 2700W pico\nBatería LiFePO4 · más de 4000 ciclos · 10 años de vida útil\nCarga turbo: 80% en 45 min (entrada AC 1200W)\n9 puertos para electrodomésticos · respaldo UPS en 10 ms",
+        "GARANTIA": null
+      }
+    },
+    {
+      "product": "Freidora de aire Milexus 4.2 L",
+      "price": 65,
+      "warranty": "1 mes",
+      "category": "freidoras",
+      "family": "C",
+      "slots": {
+        "NOMBRE": "FREIDORA DE AIRE MILEXUS 4.2 L",
+        "PRECIO": "$65 USD",
+        "CTA": "CONSULTA POR WHATSAPP",
+        "GARANTIA": "GARANTÍA 1 MES"
+      }
+    },
+    {
+      "product": "Bicicleta Challenger 24",
+      "price": 200,
+      "warranty": "1 mes",
+      "category": "bicicletas",
+      "family": "D",
+      "slots": {
+        "NOMBRE": "BICICLETA CHALLENGER 24",
+        "PRECIO": "$200 USD",
+        "CTA": "CONSULTA POR WHATSAPP",
+        "GARANTIA": "GARANTÍA 1 MES",
+        "ESCENA": "camino urbano soleado a la hora dorada; una persona joven pedaleando con naturalidad, sensación de libertad y aire libre"
+      }
+    }
+  ],
+  "checklist_prepublicacion": [
+    "Producto coincide con la imagen real (sin deformaciones).",
+    "Nombre y precio coinciden con el CRM.",
+    "Todas las características están respaldadas.",
+    "Garantía existe y coincide, si aparece. Si no hay garantía → sin sello.",
+    "Logo correcto (o ausencia correcta de logo).",
+    "Proporciones del producto creíbles.",
+    "Precio legible en móvil.",
+    "Márgenes y jerarquía correctos.",
+    "La pieza cumple el objetivo comercial de la familia elegida.",
+    "La publicación se reconoce como DaniMarvis aunque cambie la composición."
+  ]
+}

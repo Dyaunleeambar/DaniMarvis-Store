@@ -563,6 +563,15 @@ function drawPostal(ctx, product, opts, bgImg, productImg) {
   ctx.fillText('DaniMarvis Store — Tu gestor de confianza', CANVAS_SIZE / 2, brandY);
 }
 
+function isSloganCode(slogan) {
+  if (/^(modelo|ref|referencia|serie)\b/i.test(slogan)) return true;
+  if (/^[A-Z0-9][A-Z0-9\-.‑]*(?:\s*\/\s*[A-Z0-9][A-Z0-9\-.‑]*)*\s*$/i.test(slogan)) return true;
+  if (/^\d+(\.\d+)?\s*(kg|kgs|l|litros|litro|w|wh|mAh|pies|pulg|cm|mm|lt)\b/i.test(slogan)) return true;
+  if (/\(\s*[A-Z0-9]{2,}\s*\)/.test(slogan)) return true;
+  if (/^\s*\w+\s*$/.test(slogan)) return true;
+  return false;
+}
+
 function extractSloganText(product) {
   const name = (product.name || '').trim();
   const desc = (product.description || '').trim();
@@ -570,12 +579,21 @@ function extractSloganText(product) {
   const lowerName = name.toLowerCase();
   const lowerDesc = desc.toLowerCase();
   const nameIdx = lowerName ? lowerDesc.indexOf(lowerName) : -1;
-  if (nameIdx === -1) return '';
-  const after = desc.slice(nameIdx + name.length);
-  const match = after.match(/^\s*[–—-]\s*([^\n.]+)/);
+
+  let candidate = '';
+  if (nameIdx !== -1) {
+    candidate = desc.slice(nameIdx + name.length);
+  } else {
+    const firstLine = desc.split('\n')[0].trim();
+    const dashIdx = firstLine.search(/[–—-]/);
+    if (dashIdx !== -1) candidate = firstLine.slice(dashIdx);
+  }
+
+  const match = candidate.match(/^\s*[–—-]\s*([^\n.]+)/);
   if (!match) return '';
-  const slogan = match[1].trim();
+  const slogan = match[1].trim().replace(/\*\*$/g, '');
   if (!slogan || /^[💥✨‼️⭐🎁]/u.test(slogan)) return '';
+  if (isSloganCode(slogan)) return '';
   return slogan;
 }
 
