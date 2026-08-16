@@ -1,7 +1,7 @@
 import { api } from '../db/api.js';
 import { showToast } from '../core/app.js';
 import { generateProductImage, canvasToBlob, downloadCanvas, slugify, TEMPLATES, ACCENT_COLORS } from '../utils/imageGenerator.js';
-import { debounce, extractSlogan } from '../utils/utils.js';
+import { debounce } from '../utils/utils.js';
 
 function escHtml(str) {
   return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -9,7 +9,11 @@ function escHtml(str) {
 
 const STORAGE_KEY = 'danimarvis_images_config';
 const PROMPT_KEY = 'danimarvis_images_prompt';
-const COPILOT_FOLDER_KEY = 'danimarvis_images_copilot_folder';
+const GENERATED_FOLDER_KEY = 'danimarvis_images_generated_folder';
+
+let promptFamilies = [];
+let selFamily = '';
+let selVariant = '';
 
 function loadConfig() {
   try {
@@ -18,8 +22,8 @@ function loadConfig() {
   } catch {}
   return {
     template: 'clasica',
-    ctaText: '📲  Escríbeme y llévate este producto',
-    whatsappText: '💬  Comprar por WhatsApp',
+    whatsappText: 'CONSÚLTANOS POR WHATSAPP',
+    whatsappPhones: '+53 53760493 / +53 54115666',
     showLogo: true,
     accentColor: '#c9847a',
   };
@@ -57,7 +61,7 @@ function renderForm(container, products, onDone) {
   let aiBg = localStorage.getItem('ai_bg') || '';
   let aiPrompt = localStorage.getItem(PROMPT_KEY) || '';
   let aiBusy = false;
-  let copilotFolder = localStorage.getItem(COPILOT_FOLDER_KEY) || 'D:\\Proyectos\\DaniMarvisStore\\generadas\\copilot';
+  let generatedFolder = localStorage.getItem(GENERATED_FOLDER_KEY) || 'D:\\Proyectos\\DaniMarvisStore\\generadas';
   let previewCounter = 0;
 
   function getFiltered() {
@@ -112,7 +116,7 @@ function renderForm(container, products, onDone) {
         <span style="flex:1">${escHtml(p.name)}</span>
         <span style="color:var(--text-muted);font-size:.78rem">${escHtml(p.category || '—')}</span>
         <span style="font-weight:600;font-size:.82rem">${formatPrice(p.price)}</span>
-        <button type="button" class="btn btn--sm btn--ghost img-copilot-copy" data-id="${p.id}" title="Copiar prompt para Copilot/Dreamina" style="padding:2px 6px;font-size:.85rem">📋</button>
+        <button type="button" class="btn btn--sm btn--ghost img-gen-copy" data-id="${p.id}" title="Copiar prompt para generar el anuncio" style="padding:2px 6px;font-size:.85rem">📋</button>
       </label>
     `).join('');
     if (filtered.length === 0) {
@@ -140,8 +144,8 @@ function renderForm(container, products, onDone) {
   function currentOptions() {
     return {
       template: config.template,
-      ctaText: config.ctaText,
       whatsappText: config.whatsappText,
+      whatsappPhones: config.whatsappPhones,
       showLogo: config.showLogo,
       accentColor: config.accentColor,
       backgroundImage: aiEnabled ? aiBg : '',
@@ -243,12 +247,12 @@ function renderForm(container, products, onDone) {
             <h3 style="margin:0 0 12px;font-size:1rem">Personalizar</h3>
             <div style="display:flex;flex-direction:column;gap:12px">
               <div>
-                <label style="font-size:.82rem;color:var(--text-secondary);display:block;margin-bottom:4px">Texto del CTA</label>
-                <input type="text" id="img-cta" class="form-control" value="${escHtml(config.ctaText)}" />
+                <label style="font-size:.82rem;color:var(--text-secondary);display:block;margin-bottom:4px">Botón CTA (WhatsApp)</label>
+                <input type="text" id="img-whatsapp" class="form-control" value="${escHtml(config.whatsappText)}" />
               </div>
               <div>
-                <label style="font-size:.82rem;color:var(--text-secondary);display:block;margin-bottom:4px">Texto del botón WhatsApp</label>
-                <input type="text" id="img-whatsapp" class="form-control" value="${escHtml(config.whatsappText)}" />
+                <label style="font-size:.82rem;color:var(--text-secondary);display:block;margin-bottom:4px">Números de contacto (WhatsApp)</label>
+                <input type="text" id="img-whatsapp-phones" class="form-control" value="${escHtml(config.whatsappPhones)}" />
               </div>
               <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:.85rem">
                 <input type="checkbox" id="img-logo" ${config.showLogo ? 'checked' : ''} /> Mostrar logo de la tienda
@@ -290,22 +294,40 @@ function renderForm(container, products, onDone) {
           </div>
 
           <div class="card" style="padding:20px">
-            <h3 style="margin:0 0 4px;font-size:1rem">Anuncios con Copilot / Dreamina</h3>
+            <h3 style="margin:0 0 4px;font-size:1rem">Anuncios generados con IA</h3>
             <p style="margin:0 0 12px;font-size:.78rem;color:var(--text-secondary)">
               1) Tocá <b>📋</b> junto a un producto para copiar el prompt y el nombre sugerido del archivo.<br />
-              2) Generá el anuncio en Copilot o Dreamina y guardalo en la carpeta con ese nombre.<br />
+              2) Generá el anuncio en ChatGPT y guardalo en la carpeta con ese nombre.<br />
               3) Importá la carpeta: las imágenes se archivan en el historial y se asocian al producto.
             </p>
+            <div style="display:flex;gap:8px;margin:10px 0 6px">
+              <div style="flex:1">
+                <label style="font-size:.78rem;color:var(--text-secondary);display:block;margin-bottom:4px">Familia creativa</label>
+                <select id="img-prompt-family" class="form-control form-control--small"></select>
+              </div>
+              <div style="flex:1">
+                <label style="font-size:.78rem;color:var(--text-secondary);display:block;margin-bottom:4px">Variante</label>
+                <select id="img-prompt-variant" class="form-control form-control--small" disabled></select>
+              </div>
+            </div>
+            <details style="margin-bottom:12px">
+              <summary style="cursor:pointer;font-size:.8rem;color:var(--text-secondary)">Ver / copiar prompt generado</summary>
+              <div style="margin-top:6px">
+                <div id="img-prompt-meta" style="font-size:.72rem;color:var(--text-muted);margin-bottom:4px"></div>
+                <textarea id="img-prompt-preview" class="form-control" rows="9" readonly style="font-family:monospace;font-size:.7rem"></textarea>
+                <button type="button" class="btn btn--sm btn--secondary" id="img-prompt-copy" style="margin-top:6px">Copiar prompt</button>
+              </div>
+            </details>
             <div style="display:flex;gap:8px;margin-top:10px">
-              <input type="text" id="img-copilot-folder" class="form-control" value="${escHtml(copilotFolder)}" style="flex:1" placeholder="Ruta de la carpeta con los anuncios" />
-              <button type="button" class="btn btn--primary" id="img-copilot-import">Importar</button>
+              <input type="text" id="img-gen-folder" class="form-control" value="${escHtml(generatedFolder)}" style="flex:1" placeholder="Ruta de la carpeta con los anuncios" />
+              <button type="button" class="btn btn--primary" id="img-gen-import">Importar</button>
             </div>
             <label style="display:flex;align-items:center;gap:6px;font-size:.78rem;color:var(--text-secondary);margin-top:8px;cursor:pointer">
-              <input type="checkbox" id="img-copilot-assign" checked style="width:14px;height:14px" />
+              <input type="checkbox" id="img-gen-assign" checked style="width:14px;height:14px" />
               Asignar imagen principal al producto (prepende en la galería)
             </label>
-            <div id="img-copilot-status" style="font-size:.78rem;color:var(--text-muted);margin-top:8px"></div>
-            <div id="img-copilot-results" style="margin-top:12px"></div>
+            <div id="img-gen-status" style="font-size:.78rem;color:var(--text-muted);margin-top:8px"></div>
+            <div id="img-gen-results" style="margin-top:12px"></div>
           </div>
         </div>
 
@@ -341,6 +363,7 @@ function renderForm(container, products, onDone) {
   renderPreviewProductSelect();
   renderAiThumb();
   refreshPreview();
+  loadPromptFamilies();
 
   const debouncedSearch = debounce(() => {
     filterQ = document.getElementById('img-search').value;
@@ -395,15 +418,15 @@ function renderForm(container, products, onDone) {
   });
 
   const saveAndRefresh = (e) => {
-    config.ctaText = document.getElementById('img-cta').value;
     config.whatsappText = document.getElementById('img-whatsapp').value;
+    config.whatsappPhones = document.getElementById('img-whatsapp-phones').value;
     config.showLogo = document.getElementById('img-logo').checked;
     saveConfig(config);
     refreshPreview();
   };
 
-  document.getElementById('img-cta').addEventListener('input', debounce(saveAndRefresh, 300));
   document.getElementById('img-whatsapp').addEventListener('input', debounce(saveAndRefresh, 300));
+  document.getElementById('img-whatsapp-phones').addEventListener('input', debounce(saveAndRefresh, 300));
   document.getElementById('img-logo').addEventListener('change', saveAndRefresh);
 
   document.getElementById('img-accent-options').addEventListener('change', (e) => {
@@ -461,39 +484,65 @@ function renderForm(container, products, onDone) {
     }
   });
 
-  // ── Copilot / Dreamina ────────────────────────────────────────
+  // ── Anuncios generados con IA ─────────────────────────────────
 
-  document.getElementById('img-product-list').addEventListener('click', (e) => {
-    const btn = e.target.closest('button.img-copilot-copy');
+  document.getElementById('img-product-list').addEventListener('click', async (e) => {
+    const btn = e.target.closest('button.img-gen-copy');
     if (!btn) return;
     e.preventDefault();
     e.stopPropagation();
     const product = products.find(p => p.id === btn.dataset.id);
     if (!product) return;
-    const prompt = buildCopilotPrompt(product);
-    const slug = slugify(product.name);
-    copyText(prompt).then(() => {
-      showToast(`Prompt copiado. Guardá la imagen como ${slug}.png`, 'success');
-    }).catch(() => {
-      showToast('No se pudo copiar al portapapeles', 'error');
-    });
+    btn.disabled = true;
+    try {
+      const data = await api.generatePrompt({
+        product_id: product.id,
+        family: selFamily || undefined,
+        variant: selVariant || undefined,
+      });
+      setPromptPreview(data.prompt, data.meta);
+      await copyText(data.prompt);
+      const slug = slugify(product.name);
+      showToast(`Prompt copiado (${data.meta.variant}). Guardá la imagen como ${slug}.png`, 'success');
+    } catch (err) {
+      showToast('Error al generar prompt: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
   });
 
-  document.getElementById('img-copilot-import').addEventListener('click', async () => {
-    const folder = document.getElementById('img-copilot-folder').value.trim();
-    const assignToProduct = document.getElementById('img-copilot-assign').checked;
-    const status = document.getElementById('img-copilot-status');
-    const results = document.getElementById('img-copilot-results');
-    const btn = document.getElementById('img-copilot-import');
+  document.getElementById('img-prompt-family').addEventListener('change', (e) => {
+    selFamily = e.target.value;
+    selVariant = '';
+    renderPromptSelects();
+  });
+
+  document.getElementById('img-prompt-variant').addEventListener('change', (e) => {
+    selVariant = e.target.value;
+  });
+
+  document.getElementById('img-prompt-copy').addEventListener('click', () => {
+    const ta = document.getElementById('img-prompt-preview');
+    if (!ta || !ta.value) { showToast('Primero tocá 📋 junto a un producto', 'error'); return; }
+    copyText(ta.value).then(() => showToast('Prompt copiado', 'success'))
+      .catch(() => showToast('No se pudo copiar al portapapeles', 'error'));
+  });
+
+  document.getElementById('img-gen-import').addEventListener('click', async () => {
+    const folder = document.getElementById('img-gen-folder').value.trim();
+    const assignToProduct = document.getElementById('img-gen-assign').checked;
+    const status = document.getElementById('img-gen-status');
+    const results = document.getElementById('img-gen-results');
+    const btn = document.getElementById('img-gen-import');
     if (!folder) { showToast('Indicá la ruta de la carpeta', 'error'); return; }
-    localStorage.setItem(COPILOT_FOLDER_KEY, folder);
+    localStorage.setItem(GENERATED_FOLDER_KEY, folder);
     btn.disabled = true;
     status.textContent = 'Importando...';
     results.innerHTML = '';
     try {
-      const data = await api.copilotImport({ folder, assignToProduct });
+      const data = await api.importImages({ folder, assignToProduct });
       status.textContent = '';
-      renderCopilotResults(results, data);
+      renderImportResults(results, data);
       showToast('Importación completada', 'success');
     } catch (err) {
       status.textContent = '';
@@ -512,8 +561,8 @@ function renderForm(container, products, onDone) {
         style: config.template,
         kind: 'images',
         fields: JSON.stringify({
-          ctaText: config.ctaText,
           whatsappText: config.whatsappText,
+          whatsappPhones: config.whatsappPhones,
           showLogo: config.showLogo,
           accentColor: config.accentColor,
           ai: !!aiEnabled,
@@ -610,36 +659,45 @@ function copyText(text) {
   return Promise.resolve();
 }
 
-function buildCopilotPrompt(product) {
-  const nameUpper = (product.name || '').trim().toUpperCase();
-  const priceText = `$${Math.round(Number(product.price) || 0)} USD`;
-  const slogan = extractSlogan(product);
-  const sloganLine = slogan ? `- Eslogan (${slogan}).` : '';
-
-  return `Diseño publicitario premium estilo DaniMarvis Store Simplificado Premium.
-Formato: 1:1 (cuadrado, 1080x1080).
-Fondo: Degradado diagonal azul oscuro (izquierda) → naranja vibrante (derecha),
-con línea divisoria suave en el footer.
-Composición: Producto principal centrado, recortado profesionalmente, sin fondo blanco.
-Sombra integrada realista y reflejo sutil bajo el producto.
-Si existen variantes (colores/modelos), colocarlas de forma simétrica.
-Si el producto NO tiene variantes visibles, mostrar UNA sola unidad centrada.
-Puedes incluir la caja y accesorio tal y como se muestra en el ejemplo.
-Dejar un espacio sin elementos pero que sí contenga el fondo del 10% en la parte superior e inferior como margen para posibles ediciones posteriores.
-Tipografía: - Nombre del producto en MAYÚSCULAS, blanco con efecto 3D suave: "${nameUpper}".
-${sloganLine}
-Precio: Texto dorado MUY GRANDE (tamaño destacado, protagonista), con sombra azul suave
-y línea fina dorada debajo: "${priceText}". Debe ser el elemento más visible
-después del producto.
-Iluminación:
-Equilibrada, con reflejo sutil bajo el producto.
-Estética general:
-Limpia, moderna, técnica y coherente con el estilo premium DaniMarvis Store.
-Sin texto basura, sin watermarks, sin marcos innecesarios.
-Calidad de renderizado fotorrealista.`;
+async function loadPromptFamilies() {
+  try {
+    const data = await api.getPromptFamilies();
+    promptFamilies = data.families || [];
+  } catch (err) {
+    promptFamilies = [];
+  }
+  renderPromptSelects();
 }
 
-function renderCopilotResults(el, data) {
+function renderPromptSelects() {
+  const famSel = document.getElementById('img-prompt-family');
+  const varSel = document.getElementById('img-prompt-variant');
+  if (!famSel) return;
+  famSel.innerHTML = '<option value="">Automático</option>' + promptFamilies.map(f =>
+    `<option value="${f.id}" ${selFamily === f.id ? 'selected' : ''}>${escHtml(f.name)}</option>`
+  ).join('');
+  const fam = promptFamilies.find(f => f.id === selFamily);
+  if (fam) {
+    varSel.innerHTML = '<option value="">Automático (rota)</option>' + fam.variants.map(v =>
+      `<option value="${v.id}" ${selVariant === v.id ? 'selected' : ''}>${escHtml(v.name)}</option>`
+    ).join('');
+    varSel.disabled = false;
+  } else {
+    varSel.innerHTML = '<option value="">Automático</option>';
+    varSel.disabled = true;
+  }
+}
+
+function setPromptPreview(prompt, meta) {
+  const metaEl = document.getElementById('img-prompt-meta');
+  if (metaEl && meta) {
+    metaEl.textContent = `Familia ${meta.family} · Variante ${meta.variant}${meta.automatic ? ' · rotación automática' : ''} · ${meta.product_name}`;
+  }
+  const ta = document.getElementById('img-prompt-preview');
+  if (ta) ta.value = prompt || '';
+}
+
+function renderImportResults(el, data) {
   if (data.message && data.total === 0) {
     el.innerHTML = `<div style="font-size:.8rem;color:var(--text-muted)">${escHtml(data.message)}</div>`;
     return;

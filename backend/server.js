@@ -13,9 +13,10 @@ import categoriesRouter from './routes/categories.js';
 import backupRouter from './routes/backup.js';
 import publicationsRouter from './routes/publications.js';
 import exportsRouter from './routes/exports.js';
-import copilotRouter from './routes/copilot.js';
+import importImagesRouter from './routes/images.js';
 import importRouter from './routes/import.js';
 import pubQueueRouter from './routes/pubQueue.js';
+import promptEngineRouter from './routes/promptEngine.js';
 import { generateCatalogFile } from './lib/catalogGenerator.js';
 import { ensureWebp } from './lib/imageUtils.js';
 import { createBackup } from './scripts/backup.js';
@@ -77,9 +78,10 @@ app.use('/api/categories', categoriesRouter);
 app.use('/api/backup', backupRouter);
 app.use('/api/publications', publicationsRouter);
 app.use('/api/exports', exportsRouter);
-app.use('/api/copilot', copilotRouter);
+app.use('/api/images', importImagesRouter);
 app.use('/api/import', importRouter);
 app.use('/api/pub-queue', pubQueueRouter);
+app.use('/api/prompt-engine', promptEngineRouter);
 
 app.post('/api/upload', (req, res) => {
   upload.single('image')(req, res, async (err) => {

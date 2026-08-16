@@ -49,7 +49,7 @@ router.post('/import', (req, res) => {
     return res.status(400).json({ error: `No es una carpeta: ${folder}` });
   }
 
-  const outDir = join(__dirname, '..', 'uploads', 'copilot');
+  const outDir = join(__dirname, '..', 'uploads', 'generated');
   if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
 
   const db = getDB();
@@ -73,7 +73,7 @@ router.post('/import', (req, res) => {
       const ext = extname(f).toLowerCase();
       const newName = uuid() + ext;
       copyFileSync(src, join(outDir, newName));
-      const url = `/uploads/copilot/${newName}`;
+      const url = `/uploads/generated/${newName}`;
 
       const baseName = basename(f, extname(f));
       const fileSlug = slugify(baseName);
@@ -85,9 +85,9 @@ router.post('/import', (req, res) => {
       ).run(
         id,
         product ? `Anuncio: ${product.name}` : `Anuncio: ${baseName}`,
-        'copilot',
+        'generated',
         'images',
-        JSON.stringify({ source: 'copilot', filename: f, url, folder: dir }),
+        JSON.stringify({ source: 'generated', filename: f, url, folder: dir }),
         product ? [product.id] : [],
         product ? 1 : 0
       );

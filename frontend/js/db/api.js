@@ -122,8 +122,8 @@ export const api = {
   createExport: (data) => request('POST', '/exports', data),
   deleteExport: (id) => request('DELETE', `/exports/${id}`),
 
-  // Copilot / Dreamina
-  copilotImport: (data) => request('POST', '/copilot/import', data),
+  // Importación de imágenes generadas con IA
+  importImages: (data) => request('POST', '/images/import', data),
 
   // Sincronización desde imágenes (proveedor)
   importAnalyze: (data) => request('POST', '/import/analyze', data),
@@ -135,6 +135,10 @@ export const api = {
   updatePubQueue: (id, data) => request('PATCH', `/pub-queue/${id}`, data),
   deletePubQueue: (id) => request('DELETE', `/pub-queue/${id}`),
   getPubQueueTimer: () => request('GET', '/pub-queue/timer'),
+
+  // Prompt Engine
+  getPromptFamilies: () => request('GET', '/prompt-engine/families'),
+  generatePrompt: (data) => request('POST', '/prompt-engine/generate', data),
 
   // Auth
   login: (username, password) => request('POST', '/login', { username, password }),

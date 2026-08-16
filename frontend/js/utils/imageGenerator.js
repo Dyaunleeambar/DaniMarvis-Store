@@ -4,6 +4,8 @@ const DARK = '#221815';
 const WHITE = '#ffffff';
 const BG = '#faf8f6';
 const TEXT_MUTED = '#8a7e7a';
+const WHATSAPP_GREEN = '#25D366';
+const WHATSAPP_ICON_PATH = 'M380.9 97.1C339 55.1 283.2 32 223.9 32c-122.4 0-222 99.6-222 222 0 39.1 10.2 77.3 29.6 111L0 480l117.7-30.9c32.4 17.7 68.9 27 106.1 27h.1c122.3 0 224.1-99.6 224.1-222 0-59.3-25.2-115-67.1-157zm-157 341.6c-33.2 0-65.7-8.9-94-25.7l-6.7-4-69.8 18.3L72 359.2l-4.4-7c-18.5-29.4-28.2-63.3-28.2-98.2 0-101.7 82.8-184.5 184.6-184.5 49.3 0 95.6 19.2 130.4 54.1 34.8 34.9 56.2 81.2 56.1 130.5 0 101.8-84.9 184.6-186.6 184.6zm101.2-138.2c-5.5-2.8-32.8-16.2-37.9-18-5.1-1.9-8.8-2.8-12.5 2.8-3.7 5.6-14.3 18-17.6 21.8-3.2 3.7-6.5 4.2-12 1.4-32.6-16.3-54-29.1-75.5-66-5.7-9.8 5.7-9.1 16.3-30.3 1.8-3.7.9-6.9-.5-9.7-1.4-2.8-12.5-30.1-17.1-41.2-4.5-10.8-9.1-9.3-12.5-9.5-3.2-.2-6.9-.2-10.6-.2-3.7 0-9.7 1.4-14.8 6.9-5.1 5.6-19.4 19-19.4 46.3 0 27.3 19.9 53.7 22.6 57.4 2.8 3.7 39.1 59.7 94.8 83.8 35.2 15.2 49 16.5 66.6 13.9 10.7-1.6 32.8-13.4 37.4-26.4 4.6-13 4.6-24.1 3.2-26.4-1.3-2.5-5-3.9-10.5-6.6z';
 
 export const TEMPLATES = [
   { id: 'clasica', name: 'Clásica', description: 'Degradado claro, logo, círculo y barra de información' },
@@ -24,8 +26,8 @@ export const ACCENT_COLORS = [
 
 export const DEFAULT_OPTIONS = {
   template: 'clasica',
-  ctaText: '📲  Escríbeme y llévate este producto',
-  whatsappText: '💬  Comprar por WhatsApp',
+  whatsappText: 'CONSÚLTANOS POR WHATSAPP',
+  whatsappPhones: '+53 53760493 / +53 54115666',
   showLogo: true,
   accentColor: '#c9847a',
   backgroundImage: null,
@@ -215,25 +217,12 @@ function drawClasica(ctx, product, opts, bgImg, productImg) {
   const warrantyText = product.warranty ? `Garantía: ${product.warranty}` : 'Sin garantía';
   ctx.fillText(warrantyText, CANVAS_SIZE / 2 + 150, y + 34);
 
-  y = y + barH + 44;
-  ctx.fillStyle = accent;
-  ctx.font = '600 28px "Inter", "Arial", sans-serif';
-  ctx.fillText(opts.ctaText, CANVAS_SIZE / 2, y);
-
-  y += 62;
-  const btnW = 460;
-  const btnH = 64;
-  const btnX = (CANVAS_SIZE - btnW) / 2;
-  ctx.fillStyle = '#25D366';
-  roundRect(ctx, btnX, y, btnW, btnH, 32);
-  ctx.fill();
-  ctx.fillStyle = WHITE;
-  ctx.font = 'bold 30px "Inter", "Arial", sans-serif';
-  ctx.fillText(opts.whatsappText, CANVAS_SIZE / 2, y + 41);
+  y = y + barH + 22;
+  drawWhatsappCta(ctx, opts, CANVAS_SIZE / 2, y);
 
   ctx.fillStyle = TEXT_MUTED;
   ctx.font = '18px "Inter", "Arial", sans-serif';
-  ctx.fillText('DaniMarvis Store — Tu gestor de confianza', CANVAS_SIZE / 2, CANVAS_SIZE - 44);
+  ctx.fillText('DaniMarvis Store — Tu gestor de confianza', CANVAS_SIZE / 2, CANVAS_SIZE - 24);
 }
 
 function drawModerna(ctx, product, opts, bgImg, productImg) {
@@ -255,12 +244,12 @@ function drawModerna(ctx, product, opts, bgImg, productImg) {
 
   ctx.textAlign = 'center';
   ctx.fillStyle = WHITE;
-  ctx.font = 'bold 44px "Inter", "Arial", sans-serif';
+  ctx.font = 'bold 40px "Inter", "Arial", sans-serif';
   const nameLines = wrapText(ctx, product.name, 880);
   let y = imgAreaY + imgSize + 40;
   nameLines.forEach(line => {
     ctx.fillText(line, CANVAS_SIZE / 2, y);
-    y += 54;
+    y += 48;
   });
 
   y += 14;
@@ -276,25 +265,12 @@ function drawModerna(ctx, product, opts, bgImg, productImg) {
   ctx.lineTo(CANVAS_SIZE / 2 + 160, y);
   ctx.stroke();
 
-  y += 44;
-  ctx.fillStyle = accent;
-  ctx.font = '600 28px "Inter", "Arial", sans-serif';
-  ctx.fillText(opts.ctaText, CANVAS_SIZE / 2, y);
-
-  y += 64;
-  const btnW = 460;
-  const btnH = 68;
-  const btnX = (CANVAS_SIZE - btnW) / 2;
-  ctx.fillStyle = '#25D366';
-  roundRect(ctx, btnX, y, btnW, btnH, 34);
-  ctx.fill();
-  ctx.fillStyle = WHITE;
-  ctx.font = 'bold 30px "Inter", "Arial", sans-serif';
-  ctx.fillText(opts.whatsappText, CANVAS_SIZE / 2, y + 44);
+  y += 20;
+  drawWhatsappCta(ctx, opts, CANVAS_SIZE / 2, y);
 
   ctx.fillStyle = '#b9adaa';
   ctx.font = '18px "Inter", "Arial", sans-serif';
-  ctx.fillText('DaniMarvis Store — Tu gestor de confianza', CANVAS_SIZE / 2, CANVAS_SIZE - 44);
+  ctx.fillText('DaniMarvis Store — Tu gestor de confianza', CANVAS_SIZE / 2, CANVAS_SIZE - 24);
 }
 
 function drawMinimal(ctx, product, opts, bgImg, productImg) {
@@ -330,20 +306,7 @@ function drawMinimal(ctx, product, opts, bgImg, productImg) {
   ctx.fillText(formatPrice(product.price), CANVAS_SIZE / 2, y);
 
   y += 42;
-  ctx.fillStyle = TEXT_MUTED;
-  ctx.font = '26px "Inter", "Arial", sans-serif';
-  ctx.fillText(opts.ctaText, CANVAS_SIZE / 2, y);
-
-  y += 60;
-  const btnW = 400;
-  const btnH = 62;
-  const btnX = (CANVAS_SIZE - btnW) / 2;
-  ctx.fillStyle = '#25D366';
-  roundRect(ctx, btnX, y, btnW, btnH, 31);
-  ctx.fill();
-  ctx.fillStyle = WHITE;
-  ctx.font = 'bold 28px "Inter", "Arial", sans-serif';
-  ctx.fillText(opts.whatsappText, CANVAS_SIZE / 2, y + 40);
+  drawWhatsappCta(ctx, opts, CANVAS_SIZE / 2, y);
 
   ctx.fillStyle = TEXT_MUTED;
   ctx.font = '16px "Inter", "Arial", sans-serif';
@@ -398,15 +361,7 @@ function drawOferta(ctx, product, opts, bgImg, productImg) {
   ctx.fillText('Precio especial por tiempo limitado', CANVAS_SIZE / 2, y);
 
   y += 62;
-  const btnW = 440;
-  const btnH = 64;
-  const btnX = (CANVAS_SIZE - btnW) / 2;
-  ctx.fillStyle = '#25D366';
-  roundRect(ctx, btnX, y, btnW, btnH, 32);
-  ctx.fill();
-  ctx.fillStyle = WHITE;
-  ctx.font = 'bold 30px "Inter", "Arial", sans-serif';
-  ctx.fillText(opts.whatsappText, CANVAS_SIZE / 2, y + 42);
+  drawWhatsappCta(ctx, opts, CANVAS_SIZE / 2, y);
 
   ctx.fillStyle = TEXT_MUTED;
   ctx.font = '18px "Inter", "Arial", sans-serif';
@@ -484,8 +439,7 @@ function drawPostal(ctx, product, opts, bgImg, productImg) {
   // Costura: el blanco aterriza de lleno sobre el borde superior del amarillo
   const zoneY = priceY + priceH;
 
-  const footerRowY = CANVAS_SIZE - 124;
-  const brandY = CANVAS_SIZE - 34;
+  const footerRowY = CANVAS_SIZE - 164;
   const zoneBottom = footerRowY - 34;
   const zoneH = Math.max(300, zoneBottom - zoneY);
 
@@ -557,10 +511,7 @@ function drawPostal(ctx, product, opts, bgImg, productImg) {
   ctx.textAlign = 'right';
   ctx.fillText('Envío Gratis', CANVAS_SIZE - 105, footerRowY + 36);
 
-  ctx.fillStyle = 'rgba(255,255,255,.4)';
-  ctx.font = '16px "Arial", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('DaniMarvis Store — Tu gestor de confianza', CANVAS_SIZE / 2, brandY);
+  drawWhatsappCta(ctx, opts, CANVAS_SIZE / 2, footerRowY + 70);
 }
 
 function isSloganCode(slogan) {
@@ -598,6 +549,120 @@ function extractSloganText(product) {
 }
 
 // ── Shared drawing helpers ─────────────────────────────────────
+
+function drawWhatsappCta(ctx, opts, cx, y) {
+  const text = opts.whatsappText || 'CONSÚLTANOS POR WHATSAPP';
+  const phones = opts.whatsappPhones || '';
+  const btnH = 88;
+  const iconSize = 42;
+  const padX = 28;
+  const gapIcon = 14;
+
+  ctx.save();
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+
+  ctx.font = '900 22px "Arial", "Helvetica Neue", sans-serif';
+  const textW = ctx.measureText(text).width;
+  ctx.font = '600 15px "Arial", sans-serif';
+  const phonesW = phones ? ctx.measureText(phones).width : 0;
+
+  const contentW = iconSize + gapIcon + Math.max(textW, phonesW);
+  const btnW = contentW + padX * 2;
+  const btnX = cx - btnW / 2;
+
+  ctx.shadowColor = 'rgba(0,0,0,.28)';
+  ctx.shadowBlur = 16;
+  ctx.shadowOffsetY = 5;
+  ctx.fillStyle = WHATSAPP_GREEN;
+  roundRect(ctx, btnX, y, btnW, btnH, btnH / 2);
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
+
+  const iconX = btnX + padX;
+  const iconY = y + (btnH - iconSize) / 2;
+  ctx.save();
+  ctx.translate(iconX, iconY);
+  ctx.scale(iconSize / 448, iconSize / 512);
+  ctx.fillStyle = '#ffffff';
+  traceSvgPath(ctx, WHATSAPP_ICON_PATH);
+  ctx.fill();
+  ctx.restore();
+
+  const textX = iconX + iconSize + gapIcon;
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '900 22px "Arial", "Helvetica Neue", sans-serif';
+  ctx.fillText(text, textX, y + btnH * 0.36);
+  if (phones) {
+    ctx.fillStyle = 'rgba(255,255,255,.92)';
+    ctx.font = '600 15px "Arial", sans-serif';
+    ctx.fillText(phones, textX, y + btnH * 0.72);
+  }
+
+  ctx.restore();
+}
+
+function traceSvgPath(ctx, path) {
+  const tokens = path.match(/[a-zA-Z]|[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?/g);
+  let i = 0;
+  let x = 0;
+  let y = 0;
+  let px = 0;
+  let py = 0;
+  let cmd = '';
+
+  function num() { return parseFloat(tokens[i++]); }
+
+  ctx.beginPath();
+  while (i < tokens.length) {
+    const t = tokens[i];
+    if (/[a-zA-Z]/.test(t)) { cmd = t; i++; }
+    switch (cmd) {
+      case 'M': x = num(); y = num(); ctx.moveTo(x, y); px = x; py = y; break;
+      case 'm': x += num(); y += num(); ctx.moveTo(x, y); px = x; py = y; break;
+      case 'L': x = num(); y = num(); ctx.lineTo(x, y); px = x; py = y; break;
+      case 'l': x += num(); y += num(); ctx.lineTo(x, y); px = x; py = y; break;
+      case 'H': x = num(); ctx.lineTo(x, y); px = x; py = y; break;
+      case 'h': x += num(); ctx.lineTo(x, y); px = x; py = y; break;
+      case 'V': y = num(); ctx.lineTo(x, y); px = x; py = y; break;
+      case 'v': y += num(); ctx.lineTo(x, y); px = x; py = y; break;
+      case 'C': {
+        const c1x = num(); const c1y = num(); const c2x = num(); const c2y = num(); const ex = num(); const ey = num();
+        ctx.bezierCurveTo(c1x, c1y, c2x, c2y, ex, ey);
+        px = c2x; py = c2y; x = ex; y = ey; break;
+      }
+      case 'c': {
+        const c1x = x + num(); const c1y = y + num(); const c2x = x + num(); const c2y = y + num(); const ex = x + num(); const ey = y + num();
+        ctx.bezierCurveTo(c1x, c1y, c2x, c2y, ex, ey);
+        px = c2x; py = c2y; x = ex; y = ey; break;
+      }
+      case 'S': {
+        const c1x = 2 * x - px; const c1y = 2 * y - py; const c2x = num(); const c2y = num(); const ex = num(); const ey = num();
+        ctx.bezierCurveTo(c1x, c1y, c2x, c2y, ex, ey);
+        px = c2x; py = c2y; x = ex; y = ey; break;
+      }
+      case 's': {
+        const c1x = 2 * x - px; const c1y = 2 * y - py; const c2x = x + num(); const c2y = y + num(); const ex = x + num(); const ey = y + num();
+        ctx.bezierCurveTo(c1x, c1y, c2x, c2y, ex, ey);
+        px = c2x; py = c2y; x = ex; y = ey; break;
+      }
+      case 'Q': {
+        const c1x = num(); const c1y = num(); const ex = num(); const ey = num();
+        ctx.quadraticCurveTo(c1x, c1y, ex, ey);
+        px = c1x; py = c1y; x = ex; y = ey; break;
+      }
+      case 'q': {
+        const c1x = x + num(); const c1y = y + num(); const ex = x + num(); const ey = y + num();
+        ctx.quadraticCurveTo(c1x, c1y, ex, ey);
+        px = c1x; py = c1y; x = ex; y = ey; break;
+      }
+      case 'Z':
+      case 'z': ctx.closePath(); break;
+    }
+  }
+}
 
 function drawLogo(ctx, x, y, { color = DARK, accent = ROSE, muted = TEXT_MUTED } = {}) {
   const logoSize = 56;

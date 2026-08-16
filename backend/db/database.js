@@ -77,6 +77,8 @@ export async function initDB() {
   migratePublicationDate();
   migrateExportsKind();
   migratePubQueue();
+  migratePromptEngine();
+  migrateGeneratedImages();
   saveDB();
 }
 
@@ -299,6 +301,44 @@ function migratePubQueue() {
   try {
     db.exec("ALTER TABLE publication_queue ADD COLUMN updated_at TEXT DEFAULT (datetime('now'))");
   } catch (_) {}
+}
+
+function migratePromptEngine() {
+  try {
+    db.exec("ALTER TABLE products ADD COLUMN last_template TEXT");
+  } catch (_) {}
+  try {
+    db.exec("ALTER TABLE products ADD COLUMN creative_history TEXT DEFAULT '[]'");
+  } catch (_) {}
+}
+
+function migrateGeneratedImages() {
+  const oldDir = join(__dirname, '..', 'uploads', 'copilot');
+  const newDir = join(__dirname, '..', 'uploads', 'generated');
+  if (fs.existsSync(oldDir)) {
+    try {
+      fs.renameSync(oldDir, newDir);
+      console.log('[DB] Carpeta uploads/copilot → uploads/generated');
+    } catch (err) {
+      console.error('[DB] No se pudo renombrar uploads/copilot:', err.message);
+    }
+  }
+  db.exec("UPDATE exports SET style = 'generated' WHERE style = 'copilot'");
+  const withImages = db.prepare("SELECT id, images FROM products WHERE images LIKE '%/uploads/copilot/%'").all();
+  for (const row of withImages) {
+    try {
+      const images = JSON.parse(row.images || '[]').map(u => String(u).replace('/uploads/copilot/', '/uploads/generated/'));
+      db.prepare("UPDATE products SET images = ? WHERE id = ?").run(JSON.stringify(images), row.id);
+    } catch (_) {}
+  }
+  const withFields = db.prepare("SELECT id, fields FROM exports WHERE fields LIKE '%/uploads/copilot/%'").all();
+  for (const row of withFields) {
+    try {
+      const fields = JSON.parse(row.fields || '{}');
+      if (fields.url) fields.url = String(fields.url).replace('/uploads/copilot/', '/uploads/generated/');
+      db.prepare("UPDATE exports SET fields = ? WHERE id = ?").run(JSON.stringify(fields), row.id);
+    } catch (_) {}
+  }
 }
 
 function seedIfEmpty() {

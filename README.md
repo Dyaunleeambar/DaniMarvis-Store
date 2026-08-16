@@ -16,7 +16,7 @@ Panel de gestión para gestores de ventas que trabajan con importadores de elect
 - [Generador de Imágenes](#generador-de-imágenes)
 - [Exportaciones PDF](#exportaciones-pdf)
 - [Importación / Sincronización OCR](#importación--sincronización-ocr)
-- [Copilot / Dreamina](#copilot--dreamina)
+- [Anuncios generados con IA](#anuncios-generados-con-ia)
 - [Catálogo Público (GitHub Pages)](#catálogo-público-github-pages)
 - [Publicaciones en Redes Sociales](#publicaciones-en-redes-sociales)
 - [Sistema de Respaldos](#sistema-de-respaldos)
@@ -39,7 +39,7 @@ Este sistema permite a un **gestor de ventas**:
 7. **Generar textos de publicación** con IA (compatible con OpenAI) usando plantillas personalizables.
 8. **Publicar directamente en Facebook e Instagram** mediante la Graph API.
 9. **Generar un catálogo web público** con todos los productos activos, filtros por categoría, búsqueda y botón directo a WhatsApp. Se despliega en GitHub Pages.
-10. **Crear anuncios con Copilot/Dreamina** — copiar prompts generados por producto e importar los resultados.
+10. **Crear anuncios con IA (ChatGPT)** — copiar prompts generados por producto e importar los resultados.
 11. **Dar seguimiento** a entregas y comisiones pendientes.
 12. **Configurar el tipo de cambio** USD → MN para mostrar precios en moneda nacional.
 13. **Respaldar y restaurar** todos los datos del sistema como archivos JSON.
@@ -194,7 +194,7 @@ DaniMarvisStore/
 │   │   ├── publications.js    # CRUD publicaciones + publicar en FB/IG + reorder
 │   │   ├── exports.js         # CRUD historial de exportaciones
 │   │   ├── import.js          # Análisis OCR + aplicación de precios
-│   │   ├── copilot.js         # Importación de imágenes Copilot/Dreamina
+│   │   ├── images.js           # Importación de imágenes generadas con IA
 │   │   └── backup.js          # Exportar/restaurar datos como JSON
 │   └── scripts/
 │       └── generate-icon.js   # Generador de ícono PNG con canvas
@@ -382,11 +382,13 @@ Response: { "user": {...}, "token": "..." }
 | `POST` | `/api/import/analyze` | Analizar imágenes de una carpeta con OCR (requiere `folder` y `provider_id`) |
 | `POST` | `/api/import/apply` | Aplicar precios detectados a productos (actualiza precio y visibilidad) |
 
-### Copilot / Dreamina
+### Anuncios generados con IA
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| `POST` | `/api/copilot/import` | Importar imágenes desde una carpeta (asociación automática por nombre) |
+| `POST` | `/api/images/import` | Importar imágenes desde una carpeta (asociación automática por nombre) |
+| `GET` | `/api/prompt-engine/families` | Listar familias y variantes creativas del motor de prompts |
+| `POST` | `/api/prompt-engine/generate` | Generar prompt para un producto (rotación automática o familia/variante fija) |
 
 ### Dashboard
 
@@ -573,17 +575,17 @@ Funcionalidad para actualizar precios y disponibilidad de productos a partir de 
 
 ---
 
-## Copilot / Dreamina
+## Anuncios generados con IA
 
-Integración con herramientas de generación de imágenes con IA (Microsoft Copilot, ByteDance Dreamina) para crear anuncios publicitarios.
+El panel incluye un **motor de prompts** que construye el texto listo para generar anuncios publicitarios en **ChatGPT**, con identidad visual DaniMarvis, plantillas por familia creativa y rotación de variantes.
 
 ### Flujo
 
 1. **Copiar prompt** — Junto a cada producto hay un botón 📋 que copia un prompt detallado para generar un anuncio publicitario. Incluye nombre del producto, precio, garantía y estilo visual.
-2. **Generar en Copilot/Dreamina** — Usar el prompt copiado en la herramienta de IA para generar la imagen.
+2. **Generar en ChatGPT** — Usar el prompt copiado en ChatGPT para generar la imagen.
 3. **Guardar** — Guardar la imagen generada en una carpeta local con el nombre sugerido (slug del producto).
 4. **Importar** — Indicar la ruta de la carpeta y hacer clic en **Importar**. El sistema:
-   - Copia las imágenes a `uploads/copilot/`
+   - Copia las imágenes a `uploads/generated/`
    - Registra cada imagen en el historial de exportaciones
    - Opcionalmente asocia la imagen al producto (prepende en la galería)
    - Detecta el producto por coincidencia del nombre del archivo
@@ -591,10 +593,11 @@ Integración con herramientas de generación de imágenes con IA (Microsoft Copi
 ### Cómo usarlo
 
 1. Ve a **Exportaciones** → pestaña **Imágenes**.
-2. Haz clic en 📋 junto al producto que querés anunciar.
-3. Genera la imagen en Copilot o Dreamina.
-4. Guarda la imagen en la carpeta indicada.
-5. Importa la carpeta desde el panel.
+2. Elige **Familia creativa** y **Variante** (o dejá **Automático** para que el sistema elija y rote variantes según el historial del producto).
+3. Haz clic en 📋 junto al producto que querés anunciar.
+4. Genera la imagen en ChatGPT.
+5. Guarda la imagen en la carpeta indicada.
+6. Importa la carpeta desde el panel.
 
 ---
 
@@ -815,7 +818,8 @@ En **Configuración** del panel puedes definir una plantilla de texto con placeh
 - [x] Configuración de tipo de cambio USD → MN
 - [x] Exportación de reportes PDF (tabla y lista detallada)
 - [x] Importación/sincronización de precios con OCR (tesseract.js)
-- [x] Integración con Copilot/Dreamina para anuncios publicitarios
+- [x] Motor de prompts para anuncios con IA (familias, variantes y rotación)
+- [x] Importación de imágenes generadas con IA (asociación automática por nombre)
 - [x] Generación de imágenes con IA (Pollinations)
 - [x] Descarga masiva de imágenes en ZIP (JSZip)
 

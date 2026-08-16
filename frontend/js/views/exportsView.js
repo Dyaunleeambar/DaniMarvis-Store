@@ -92,8 +92,8 @@ async function renderHistory(container) {
               </div>
               <div style="font-size:.78rem;color:var(--text-muted);margin-top:2px">
                 ${e.kind === 'images'
-                  ? (e.style === 'copilot'
-                      ? `${e.product_count} anuncio(s) · Copilot / Dreamina`
+                  ? (e.style === 'copilot' || e.style === 'generated'
+                      ? `${e.product_count} anuncio(s) · IA`
                       : `${e.product_count} producto(s) · Plantilla ${e.style}`)
                   : `${e.product_count} producto(s) · ${e.style === 'list' ? 'Lista detallada' : 'Tabla simple'}`}
                  · ${formatDate(e.created_at)}
