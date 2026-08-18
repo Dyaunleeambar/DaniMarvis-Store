@@ -102,7 +102,7 @@ function renderTable(container, products, providers) {
                 <th>Comisión</th>
                 <th>Proveedor</th>
                 <th>Stock</th>
-                <th>Estado</th>
+                <th>Garantía</th>
                 <th style="width:80px"></th>
               </tr>
             </thead>
@@ -122,7 +122,6 @@ function renderTable(container, products, providers) {
                         }
                           <div>
                             <div style="font-weight:600;font-size:.88rem;cursor:pointer;color:var(--rose)" onclick="window._viewProduct('${p.id}')">${p.name}</div>
-                            ${p.warranty ? `<div style="font-size:.72rem;color:var(--text-muted)">Garantía: ${p.warranty}</div>` : ''}
                           </div>
                       </div>
                     </td>
@@ -131,7 +130,7 @@ function renderTable(container, products, providers) {
                     <td><span style="font-size:.82rem">${p.commission_value > 0 ? formatUSD(p.commission_value) : '—'}</span></td>
                     <td><span style="font-size:.82rem">${p.provider_name || '—'}</span></td>
                     <td><span style="font-size:.82rem">${p.stock}</span></td>
-                    <td><span class="badge badge--${p.catalog_visible ? 'active' : 'archived'}">${p.catalog_visible ? 'activo' : 'inactivo'}</span></td>
+                    <td><span style="font-size:.82rem">${p.warranty || 'no tiene'}</span></td>
                     <td>
                       <div class="actions-cell">
                         <button class="btn btn--sm btn--ghost" onclick="window._toggleVisibility('${p.id}', this)" title="${p.catalog_visible ? 'Ocultar del catálogo' : 'Mostrar en catálogo'}" style="color:${p.catalog_visible ? 'var(--success)' : 'var(--text-muted)'}">
