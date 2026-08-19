@@ -1,3 +1,6 @@
 [DB] Base de datos inicializada
-[Backup] Respaldo reciente (1.1h). Omitido. Usá force=true para forzar.
+[Backup] BD exportada: 138 productos, 153 publicaciones
+[Backup] Imágenes copiadas: 934
+[Backup] Eliminado respaldo antiguo: danimarvis-2026-08-10_22-16-36
+[Backup] Respaldo completo creado: D:\Proyectos\DaniMarvisStore\backend\backups\danimarvis-2026-08-19_04-26-20
 [Server] Panel DaniMarvis corriendo en http://localhost:3456

@@ -3,7 +3,8 @@ DaniMarvis-Store. Moderna, limpia, técnica y comercial.
 Paleta: navy profundo (color estructural dominante), naranja (acento dinámico),
 dorado (uso selectivo, especialmente el precio), blanco (texto y espacios de respiración).
 Conservar el coral original del logo como firma cromática.
-Sombras y reflejos realistas y discretos. Líneas y diagonales limpias y controladas.`;
+Sombras y reflejos realistas y discretos. Líneas y diagonales limpias y controladas.
+Formato: 4:5 (1080×1350 px).`;
 
 const CTA_WHATSAPP = `[CTA WHATSAPP]
 Incluir un botón de consulta por WhatsApp, con el icono oficial de WhatsApp
