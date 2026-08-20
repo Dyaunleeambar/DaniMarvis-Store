@@ -30,9 +30,9 @@ Panel de gestión para gestores de ventas que trabajan con importadores de elect
 
 Este sistema permite a un **gestor de ventas**:
 
-1. **Registrar productos** de múltiples importadores con precio, comisión, garantía y múltiples imágenes.
-2. **Administrar proveedores** con sus datos de contacto, información adicional y tasa de comisión.
-3. **Registrar ventas** con cálculo automático de comisiones y seguimiento de entregas.
+1. **Registrar productos** de múltiples importadores con precio, comisión (USD o MN), garantía y múltiples imágenes.
+2. **Administrar proveedores** con sus datos de contacto, información adicional y moneda de comisión (USD o MN).
+3. **Registrar ventas** con cálculo automático de comisiones en la moneda del proveedor y seguimiento de entregas.
 4. **Generar imágenes promocionales** 1080x1080 con 5 plantillas distintas, fondo con IA y personalización completa de colores y textos.
 5. **Exportar reportes PDF** de productos con selección de campos y estilos (tabla o lista detallada).
 6. **Importar precios desde imágenes** del proveedor usando OCR (tesseract.js), con detección automática de productos y precios.
@@ -216,7 +216,7 @@ DaniMarvisStore/
 │       ├── services/
 │       │       └── index.js   # Auth, caché + invalidación de productos
 │       ├── utils/
-│       │   ├── utils.js       # formatUSD, formatMN, fechas, IDs, debounce, extractSlogan
+│       │   ├── utils.js       # formatUSD, formatMN, formatCommission, fechas, IDs, debounce, extractSlogan
 │       │   ├── imageGenerator.js  # Motor Canvas para imágenes 1080x1080 (5 plantillas)
 │       │   └── pdfGenerator.js    # Generador de PDF con jsPDF
 │       ├── lib/
@@ -276,7 +276,8 @@ Response: { "user": {...}, "token": "..." }
 | `category` | TEXT | Categoría del producto |
 | `price` | REAL | Precio en USD |
 | `commission_type` | TEXT | Tipo de comisión (siempre "fixed") |
-| `commission_value` | REAL | Comisión fija en USD por unidad |
+| `commission_value` | REAL | Comisión fija por unidad |
+| `commission_currency` | TEXT | Moneda de la comisión: "USD" o "MN" (hereda del proveedor) |
 | `warranty` | TEXT | Información de garantía |
 | `provider_id` | TEXT | ID del proveedor asociado |
 | `images` | TEXT | Array JSON de URLs de imágenes |
@@ -306,6 +307,7 @@ Response: { "user": {...}, "token": "..." }
 | `email` | TEXT | Correo electrónico |
 | `info` | TEXT | Información adicional |
 | `commission_rate` | REAL | Tasa de comisión |
+| `commission_currency` | TEXT | Moneda de comisión: "USD" o "MN" |
 | `notes` | TEXT | Notas |
 
 ### Ventas
@@ -319,7 +321,7 @@ Response: { "user": {...}, "token": "..." }
 | `PATCH` | `/api/sales/:id/status` | Actualizar solo estado (`delivery_status`, `commission_paid`) |
 | `DELETE` | `/api/sales/:id` | Eliminar venta |
 
-> El backend **recalcula** `total_amount` y `commission_amount` al crear/editar ventas, ignorando los valores enviados por el cliente.
+> El backend **recalcula** `total_amount` y `commission_amount` al crear/editar ventas, ignorando los valores enviados por el cliente. La `commission_currency` se toma del producto al momento de crear la venta.
 
 ### Categorías
 
@@ -394,7 +396,7 @@ Response: { "user": {...}, "token": "..." }
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| `GET` | `/api/dashboard` | Estadísticas: totales, ingresos, comisiones, ventas mensuales, top productos, ventas recientes, tipo de cambio |
+| `GET` | `/api/dashboard` | Estadísticas: totales, ingresos, comisiones (USD y MN por separado), ventas mensuales, top productos, ventas recientes, tipo de cambio |
 
 ### Conteos
 
@@ -453,8 +455,8 @@ El frontend es una **SPA** (Single Page Application) construida con JavaScript v
 |------|---------|-------------|
 | `#/dashboard` | Dashboard | Tarjetas con totales, ingresos, comisiones, ventas recientes, top productos, gráfico mensual |
 | `#/products` | Productos | CRUD completo con filtros, gestión de múltiples imágenes, generación de descripciones con IA, texto de publicación, visibilidad en catálogo |
-| `#/providers` | Proveedores | CRUD con información de contacto y conteo de productos |
-| `#/sales` | Ventas | CRUD con cálculo automático de comisiones, seguimiento de entregas y filtros |
+| `#/providers` | Proveedores | CRUD con información de contacto, moneda de comisión y conteo de productos |
+| `#/sales` | Ventas | CRUD con cálculo automático de comisiones (USD/MN), seguimiento de entregas y filtros |
 | `#/publications` | Publicaciones | CRUD de publicaciones con texto, imágenes, generación con IA, reordenamiento y publicación directa en Facebook/Instagram |
 | `#/catalog-images` | Catálogo público | Generador de catálogo web estático + despliegue en GitHub Pages |
 | `#/import` | Importar / Sincronizar | OCR de imágenes del proveedor, detección de precios, actualización masiva |
@@ -475,7 +477,7 @@ El frontend es una **SPA** (Single Page Application) construida con JavaScript v
 - **Invalidación de caché** automática al crear, editar o eliminar productos
 - **Categorías dinámicas** desde el servidor — el formulario de productos y los filtros se alimentan de `GET /api/categories`
 - **Filtros en tiempo real** en productos (con preservación de foco en el campo de búsqueda)
-- **Cálculo automático** de comisiones al registrar ventas
+- **Cálculo automático** de comisiones al registrar ventas (con soporte USD y MN)
 - **Gestión de imágenes múltiples** — subida, URL, orden con drag-and-drop, conversión automática a WebP
 - **Lightbox** para previsualización de imágenes a pantalla completa con navegación
 - **Generación de descripciones con IA** — envía datos del producto a una API compatible con OpenAI
@@ -693,13 +695,13 @@ Body: { "providers": [...], "products": [...], "sales": [...], ... }
 ```
 Panel → Proveedores → Nuevo proveedor
 ```
-Ingresa nombre, contacto, teléfono, email e información adicional.
+Ingresa nombre, contacto, teléfono, email, información adicional y la **moneda de comisión** (USD o MN) en la que paga.
 
 ### 2. Registrar productos
 ```
 Panel → Productos → Nuevo producto
 ```
-Asocia cada producto a un proveedor. Define precio en USD, comisión fija por unidad, garantía y stock. Sube imágenes o ingresa URLs.
+Asocia cada producto a un proveedor. Define precio en USD, comisión fija por unidad (se hereda la moneda del proveedor, con opción de override个别), garantía y stock. Sube imágenes o ingresa URLs.
 
 ### 3. Configurar tipo de cambio
 ```
@@ -741,10 +743,10 @@ El servidor genera un catálogo web estático con todos los productos activos, i
 ```
 Panel → Ventas → Nueva venta
 ```
-Selecciona el producto, ingresa datos del cliente. El sistema calcula automáticamente el total y la comisión.
+Selecciona el producto, ingresa datos del cliente. El sistema calcula automáticamente el total y la comisión en la moneda correspondiente (USD o MN según el producto).
 
 ### 10. Dar seguimiento
-Actualiza el estado de entrega (pendiente → enviado → entregado) y marca comisiones como pagadas.
+Actualiza el estado de entrega (pendiente → enviado → entregado) y marca comisiones como pagadas. Las comisiones pendientes se muestran por separado en USD y MN.
 
 ### 11. Respaldar datos
 ```
@@ -753,7 +755,7 @@ Panel → Respaldos → Exportar datos
 Descarga un archivo JSON con todos los datos para tener un respaldo de seguridad.
 
 ### 12. Revisar dashboard
-El dashboard muestra ingresos totales, comisiones pendientes, productos más vendidos y ventas mensuales.
+El dashboard muestra ingresos totales, comisiones pendientes (desglosadas por moneda: USD y MN), productos más vendidos y ventas mensuales.
 
 ---
 
@@ -822,6 +824,7 @@ En **Configuración** del panel puedes definir una plantilla de texto con placeh
 - [x] Importación de imágenes generadas con IA (asociación automática por nombre)
 - [x] Generación de imágenes con IA (Pollinations)
 - [x] Descarga masiva de imágenes en ZIP (JSZip)
+- [x] Selector de moneda de comisión (USD/MN) por proveedor con override个别 por producto
 
 ### Por implementar
 
@@ -829,7 +832,7 @@ En **Configuración** del panel puedes definir una plantilla de texto con placeh
 - [ ] **Autenticación mejorada** con JWT y hashes de contraseñas
 - [ ] **Múltiples gestores** con roles y permisos
 - [ ] **Exportar reportes** a Excel/CSV
-- [ ] **Panel de comisiones** por proveedor con resumen mensual
+- [ ] **Panel de comisiones** por proveedor con resumen mensual y desglose por moneda
 - [ ] **Notificaciones** cuando una venta cambia de estado
 - [ ] **Integración con Facebook Catalog** para Dynamic Ads
 - [ ] **Compartir módulo `escHtml()`/`escAttr()`** como utilidad centralizada

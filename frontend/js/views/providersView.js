@@ -44,13 +44,14 @@ function renderTable(container, providers) {
                 <th>Teléfono</th>
                 <th>Email</th>
                 <th>Info</th>
+                <th>Moneda</th>
                 <th>Productos</th>
                 <th style="width:80px"></th>
               </tr>
             </thead>
             <tbody>
               ${providers.length === 0
-                ? `<tr><td colspan="7"><div class="empty-state" style="padding:32px"><h3>No hay proveedores</h3><p>Registra tu primer proveedor</p></div></td></tr>`
+                ? `<tr><td colspan="8"><div class="empty-state" style="padding:32px"><h3>No hay proveedores</h3><p>Registra tu primer proveedor</p></div></td></tr>`
                 : providers.map(p => `
                   <tr>
                     <td><span style="font-weight:600">${p.name}</span></td>
@@ -58,6 +59,7 @@ function renderTable(container, providers) {
                     <td>${p.phone || '—'}</td>
                     <td>${p.email || '—'}</td>
                     <td style="max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.info ? escHtml(p.info) : '—'}</td>
+                    <td><span class="badge badge--${(p.commission_currency || 'USD') === 'USD' ? 'active' : 'unpaid'}">${p.commission_currency || 'USD'}</span></td>
                     <td><span class="badge badge--${p.product_count > 0 ? 'active' : 'archived'}">${p.product_count}</span></td>
                     <td>
                       <div class="actions-cell">
@@ -112,6 +114,14 @@ window._openProviderForm = function(provider) {
       <div class="form-group">
         <label>Información del proveedor</label>
         <textarea name="info" class="form-control" style="min-height:120px" placeholder="Condiciones, requisitos, formas de pago, etc.">${escHtml(provider?.info || '')}</textarea>
+      </div>
+      <div class="form-group">
+        <label>Moneda de comisión</label>
+        <select name="commission_currency" class="form-control">
+          <option value="USD" ${provider?.commission_currency === 'USD' ? 'selected' : ''}>USD — Dólares</option>
+          <option value="MN" ${provider?.commission_currency === 'MN' ? 'selected' : ''}>MN — Peso nacional</option>
+        </select>
+        <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:2px">Moneda en la que este proveedor paga comisiones. Los productos heredan esta moneda por defecto.</small>
       </div>
       <div class="form-group">
         <label>Notas</label>

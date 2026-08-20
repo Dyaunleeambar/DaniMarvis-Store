@@ -79,6 +79,7 @@ export async function initDB() {
   migratePubQueue();
   migratePromptEngine();
   migrateGeneratedImages();
+  migrateCommissionCurrency();
   saveDB();
 }
 
@@ -339,6 +340,18 @@ function migrateGeneratedImages() {
       db.prepare("UPDATE exports SET fields = ? WHERE id = ?").run(JSON.stringify(fields), row.id);
     } catch (_) {}
   }
+}
+
+function migrateCommissionCurrency() {
+  try {
+    db.exec("ALTER TABLE providers ADD COLUMN commission_currency TEXT DEFAULT 'USD'");
+  } catch (_) {}
+  try {
+    db.exec("ALTER TABLE products ADD COLUMN commission_currency TEXT DEFAULT 'USD'");
+  } catch (_) {}
+  try {
+    db.exec("ALTER TABLE sales ADD COLUMN commission_currency TEXT DEFAULT 'USD'");
+  } catch (_) {}
 }
 
 function seedIfEmpty() {

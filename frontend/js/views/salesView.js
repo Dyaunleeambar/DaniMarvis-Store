@@ -1,6 +1,6 @@
 import { api } from '../db/api.js';
 import { openModal, closeModal, showToast, confirmDialog, refreshSidebarCounts } from '../core/app.js';
-import { formatUSD, formatMN, formatDate, generateId } from '../utils/utils.js';
+import { formatUSD, formatMN, formatCommission, formatDate, generateId } from '../utils/utils.js';
 
 let currentContainer = null;
 let currentSales = [];
@@ -29,6 +29,8 @@ export async function render(container) {
 function renderTable(container, sales) {
   const totalRevenue = sales.reduce((s, v) => s + v.total_amount, 0);
   const pendingCommissions = sales.filter(v => !v.commission_paid).reduce((s, v) => s + v.commission_amount, 0);
+  const pendingCommissionsUSD = sales.filter(v => !v.commission_paid && (v.commission_currency || 'USD') === 'USD').reduce((s, v) => s + v.commission_amount, 0);
+  const pendingCommissionsMN = sales.filter(v => !v.commission_paid && (v.commission_currency || 'USD') === 'MN').reduce((s, v) => s + v.commission_amount, 0);
   const exchangeRate = sales.length > 0 ? sales[0].exchange_rate : 61000;
 
   container.innerHTML = `
@@ -36,7 +38,7 @@ function renderTable(container, sales) {
       <div class="page-header">
         <div>
           <h1>Ventas</h1>
-          <p>${sales.length} venta(s) · Total: ${formatUSD(totalRevenue)} · Comisiones pendientes: ${formatUSD(pendingCommissions)}</p>
+          <p>${sales.length} venta(s) · Total: ${formatUSD(totalRevenue)} · Comisiones pendientes: ${pendingCommissionsUSD > 0 ? formatUSD(pendingCommissionsUSD) : ''}${pendingCommissionsUSD > 0 && pendingCommissionsMN > 0 ? ' + ' : ''}${pendingCommissionsMN > 0 ? formatCommission(pendingCommissionsMN, 'MN') : ''}${pendingCommissions === 0 ? '$0.00' : ''}</p>
         </div>
         <button class="btn btn--primary" onclick="window._openSaleForm(null)">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -61,9 +63,8 @@ function renderTable(container, sales) {
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           </div>
           <div>
-            <div class="stat-value">${formatUSD(pendingCommissions)}</div>
+            <div class="stat-value">${pendingCommissionsUSD > 0 ? formatUSD(pendingCommissionsUSD) : ''}${pendingCommissionsUSD > 0 && pendingCommissionsMN > 0 ? ' + ' : ''}${pendingCommissionsMN > 0 ? formatCommission(pendingCommissionsMN, 'MN') : ''}${pendingCommissions === 0 ? '$0.00' : ''}</div>
             <div class="stat-label">Comisiones pendientes</div>
-            <div style="font-size:.72rem;color:var(--text-muted)">${formatMN(pendingCommissions, exchangeRate)}</div>
           </div>
         </div>
         <div class="card card--stat">
@@ -120,7 +121,7 @@ function renderTable(container, sales) {
                       ${s.client_phone ? `<div style="font-size:.75rem;color:var(--text-muted)">${s.client_phone}</div>` : ''}
                     </td>
                     <td class="amount">${formatUSD(s.total_amount)}<br><span style="font-size:.7rem;color:var(--text-muted)">${formatMN(s.total_amount, s.exchange_rate || exchangeRate)}</span></td>
-                    <td class="amount">${formatUSD(s.commission_amount)}</td>
+                    <td class="amount">${formatCommission(s.commission_amount, s.commission_currency || 'USD')}</td>
                     <td><span class="badge badge--${s.commission_paid ? 'paid' : 'unpaid'}">${s.commission_paid ? 'Pagada' : 'Pendiente'}</span></td>
                     <td><span class="badge badge--${s.delivery_status === 'delivered' ? 'delivered' : s.delivery_status === 'shipped' ? 'shipped' : 'pending'}">${s.delivery_status || 'pending'}</span></td>
                     <td style="font-size:.82rem;color:var(--text-secondary);white-space:nowrap">${formatDate(s.sale_date)}</td>
@@ -187,7 +188,7 @@ window._openSaleForm = function(sale) {
           <select name="product_id" class="form-control" id="sale-product" required>
             <option value="">Seleccionar producto</option>
             ${currentProducts.map(p =>
-              `<option value="${p.id}" data-price="${p.price}" data-commission="${p.commission_value}" data-provider="${p.provider_id || ''}" ${sale?.product_id === p.id ? 'selected' : ''}>${p.name} — ${formatUSD(p.price)}</option>`
+              `<option value="${p.id}" data-price="${p.price}" data-commission="${p.commission_value}" data-currency="${p.commission_currency || 'USD'}" data-provider="${p.provider_id || ''}" ${sale?.product_id === p.id ? 'selected' : ''}>${p.name} — ${formatUSD(p.price)}</option>`
             ).join('')}
           </select>
         </div>
@@ -290,12 +291,13 @@ window._openSaleForm = function(sale) {
     const selected = productSelect.options[productSelect.selectedIndex];
     if (selected && selected.value) {
       const commVal = parseFloat(selected.dataset.commission) || 0;
+      const commCurrency = selected.dataset.currency || 'USD';
       const commission = commVal * qty;
       commissionInput.value = Math.round(commission * 100) / 100;
 
       const label = document.getElementById('commission-source');
       if (label) label.textContent = commVal > 0
-        ? `${formatUSD(commVal)} fijo por unidad`
+        ? `${formatCommission(commVal, commCurrency)} fijo por unidad`
         : 'Sin comisión';
 
       if (selected.dataset.provider && !sale) {

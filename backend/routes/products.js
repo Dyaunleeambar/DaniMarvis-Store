@@ -20,7 +20,7 @@ function imagesJson(images) {
 router.get('/', (req, res) => {
   const db = getDB();
   const { category, catalog_visible, provider_id, q } = req.query;
-  let sql = `SELECT p.*, pr.name as provider_name, pr.commission_rate as provider_commission_rate
+  let sql = `SELECT p.*, pr.name as provider_name, pr.commission_rate as provider_commission_rate, pr.commission_currency as provider_commission_currency
              FROM products p
              LEFT JOIN providers pr ON pr.id = p.provider_id`;
   const conditions = [];
@@ -40,7 +40,7 @@ router.get('/', (req, res) => {
 
 router.get('/:id', (req, res) => {
   const db = getDB();
-  const product = db.prepare(`SELECT p.*, pr.name as provider_name, pr.commission_rate as provider_commission_rate
+  const product = db.prepare(`SELECT p.*, pr.name as provider_name, pr.commission_rate as provider_commission_rate, pr.commission_currency as provider_commission_currency
     FROM products p LEFT JOIN providers pr ON pr.id = p.provider_id
     WHERE p.id = ?`).get(req.params.id);
   if (!product) return res.status(404).json({ error: 'Producto no encontrado' });
@@ -49,7 +49,7 @@ router.get('/:id', (req, res) => {
 
 router.post('/', (req, res) => {
   const db = getDB();
-  const { name, description, category, price, commission_type, commission_value, warranty, provider_id, images, image_url, publish_text, stock, status, catalog_visible } = req.body;
+  const { name, description, category, price, commission_type, commission_value, commission_currency, warranty, provider_id, images, image_url, publish_text, stock, status, catalog_visible } = req.body;
 
   if (!name || price === undefined) {
     return res.status(400).json({ error: 'Nombre y precio son obligatorios' });
@@ -59,17 +59,18 @@ router.post('/', (req, res) => {
   const product = {
     id, name, description: description || '', category: category || '',
     price, commission_type: commission_type || 'fixed',
-    commission_value: parseFloat(commission_value) || 0, warranty: warranty || '',
+    commission_value: parseFloat(commission_value) || 0, commission_currency: commission_currency || 'USD',
+    warranty: warranty || '',
     provider_id: provider_id || null, images: imagesJson(images), image_url: image_url || '',
     publish_text: publish_text || '', stock: stock || 0, status: status || 'active',
     catalog_visible: catalog_visible !== undefined ? (catalog_visible ? 1 : 0) : 1
   };
 
   db.prepare(`INSERT INTO products (id, name, description, category, price,
-    commission_type, commission_value, warranty, provider_id, images, image_url, publish_text, stock, status, catalog_visible)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    commission_type, commission_value, commission_currency, warranty, provider_id, images, image_url, publish_text, stock, status, catalog_visible)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     product.id, product.name, product.description, product.category,
-    product.price, product.commission_type, product.commission_value,
+    product.price, product.commission_type, product.commission_value, product.commission_currency,
     product.warranty, product.provider_id, product.images, product.image_url,
     product.publish_text, product.stock, product.status, product.catalog_visible
   );
@@ -82,7 +83,7 @@ router.put('/:id', (req, res) => {
   const existing = db.prepare('SELECT id FROM products WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Producto no encontrado' });
 
-  const { name, description, category, price, commission_type, commission_value, warranty, provider_id, images, image_url, publish_text, stock, status, catalog_visible } = req.body;
+  const { name, description, category, price, commission_type, commission_value, commission_currency, warranty, provider_id, images, image_url, publish_text, stock, status, catalog_visible } = req.body;
 
   if (!name || price === undefined || price === '') {
     return res.status(400).json({ error: 'Nombre y precio son obligatorios' });
@@ -90,7 +91,7 @@ router.put('/:id', (req, res) => {
 
   db.prepare(`UPDATE products SET
     name = ?, description = ?, category = ?, price = ?,
-    commission_type = ?, commission_value = ?, warranty = ?,
+    commission_type = ?, commission_value = ?, commission_currency = ?, warranty = ?,
     provider_id = ?, images = ?, image_url = ?, publish_text = ?, stock = ?, status = ?,
     catalog_visible = ?, updated_at = datetime('now')
     WHERE id = ?`).run(
@@ -100,6 +101,7 @@ router.put('/:id', (req, res) => {
     parseFloat(price),
     commission_type || 'fixed',
     parseFloat(commission_value) || 0,
+    commission_currency || 'USD',
     warranty || '',
     provider_id || null,
     imagesJson(images),
@@ -111,7 +113,7 @@ router.put('/:id', (req, res) => {
     req.params.id
   );
 
-  const updated = db.prepare(`SELECT p.*, pr.name as provider_name, pr.commission_rate as provider_commission_rate
+  const updated = db.prepare(`SELECT p.*, pr.name as provider_name, pr.commission_rate as provider_commission_rate, pr.commission_currency as provider_commission_currency
     FROM products p LEFT JOIN providers pr ON pr.id = p.provider_id
     WHERE p.id = ?`).get(req.params.id);
   res.json(normalizeProduct(updated));
@@ -123,7 +125,11 @@ router.patch('/:id/visibility', (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Producto no encontrado' });
 
   const newValue = existing.catalog_visible ? 0 : 1;
-  db.prepare('UPDATE products SET catalog_visible = ?, updated_at = datetime(\'now\') WHERE id = ?').run(newValue, req.params.id);
+  if (newValue === 0) {
+    db.prepare('UPDATE products SET catalog_visible = 0, stock = 0, updated_at = datetime(\'now\') WHERE id = ?').run(req.params.id);
+  } else {
+    db.prepare('UPDATE products SET catalog_visible = 1, updated_at = datetime(\'now\') WHERE id = ?').run(req.params.id);
+  }
   res.json({ id: req.params.id, catalog_visible: newValue });
 });
 

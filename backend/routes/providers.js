@@ -31,17 +31,17 @@ router.get('/:id', (req, res) => {
 
 router.post('/', (req, res) => {
   const db = getDB();
-  const { name, contact, phone, email, info, notes } = req.body;
+  const { name, contact, phone, email, info, notes, commission_currency } = req.body;
 
   if (!name) return res.status(400).json({ error: 'Nombre del proveedor es obligatorio' });
 
   const id = uuid();
-  const provider = { id, name, contact: contact || '', phone: phone || '', email: email || '', info: info || '', notes: notes || '' };
+  const provider = { id, name, contact: contact || '', phone: phone || '', email: email || '', info: info || '', notes: notes || '', commission_currency: commission_currency || 'USD' };
 
-  db.prepare(`INSERT INTO providers (id, name, contact, phone, email, info, notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+  db.prepare(`INSERT INTO providers (id, name, contact, phone, email, info, notes, commission_currency)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
     provider.id, provider.name, provider.contact, provider.phone,
-    provider.email, provider.info, provider.notes
+    provider.email, provider.info, provider.notes, provider.commission_currency
   );
 
   res.status(201).json(provider);
@@ -52,14 +52,15 @@ router.put('/:id', (req, res) => {
   const existing = db.prepare('SELECT id FROM providers WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Proveedor no encontrado' });
 
-  const { name, contact, phone, email, info, notes } = req.body;
+  const { name, contact, phone, email, info, notes, commission_currency } = req.body;
 
   db.prepare(`UPDATE providers SET
     name = COALESCE(?, name), contact = COALESCE(?, contact),
     phone = COALESCE(?, phone), email = COALESCE(?, email),
     info = COALESCE(?, info),
-    notes = COALESCE(?, notes), updated_at = datetime('now')
-    WHERE id = ?`).run(name, contact, phone, email, info, notes, req.params.id);
+    notes = COALESCE(?, notes), commission_currency = COALESCE(?, commission_currency),
+    updated_at = datetime('now')
+    WHERE id = ?`).run(name, contact, phone, email, info, notes, commission_currency, req.params.id);
 
   const updated = db.prepare('SELECT * FROM providers WHERE id = ?').get(req.params.id);
   res.json(updated);

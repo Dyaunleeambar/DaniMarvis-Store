@@ -273,7 +273,9 @@ app.get('/api/dashboard', (req, res) => {
       (SELECT COUNT(*) FROM sales) as total_sales,
       (SELECT COALESCE(SUM(total_amount), 0) FROM sales) as total_revenue,
       (SELECT COALESCE(SUM(commission_amount), 0) FROM sales WHERE commission_paid = 0) as pending_commissions,
-      (SELECT COALESCE(SUM(commission_amount), 0) FROM sales) as total_commissions
+      (SELECT COALESCE(SUM(commission_amount), 0) FROM sales) as total_commissions,
+      (SELECT COALESCE(SUM(commission_amount), 0) FROM sales WHERE commission_paid = 0 AND (commission_currency = 'USD' OR commission_currency IS NULL)) as pending_commissions_usd,
+      (SELECT COALESCE(SUM(commission_amount), 0) FROM sales WHERE commission_paid = 0 AND commission_currency = 'MN') as pending_commissions_mn
   `).get();
 
   const monthlySales = db.prepare(`

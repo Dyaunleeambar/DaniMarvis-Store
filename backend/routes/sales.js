@@ -69,6 +69,7 @@ router.post('/', (req, res) => {
     client_address: client_address || '',
     quantity: qty, unit_price: unitPrice, total_amount: total,
     commission_amount: commissionAmount, commission_paid: 0,
+    commission_currency: product.commission_currency || 'USD',
     exchange_rate: settings.exchange_rate,
     delivery_method: delivery_method || '', delivery_status: delivery_status || 'pending',
     notes: notes || '', sale_date: sale_date || new Date().toISOString()
@@ -76,12 +77,12 @@ router.post('/', (req, res) => {
 
   db.prepare(`INSERT INTO sales (id, product_id, provider_id, client_name, client_phone,
     client_address, quantity, unit_price, total_amount, commission_amount,
-    commission_paid, exchange_rate, delivery_method, delivery_status, notes, sale_date)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    commission_paid, commission_currency, exchange_rate, delivery_method, delivery_status, notes, sale_date)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     sale.id, sale.product_id, sale.provider_id, sale.client_name,
     sale.client_phone, sale.client_address, sale.quantity, sale.unit_price,
     sale.total_amount, sale.commission_amount, sale.commission_paid,
-    sale.exchange_rate,
+    sale.commission_currency, sale.exchange_rate,
     sale.delivery_method, sale.delivery_status, sale.notes, sale.sale_date
   );
 
@@ -110,6 +111,7 @@ router.put('/:id', (req, res) => {
     quantity = ?, unit_price = ?,
     total_amount = ?,
     commission_amount = ?,
+    commission_currency = COALESCE(?, commission_currency),
     commission_paid = COALESCE(?, commission_paid),
     delivery_method = COALESCE(?, delivery_method),
     delivery_status = COALESCE(?, delivery_status),
@@ -118,6 +120,7 @@ router.put('/:id', (req, res) => {
     WHERE id = ?`).run(
     client_name, client_phone, client_address,
     quantity, unit_price, total_amount, commission_amount,
+    product ? product.commission_currency : null,
     commission_paid, delivery_method,
     delivery_status, notes, sale_date,
     req.params.id

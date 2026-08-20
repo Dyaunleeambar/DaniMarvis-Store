@@ -6,7 +6,7 @@ const FIELD_LABELS = {
   stock: 'Stock',
   description: 'Descripción',
   warranty: 'Garantía',
-  commission_value: 'Comisión (USD)',
+  commission_value: 'Comisión',
   catalog_visible: 'Estado',
 };
 
@@ -33,7 +33,12 @@ function sanitize(text) {
 function formatRow(product, fields) {
   return fields.map(f => {
     const val = product[f];
-    if (f === 'price' || f === 'commission_value') return val ? `$${Number(val).toFixed(2)}` : '-';
+    if (f === 'price') return val ? `$${Number(val).toFixed(2)}` : '-';
+    if (f === 'commission_value') {
+      if (!val) return '-';
+      const currency = product.commission_currency || 'USD';
+      return currency === 'MN' ? `$${Number(val).toFixed(0)} MN` : `$${Number(val).toFixed(2)}`;
+    }
     if (f === 'catalog_visible') return val ? 'Visible' : 'Oculto';
     return sanitize(val || '-');
   });

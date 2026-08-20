@@ -206,7 +206,7 @@ function drawClasica(ctx, product, opts, bgImg, productImg) {
   ctx.fillStyle = WHITE;
   ctx.font = 'bold 24px "Inter", "Arial", sans-serif';
   const commText = product.commission_value > 0
-    ? `Comisión: ${formatPrice(product.commission_value)}`
+    ? `Comisión: ${formatPrice(product.commission_value)}${product.commission_currency === 'MN' ? ' MN' : ''}`
     : 'Sin comisión';
   ctx.fillText(commText, CANVAS_SIZE / 2 - 110, y + 34);
 

@@ -1,6 +1,6 @@
 import { api } from '../db/api.js';
 import { fetchProducts, invalidateProductsCache } from '../services/index.js';
-import { formatUSD, debounce, generateId } from '../utils/utils.js';
+import { formatUSD, formatCommission, debounce, generateId } from '../utils/utils.js';
 import { openModal, closeModal, setModalCloseGuard, showToast, confirmDialog, refreshSidebarCounts } from '../core/app.js';
 
 let currentContainer = null;
@@ -127,7 +127,7 @@ function renderTable(container, products, providers) {
                     </td>
                     <td><span style="font-size:.82rem">${p.category || '—'}</span></td>
                     <td class="amount">${formatUSD(p.price)}</td>
-                    <td><span style="font-size:.82rem">${p.commission_value > 0 ? formatUSD(p.commission_value) : '—'}</span></td>
+                    <td><span style="font-size:.82rem">${formatCommission(p.commission_value, p.commission_currency || 'USD')}</span></td>
                     <td><span style="font-size:.82rem">${p.provider_name || '—'}</span></td>
                     <td><span style="font-size:.82rem">${p.stock}</span></td>
                     <td><span style="font-size:.82rem">${p.warranty || 'no tiene'}</span></td>
@@ -240,11 +240,20 @@ export async function openProductForm(product, options = {}) {
           ✨ Generar descripción con IA
         </button>
       </div>
-      <div class="form-group">
-        <label>Comisión (USD) — valor fijo por unidad</label>
-        <input type="number" name="commission_value" class="form-control" value="${product?.commission_value || 0}" min="0" step="any" />
-        <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:2px">Monto fijo en USD que gana el vendedor por cada unidad vendida</small>
+      <div class="form-row">
+        <div class="form-group" style="flex:2">
+          <label>Comisión — valor fijo por unidad</label>
+          <input type="number" name="commission_value" class="form-control" value="${product?.commission_value || 0}" min="0" step="any" />
+        </div>
+        <div class="form-group" style="flex:1">
+          <label>Moneda</label>
+          <select name="commission_currency" class="form-control" id="product-commission-currency">
+            <option value="USD" ${(product?.commission_currency || currentProviders.find(pr => pr.id === (product?.provider_id || presetProviderId))?.commission_currency || 'USD') === 'USD' ? 'selected' : ''}>USD</option>
+            <option value="MN" ${(product?.commission_currency || currentProviders.find(pr => pr.id === (product?.provider_id || presetProviderId))?.commission_currency || 'USD') === 'MN' ? 'selected' : ''}>MN</option>
+          </select>
+        </div>
       </div>
+      <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:-8px;margin-bottom:12px">Moneda en la que el proveedor paga la comisión. Se hereda del proveedor al crear el producto.</small>
       <div class="form-row">
         <div class="form-group">
           <label>Proveedor</label>
@@ -329,6 +338,20 @@ export async function openProductForm(product, options = {}) {
       danger: true,
     });
   });
+
+  // Inherit commission currency from provider when provider changes
+  const providerSelectForm = form.querySelector('[name="provider_id"]');
+  const currencySelect = document.getElementById('product-commission-currency');
+  if (providerSelectForm && currencySelect) {
+    providerSelectForm.addEventListener('change', () => {
+      if (product) return;
+      const provId = providerSelectForm.value;
+      const prov = currentProviders.find(pr => pr.id === provId);
+      if (prov && prov.commission_currency) {
+        currencySelect.value = prov.commission_currency;
+      }
+    });
+  }
 
   const productImages = [...initialImages];
   const thumbsContainer = document.getElementById('product-images-thumbs');
@@ -600,7 +623,7 @@ window._viewProduct = async function(id) {
           ${p.description ? `<div class="detail-row detail-row--col"><span class="detail-label">Descripción</span><div class="detail-text">${formatDescription(p.description)}</div></div>` : ''}
           <div class="detail-row">
             <span class="detail-label">Comisión</span>
-            <span class="detail-value">${p.commission_value > 0 ? formatUSD(p.commission_value) + ' / ud.' : '—'}</span>
+            <span class="detail-value">${p.commission_value > 0 ? formatCommission(p.commission_value, p.commission_currency || 'USD') + ' / ud.' : '—'}</span>
           </div>
           <div class="detail-row">
             <span class="detail-label">Stock</span>

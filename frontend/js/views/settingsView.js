@@ -57,8 +57,8 @@ function renderPage(container, settings, categories) {
           <h3 style="margin:0 0 12px">Info</h3>
           <ul style="font-size:.85rem;color:var(--text-secondary);line-height:1.8;padding-left:16px;margin:0">
             <li>Los precios de productos se ingresan en <strong>USD</strong></li>
-            <li>Las comisiones son valores <strong>fijos en USD</strong> por producto</li>
-            <li>En ventas, el total y comisión se muestran en USD + MN</li>
+            <li>Las comisiones pueden ser en <strong>USD</strong> o <strong>MN</strong> según el proveedor</li>
+            <li>En ventas, el total se muestra en USD + MN</li>
             <li>Al renombrar una categoría, los productos asociados se actualizan automáticamente</li>
           </ul>
         </div>

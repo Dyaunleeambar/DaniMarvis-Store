@@ -11,6 +11,14 @@ export function formatCurrency(n) {
   return formatUSD(n);
 }
 
+export function formatCommission(amount, currency) {
+  if (!amount || amount <= 0) return '—';
+  if (currency === 'MN') {
+    return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
+  }
+  return formatUSD(amount);
+}
+
 export function formatDate(dateStr) {
   if (!dateStr) return '—';
   return new Date(dateStr).toLocaleDateString('es-CO', { year: 'numeric', month: 'short', day: 'numeric' });
