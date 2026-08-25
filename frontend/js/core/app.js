@@ -45,11 +45,12 @@ export function setModalCloseGuard(guard) {
   modalCloseGuard = guard;
 }
 
-export function openModal(html) {
+export function openModal(html, className) {
   modalCloseGuard = null;
   hideConfirmDialog();
   modalContent.style.maxWidth = '';
   modalContent.style.maxHeight = '';
+  modalContent.className = className || 'modal-content';
   modalContent.innerHTML = html;
   overlay.classList.remove('hidden');
 }

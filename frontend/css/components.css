@@ -274,6 +274,39 @@ tr:hover td { background: rgba(201,132,122,.03); }
   padding: 24px;
   animation: modalIn .2s ease;
 }
+.modal-content--wide {
+  max-width: 960px;
+}
+.product-form-split {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 24px;
+}
+.product-form-preview {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.product-form-preview img {
+  width: 100%;
+  border-radius: var(--radius);
+  object-fit: cover;
+  max-height: 420px;
+  background: var(--bg);
+}
+.product-form-preview .preview-label {
+  font-size: .78rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+@media (max-width: 768px) {
+  .modal-content--wide { max-width: 100%; }
+  .product-form-split { grid-template-columns: 1fr; }
+  .product-form-preview { position: static; }
+  .product-form-preview img { max-height: 240px; }
+}
 
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes modalIn {

@@ -8,6 +8,10 @@ function escHtml(str) {
   return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+function sanitizeFolderName(name) {
+  return String(name || '').replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, '_').replace(/_+/g, '_').replace(/^_|$/g, '');
+}
+
 export async function render(container) {
   currentContainer = container;
   container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-secondary)">Cargando proveedores...</div>';
@@ -45,13 +49,14 @@ function renderTable(container, providers) {
                 <th>Email</th>
                 <th>Info</th>
                 <th>Moneda</th>
+                <th>Carpeta</th>
                 <th>Productos</th>
                 <th style="width:80px"></th>
               </tr>
             </thead>
             <tbody>
               ${providers.length === 0
-                ? `<tr><td colspan="8"><div class="empty-state" style="padding:32px"><h3>No hay proveedores</h3><p>Registra tu primer proveedor</p></div></td></tr>`
+                ? `<tr><td colspan="9"><div class="empty-state" style="padding:32px"><h3>No hay proveedores</h3><p>Registra tu primer proveedor</p></div></td></tr>`
                 : providers.map(p => `
                   <tr>
                     <td><span style="font-weight:600">${p.name}</span></td>
@@ -60,6 +65,7 @@ function renderTable(container, providers) {
                     <td>${p.email || '—'}</td>
                     <td style="max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.info ? escHtml(p.info) : '—'}</td>
                     <td><span class="badge badge--${(p.commission_currency || 'USD') === 'USD' ? 'active' : 'unpaid'}">${p.commission_currency || 'USD'}</span></td>
+                    <td><span style="font-size:.75rem;color:var(--text-muted);font-family:monospace">${sanitizeFolderName(p.name)}/</span></td>
                     <td><span class="badge badge--${p.product_count > 0 ? 'active' : 'archived'}">${p.product_count}</span></td>
                     <td>
                       <div class="actions-cell">

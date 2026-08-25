@@ -1,6 +1,6 @@
 import { api } from '../db/api.js';
 import { fetchProducts, invalidateProductsCache } from '../services/index.js';
-import { formatUSD, formatCommission, debounce, generateId } from '../utils/utils.js';
+import { formatUSD, formatCommission, debounce } from '../utils/utils.js';
 import { openModal, closeModal, setModalCloseGuard, showToast, confirmDialog, refreshSidebarCounts } from '../core/app.js';
 
 let currentContainer = null;
@@ -17,6 +17,7 @@ function categoryOptions(selected = '') {
 
 function filterProducts(products, filter) {
   return products.filter(p => {
+    if (filter.provider && p.provider_id !== filter.provider) return false;
     if (filter.category && p.category !== filter.category) return false;
     if (filter.catalog_visible !== undefined && filter.catalog_visible !== '' && String(p.catalog_visible) !== String(filter.catalog_visible)) return false;
     if (filter.q) {
@@ -30,7 +31,7 @@ function filterProducts(products, filter) {
 }
 
 function hasActiveFilter(filter) {
-  return !!(filter.q || filter.category || (filter.catalog_visible !== undefined && filter.catalog_visible !== ''));
+  return !!(filter.q || filter.provider || filter.category || (filter.catalog_visible !== undefined && filter.catalog_visible !== ''));
 }
 
 function escHtml(str) {
@@ -79,6 +80,10 @@ function renderTable(container, products, providers) {
 
       <div class="filter-bar">
         <input type="text" id="filter-search" class="form-control" placeholder="Buscar producto..." value="${escAttr(currentFilter.q)}" />
+        <select id="filter-provider" class="form-control form-control--small">
+          <option value="">Todos los proveedores</option>
+          ${currentProviders.map(pr => `<option value="${escAttr(pr.id)}" ${currentFilter.provider === pr.id ? 'selected' : ''}>${escAttr(pr.name)}</option>`).join('')}
+        </select>
         <select id="filter-category" class="form-control form-control--small">
           <option value="">Todas las categorías</option>
           ${categoryOptions(currentFilter.category)}
@@ -162,6 +167,7 @@ function renderTable(container, products, providers) {
 
   // Search/filter
   const searchInput = document.getElementById('filter-search');
+  const providerSelect = document.getElementById('filter-provider');
   const catSelect = document.getElementById('filter-category');
   const statusSelect = document.getElementById('filter-status');
 
@@ -171,6 +177,7 @@ function renderTable(container, products, providers) {
 
     currentFilter = {};
     if (searchInput.value.trim()) currentFilter.q = searchInput.value.trim();
+    if (providerSelect.value) currentFilter.provider = providerSelect.value;
     if (catSelect.value) currentFilter.category = catSelect.value;
     if (statusSelect.value) currentFilter.catalog_visible = statusSelect.value;
     renderTable(currentContainer, filterProducts(allProducts, currentFilter), currentProviders);
@@ -183,6 +190,7 @@ function renderTable(container, products, providers) {
   });
 
   searchInput.addEventListener('input', applyFilters);
+  providerSelect.addEventListener('change', applyFilters);
   catSelect.addEventListener('change', applyFilters);
   statusSelect.addEventListener('change', applyFilters);
 }
@@ -205,15 +213,19 @@ export async function openProductForm(product, options = {}) {
   const presetProviderId = options.providerId;
   const presetCatalogVisible = options.catalogVisible;
   const presetImages = Array.isArray(options.images) ? [...options.images] : [];
+  const previewImage = options.previewImage || '';
   const onCreated = options.onCreated;
   const initialImages = product?.images ? [...product.images] : presetImages;
-  openModal(`
-    <div class="modal-header">
-      <h2>${product ? 'Editar producto' : 'Nuevo producto'}</h2>
-      <button class="modal-close" onclick="closeModal()">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-    </div>
+  const wideModal = !!previewImage;
+  const modalClass = wideModal ? 'modal-content modal-content--wide' : 'modal-content';
+
+  const previewHtml = previewImage ? `
+    <div class="product-form-preview">
+      <img src="${escAttr(previewImage)}" alt="Vista previa del producto" id="product-form-preview-img" style="cursor:zoom-in" title="Clic para ampliar" />
+      <div class="preview-label">Imagen detectada por OCR</div>
+    </div>` : '';
+
+  const formHtml = `
     <form id="product-form">
       <input type="hidden" name="id" value="${product?.id || ''}" />
       <div class="form-group">
@@ -324,8 +336,21 @@ export async function openProductForm(product, options = {}) {
         <button type="button" class="btn btn--secondary" onclick="closeModal()">Cancelar</button>
         <button type="submit" class="btn btn--primary">${product ? 'Guardar cambios' : 'Crear producto'}</button>
       </div>
-    </form>
-  `);
+    </form>`;
+
+  const modalBody = wideModal
+    ? `<div class="product-form-split">${previewHtml}<div>${formHtml}</div></div>`
+    : formHtml;
+
+  openModal(`
+    <div class="modal-header">
+      <h2>${product ? 'Editar producto' : 'Nuevo producto'}</h2>
+      <button class="modal-close" onclick="closeModal()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    ${modalBody}
+  `, modalClass);
 
   const form = document.getElementById('product-form');
   const initialSnapshot = snapshotForm(form);
@@ -338,6 +363,14 @@ export async function openProductForm(product, options = {}) {
       danger: true,
     });
   });
+
+  // Preview image zoom
+  const previewImg = document.getElementById('product-form-preview-img');
+  if (previewImg) {
+    previewImg.addEventListener('click', () => {
+      window._openLightbox([previewImg.src], 0);
+    });
+  }
 
   // Inherit commission currency from provider when provider changes
   const providerSelectForm = form.querySelector('[name="provider_id"]');
@@ -543,19 +576,19 @@ export async function openProductForm(product, options = {}) {
     data.catalog_visible = catalogCb && catalogCb.checked ? 1 : 0;
 
     try {
+      let createdProduct;
       if (product) {
         await api.updateProduct(product.id, data);
         showToast('Producto actualizado', 'success');
       } else {
-        data.id = generateId();
-        await api.createProduct(data);
+        createdProduct = await api.createProduct(data);
         showToast('Producto creado', 'success');
       }
       await invalidateProductsCache();
       closeModal(true);
       refreshSidebarCounts();
       if (onCreated) {
-        await onCreated(data.id, data.name);
+        await onCreated(createdProduct?.id || data.id, data.name);
       } else {
         render(currentContainer);
       }

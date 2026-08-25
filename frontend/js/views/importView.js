@@ -24,7 +24,14 @@ function updateEyeIcon(btn, card) {
 
 const FOLDER_KEY = 'danimarvis_import_folder';
 const PROVIDER_KEY = 'danimarvis_import_provider';
-const DEFAULT_FOLDER = 'D:\\Proyectos\\DaniMarvisStore\\prueba-precios.png';
+
+function sanitizeFolderName(name) {
+  return String(name || '').replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, '_').replace(/_+/g, '_').replace(/^_|$/g, '');
+}
+
+function getProviderFolder(providerName) {
+  return `D:\\Proyectos\\DaniMarvisStore\\precios-importacion\\${sanitizeFolderName(providerName)}`;
+}
 
 export async function renderImport(container) {
   container.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-secondary)">Cargando...</div>';
@@ -37,8 +44,9 @@ export async function renderImport(container) {
 }
 
 function renderForm(container, providers) {
-  const folder = localStorage.getItem(FOLDER_KEY) || DEFAULT_FOLDER;
   let providerId = localStorage.getItem(PROVIDER_KEY) || providers[0]?.id || '';
+  const selectedProvider = providers.find(p => p.id === providerId);
+  const folder = localStorage.getItem(FOLDER_KEY) || (selectedProvider ? getProviderFolder(selectedProvider.name) : '');
   let analyzeResult = null;
   let busy = false;
 
@@ -83,6 +91,11 @@ function renderForm(container, providers) {
   document.getElementById('imp-provider').addEventListener('change', (e) => {
     providerId = e.target.value;
     localStorage.setItem(PROVIDER_KEY, providerId);
+    const prov = providers.find(p => p.id === providerId);
+    if (prov) {
+      const folderInput = document.getElementById('imp-folder');
+      folderInput.value = getProviderFolder(prov.name);
+    }
   });
 
   document.getElementById('imp-analyze').addEventListener('click', async () => {
@@ -227,6 +240,7 @@ function renderResults(container, data) {
         await openProductForm(null, {
           providerId,
           images: it.url ? [it.url] : [],
+          previewImage: it.url || '',
           catalogVisible: card.dataset.visible !== '0',
           name: suggestName(it.text),
           price: price || undefined,
