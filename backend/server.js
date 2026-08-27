@@ -17,6 +17,8 @@ import importImagesRouter from './routes/images.js';
 import importRouter from './routes/import.js';
 import pubQueueRouter from './routes/pubQueue.js';
 import promptEngineRouter from './routes/promptEngine.js';
+import providerStylesRouter from './routes/providerStyles.js';
+import warrantyRulesRouter from './routes/warrantyRules.js';
 import { generateCatalogFile } from './lib/catalogGenerator.js';
 import { ensureWebp } from './lib/imageUtils.js';
 import { createBackup } from './scripts/backup.js';
@@ -82,6 +84,8 @@ app.use('/api/images', importImagesRouter);
 app.use('/api/import', importRouter);
 app.use('/api/pub-queue', pubQueueRouter);
 app.use('/api/prompt-engine', promptEngineRouter);
+app.use('/api/provider-styles', providerStylesRouter);
+app.use('/api/warranty-rules', warrantyRulesRouter);
 
 app.post('/api/upload', (req, res) => {
   upload.single('image')(req, res, async (err) => {

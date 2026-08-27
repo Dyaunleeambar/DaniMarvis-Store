@@ -159,6 +159,13 @@ function categoryOptions(selected = '') {
   ).join('');
 }
 
+function providerOptions(selected = '') {
+  const providers = [...new Map(allProducts.filter(p => p.provider_id).map(p => [p.provider_id, { id: p.provider_id, name: p.provider_name }])).values()].sort((a, b) => a.name.localeCompare(b.name));
+  return providers.map(p =>
+    `<option value="${escAttr(p.id)}" ${selected === p.id ? 'selected' : ''}>${escHtml(p.name)}</option>`
+  ).join('');
+}
+
 window._openPublicationForm = function(pub) {
   const isEdit = !!pub;
   const productOptions = allProducts.map(pr =>
@@ -183,7 +190,16 @@ window._openPublicationForm = function(pub) {
           <label>Producto asociado</label>
           <div style="display:flex;gap:8px;margin-bottom:6px">
             <input type="text" id="pub-product-search" class="form-control" placeholder="Buscar producto..." style="flex:1" />
-            <select id="pub-product-category" class="form-control form-control--small" style="max-width:200px">
+            <select id="pub-product-provider" class="form-control form-control--small" style="max-width:160px">
+              <option value="">Todos los proveedores</option>
+              ${providerOptions('')}
+            </select>
+            <select id="pub-product-visibility" class="form-control form-control--small" style="max-width:150px">
+              <option value="">Todos</option>
+              <option value="1">Visibles</option>
+              <option value="0">Ocultos</option>
+            </select>
+            <select id="pub-product-category" class="form-control form-control--small" style="max-width:160px">
               <option value="">Todas las categorías</option>
               ${categoryOptions('')}
             </select>
@@ -258,14 +274,20 @@ window._openPublicationForm = function(pub) {
 
   const searchInput = document.getElementById('pub-product-search');
   const catSelect = document.getElementById('pub-product-category');
+  const providerSelect = document.getElementById('pub-product-provider');
+  const visibilitySelect = document.getElementById('pub-product-visibility');
   const productSelect = document.getElementById('pub-product-select');
 
   function renderProductSelect() {
     const q = searchInput.value.toLowerCase();
     const cat = catSelect.value;
+    const prov = providerSelect.value;
+    const vis = visibilitySelect.value;
     const currentVal = productSelect.value;
     const filtered = allProducts.filter(p => {
       if (cat && p.category !== cat) return false;
+      if (prov && p.provider_id !== prov) return false;
+      if (vis !== '' && String(p.catalog_visible) !== vis) return false;
       if (q && !p.name.toLowerCase().includes(q)) return false;
       return true;
     });
@@ -278,6 +300,8 @@ window._openPublicationForm = function(pub) {
   const debouncedRender = debounce(renderProductSelect, 200);
   searchInput.addEventListener('input', debouncedRender);
   catSelect.addEventListener('change', renderProductSelect);
+  providerSelect.addEventListener('change', renderProductSelect);
+  visibilitySelect.addEventListener('change', renderProductSelect);
 
   function renderThumbs() {
     thumbsContainer.innerHTML = pubImages.map((url, i) =>

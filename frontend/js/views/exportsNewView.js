@@ -28,23 +28,25 @@ export async function renderNew(container, onDone) {
   container.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-secondary)">Cargando productos...</div>';
 
   try {
-    const products = await api.getProducts();
+    const [products, providers] = await Promise.all([api.getProducts(), api.getProviders()]);
     const config = loadConfig();
-    renderForm(container, products, config, onDone);
+    renderForm(container, products, providers, config, onDone);
   } catch (err) {
     container.innerHTML = `<div class="empty-state"><h3>Error</h3><p>${err.message}</p></div>`;
   }
 }
 
-function renderForm(container, products, config, onDone) {
+function renderForm(container, products, providers, config, onDone) {
   const selectedIds = new Set(products.map(p => p.id));
   const selectedFields = new Set(config.fields);
   let filterQ = '';
   let filterCat = '';
+  let filterProvider = '';
 
   function getFiltered() {
     return products.filter(p => {
       if (filterCat && p.category !== filterCat) return false;
+      if (filterProvider && p.provider_id !== filterProvider) return false;
       if (filterQ) {
         const q = filterQ.toLowerCase();
         if (!p.name.toLowerCase().includes(q) && !(p.description || '').toLowerCase().includes(q)) return false;
@@ -81,6 +83,7 @@ function renderForm(container, products, config, onDone) {
       <label style="display:flex;align-items:center;gap:10px;padding:8px;border-radius:6px;cursor:pointer;font-size:.85rem;${selectedIds.has(p.id) ? 'background:var(--bg)' : ''}">
         <input type="checkbox" class="export-product-cb" value="${p.id}" ${selectedIds.has(p.id) ? 'checked' : ''} />
         <span style="flex:1">${escHtml(p.name)}</span>
+        <span style="color:var(--text-muted);font-size:.78rem">${escHtml(p.provider_name || '—')}</span>
         <span style="color:var(--text-muted);font-size:.78rem">${p.category || '—'}</span>
         <span style="font-weight:600;font-size:.82rem">${formatUSD(p.price)}</span>
       </label>
@@ -98,6 +101,10 @@ function renderForm(container, products, config, onDone) {
         <h3 style="margin:0 0 12px;font-size:1rem">Filtrar productos</h3>
         <div style="display:flex;gap:8px;margin-bottom:16px">
           <input type="text" id="export-search" class="form-control" placeholder="Buscar producto..." style="flex:1" />
+          <select id="export-provider" class="form-control form-control--small" style="max-width:200px">
+            <option value="">Todos los proveedores</option>
+            ${providers.map(p => `<option value="${escHtml(p.id)}">${escHtml(p.name)}</option>`).join('')}
+          </select>
           <select id="export-category" class="form-control form-control--small" style="max-width:200px">
             <option value="">Todas las categorías</option>
             ${categoryOptions(products)}
@@ -152,6 +159,11 @@ function renderForm(container, products, config, onDone) {
 
   document.getElementById('export-category').addEventListener('change', (e) => {
     filterCat = e.target.value;
+    renderProductList();
+  });
+
+  document.getElementById('export-provider').addEventListener('change', (e) => {
+    filterProvider = e.target.value;
     renderProductList();
   });
 

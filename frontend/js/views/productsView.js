@@ -386,6 +386,36 @@ export async function openProductForm(product, options = {}) {
     });
   }
 
+  // Auto-fill warranty from provider rules
+  const warrantyInput = form.querySelector('[name="warranty"]');
+  let warrantyAutoFilled = false;
+  let warrantyTimer = null;
+  async function matchWarranty() {
+    if (!warrantyInput || product) return;
+    const provId = providerSelectForm?.value;
+    const nameInput = form.querySelector('[name="name"]');
+    const productName = nameInput?.value?.trim();
+    if (!provId || !productName || productName.length < 3) return;
+    if (warrantyInput.value.trim() && !warrantyAutoFilled) return;
+    try {
+      const result = await api.matchWarranty({ provider_id: provId, product_name: productName });
+      if (result.warranty) {
+        warrantyInput.value = result.warranty;
+        warrantyAutoFilled = true;
+      }
+    } catch {}
+  }
+  if (providerSelectForm) {
+    providerSelectForm.addEventListener('change', () => { warrantyAutoFilled = false; matchWarranty(); });
+  }
+  const nameInput = form.querySelector('[name="name"]');
+  if (nameInput) {
+    nameInput.addEventListener('input', () => {
+      clearTimeout(warrantyTimer);
+      warrantyTimer = setTimeout(matchWarranty, 400);
+    });
+  }
+
   const productImages = [...initialImages];
   const thumbsContainer = document.getElementById('product-images-thumbs');
   const fileInput = document.getElementById('product-image-file');

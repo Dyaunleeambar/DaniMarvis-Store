@@ -9,18 +9,19 @@ export async function render(container) {
   container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-secondary)">Cargando configuración...</div>';
 
   try {
-    const [settings, categories] = await Promise.all([
+    const [settings, categories, providerStyles] = await Promise.all([
       api.getSettings(),
       api.getCategories(),
+      api.getProviderStyles(),
     ]);
     currentSettings = settings;
-    renderPage(container, settings, categories);
+    renderPage(container, settings, categories, providerStyles);
   } catch (err) {
     container.innerHTML = `<div class="empty-state"><h3>Error</h3><p>${err.message}</p></div>`;
   }
 }
 
-function renderPage(container, settings, categories) {
+function renderPage(container, settings, categories, providerStyles) {
   const pc = settings.publish_config || {};
   const template = pc.template || '';
   const ai = pc.ai || {};
@@ -189,6 +190,65 @@ function renderPage(container, settings, categories) {
             </div>`
         }
       </div>
+
+      <div class="card" style="margin-top:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px">
+          <div>
+            <h3 style="margin:0">Estilos de Proveedor</h3>
+            <p style="margin:4px 0 0;font-size:.82rem;color:var(--text-secondary)">Perfiles visuales que usa el motor de prompts al generar anuncios. Asigná un estilo a cada proveedor desde la sección de Proveedores.</p>
+          </div>
+          <button type="button" class="btn btn--primary btn--sm" id="btn-add-style">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Nuevo estilo
+          </button>
+        </div>
+        ${providerStyles.length === 0
+          ? '<div class="empty-state" style="padding:24px"><p>No hay estilos configurados.</p></div>'
+          : `<div style="display:flex;flex-direction:column;gap:12px">
+              ${providerStyles.map(s => {
+                const palette = typeof s.palette === 'object' ? s.palette : {};
+                return `
+                <details style="border:1px solid var(--border);border-radius:8px;padding:0">
+                  <summary style="cursor:pointer;padding:12px 16px;font-weight:600;display:flex;align-items:center;gap:10px">
+                    <span class="badge badge--active">${escHtml(s.code)}</span>
+                    <span>${escHtml(s.name)}</span>
+                    <span style="font-size:.78rem;color:var(--text-muted);margin-left:auto">${escHtml(s.style_name)}</span>
+                  </summary>
+                  <div style="padding:0 16px 16px;display:flex;flex-direction:column;gap:10px">
+                    <div class="style-palette-section" data-code="${s.code}">
+                      ${paletteBuilderHTML(palette)}
+                    </div>
+                    <div class="form-group" style="margin:0">
+                      <label style="font-size:.78rem">Reglas de fondo</label>
+                      <textarea class="form-control style-rule" data-code="${s.code}" data-field="background_rules" style="min-height:60px;font-size:.8rem">${escHtml(s.background_rules)}</textarea>
+                    </div>
+                    <div class="form-group" style="margin:0">
+                      <label style="font-size:.78rem">Reglas de acentos</label>
+                      <textarea class="form-control style-rule" data-code="${s.code}" data-field="accent_rules" style="min-height:60px;font-size:.8rem">${escHtml(s.accent_rules)}</textarea>
+                    </div>
+                    <div class="form-group" style="margin:0">
+                      <label style="font-size:.78rem">Reglas de firma</label>
+                      <textarea class="form-control style-rule" data-code="${s.code}" data-field="signature_rules" style="min-height:60px;font-size:.8rem">${escHtml(s.signature_rules)}</textarea>
+                    </div>
+                    <div class="form-group" style="margin:0">
+                      <label style="font-size:.78rem">Restricciones del perfil</label>
+                      <textarea class="form-control style-rule" data-code="${s.code}" data-field="negative_rules" style="min-height:60px;font-size:.8rem">${escHtml(s.negative_rules)}</textarea>
+                    </div>
+                    <div class="form-group" style="margin:0">
+                      <label style="font-size:.78rem">Envío gratis (texto del prompt)</label>
+                      <input type="text" class="form-control style-rule" data-code="${s.code}" data-field="shipping_rule" value="${escAttr(s.shipping_rule || '')}" placeholder="Envío: GRATIS a ..." />
+                      <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">Texto que aparece en el prompt generado. Si está vacío, usa el valor por defecto.</small>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center">
+                      <button type="button" class="btn btn--primary btn--sm btn-save-style" data-code="${s.code}">Guardar estilo</button>
+                      <button type="button" class="btn btn--sm btn--ghost btn-delete-style" data-code="${s.code}" data-name="${escAttr(s.name)}" style="color:var(--error);margin-left:auto">Eliminar</button>
+                    </div>
+                  </div>
+                </details>`;
+              }).join('')}
+            </div>`
+        }
+      </div>
     </div>
   `;
 
@@ -244,6 +304,53 @@ function renderPage(container, settings, categories) {
   });
   container.querySelectorAll('.btn-delete-category').forEach(btn => {
     btn.addEventListener('click', () => deleteCategory(btn.dataset.id, btn.dataset.name));
+  });
+
+  container.querySelectorAll('.btn-save-style').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const code = btn.dataset.code;
+      const fields = container.querySelectorAll(`.style-rule[data-code="${code}"]`);
+      const data = {};
+      fields.forEach(el => { data[el.dataset.field] = el.value; });
+      const paletteSection = container.querySelector(`.style-palette-section[data-code="${code}"]`);
+      if (paletteSection) {
+        const palette = {};
+        paletteSection.querySelectorAll('.palette-row').forEach(row => {
+          const label = row.querySelector('.palette-label').value.trim();
+          const hex = row.querySelector('.palette-color').value;
+          if (label) palette[label] = hex;
+        });
+        data.palette = palette;
+      }
+      try {
+        await api.updateProviderStyle(code, data);
+        showToast(`Estilo ${code} actualizado`, 'success');
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+  });
+
+  initPaletteBuilder();
+
+  document.getElementById('btn-add-style')?.addEventListener('click', () => openStyleForm());
+
+  container.querySelectorAll('.btn-delete-style').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const ok = await confirmDialog(`¿Eliminar el estilo "${btn.dataset.name}" (${btn.dataset.code})?`, {
+        title: 'Eliminar estilo',
+        danger: true,
+        confirmText: 'Eliminar'
+      });
+      if (!ok) return;
+      try {
+        await api.deleteProviderStyle(btn.dataset.code);
+        showToast('Estilo eliminado', 'success');
+        render(container);
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
   });
 }
 
@@ -319,6 +426,178 @@ async function deleteCategory(id, name) {
   } catch (err) {
     showToast(err.message, 'error');
   }
+}
+
+const BRAND_BASE_COLORS = [
+  { label: 'Navy', hex: '#08245A' },
+  { label: 'Deep Navy', hex: '#061633' },
+  { label: 'Naranja', hex: '#FF6A00' },
+  { label: 'Dorado', hex: '#D9A928' },
+  { label: 'Blanco', hex: '#FFFFFF' },
+];
+
+function paletteBuilderHTML(existingPalette = {}) {
+  const entries = Object.entries(existingPalette).filter(([k]) => k);
+  const rows = entries.length > 0 ? entries : [['', '#c9847a']];
+  return `
+    <div class="form-group">
+      <label>Paleta de colores</label>
+      <div style="margin-bottom:10px">
+        <div style="font-size:.75rem;color:var(--text-muted);margin-bottom:6px">Paleta base DaniMarvis (referencia):</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${BRAND_BASE_COLORS.map(c => `
+            <span title="${escHtml(c.label)}: ${c.hex}" style="display:inline-flex;align-items:center;gap:4px;font-size:.72rem;color:var(--text-muted);background:var(--bg);padding:3px 8px;border-radius:12px">
+              <span style="width:14px;height:14px;border-radius:50%;background:${c.hex};border:1px solid var(--border);display:inline-block;flex-shrink:0"></span>
+              ${c.hex}
+            </span>
+          `).join('')}
+        </div>
+      </div>
+      <div class="palette-rows" style="display:flex;flex-direction:column;gap:6px">
+        ${rows.map(([label, hex], i) => paletteRowHTML(label, hex, i)).join('')}
+      </div>
+      <button type="button" class="btn btn--sm btn--ghost palette-add-btn" style="margin-top:6px">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Agregar color
+      </button>
+      <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:4px">Colores específicos de este estilo. Se suman a la paleta base del BRAND_DNA.</small>
+    </div>
+  `;
+}
+
+function paletteRowHTML(label = '', hex = '#000000', idx = 0) {
+  return `
+    <div class="palette-row" style="display:flex;gap:6px;align-items:center">
+      <input type="text" class="form-control palette-label" placeholder="Nombre" value="${escAttr(label)}" style="flex:1;font-size:.82rem" />
+      <input type="color" class="palette-color" value="${hex}" style="width:36px;height:32px;padding:2px;border:1px solid var(--border);border-radius:4px;cursor:pointer;flex-shrink:0" />
+      <span class="palette-hex" style="font-size:.75rem;font-family:monospace;color:var(--text-muted);min-width:60px">${escHtml(hex)}</span>
+      <button type="button" class="btn btn--sm btn--ghost palette-remove" style="color:var(--error);padding:2px 4px;flex-shrink:0" title="Eliminar">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+  `;
+}
+
+function collectPalette() {
+  const palette = {};
+  document.querySelectorAll('.palette-row').forEach(row => {
+    const label = row.querySelector('.palette-label').value.trim();
+    const hex = row.querySelector('.palette-color').value;
+    if (label) palette[label] = hex;
+  });
+  return palette;
+}
+
+function initPaletteBuilder() {
+  if (window._paletteBuilderInit) return;
+  window._paletteBuilderInit = true;
+
+  document.addEventListener('input', (e) => {
+    if (e.target.classList.contains('palette-color')) {
+      const hex = e.target.value;
+      e.target.closest('.palette-row').querySelector('.palette-hex').textContent = hex;
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('.palette-remove')) {
+      const row = e.target.closest('.palette-row');
+      const parent = row.parentElement;
+      if (parent.querySelectorAll('.palette-row').length > 1) {
+        row.remove();
+      } else {
+        showToast('Debe haber al menos un color', 'warning');
+      }
+    }
+    if (e.target.closest('.palette-add-btn')) {
+      const rowsContainer = e.target.closest('.form-group').querySelector('.palette-rows');
+      if (rowsContainer) {
+        const idx = rowsContainer.querySelectorAll('.palette-row').length;
+        rowsContainer.insertAdjacentHTML('beforeend', paletteRowHTML('', '#000000', idx));
+      }
+    }
+  });
+}
+
+function openStyleForm() {
+  openModal(`
+    <div class="modal-header">
+      <h2>Nuevo estilo de proveedor</h2>
+      <button class="modal-close" onclick="closeModal()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <p style="font-size:.82rem;color:var(--text-secondary);margin:0 0 16px">
+      Creá un nuevo perfil visual para un proveedor. El ADN de la marca (paleta base, tipografía, personalidad) se mantiene siempre como base. Este estilo se superpone como variación visual.
+    </p>
+    <form id="style-form">
+      <div class="form-row" style="grid-template-columns:1fr 2fr">
+        <div class="form-group">
+          <label>Código del estilo *</label>
+          <input type="text" name="code" class="form-control" placeholder="Ej: NP" maxlength="5" required style="text-transform:uppercase;font-weight:700;font-family:monospace" />
+          <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">Identificador corto (máx. 5 caracteres)</small>
+        </div>
+        <div class="form-group">
+          <label>Nombre del estilo *</label>
+          <input type="text" name="name" class="form-control" placeholder="Ej: MiPime Nuevo Proveedor" required />
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Nombre interno (prompt) *</label>
+        <input type="text" name="style_name" class="form-control" placeholder="Ej: DANIMARVIS_CUSTOM" required style="font-family:monospace;font-size:.85rem" />
+        <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">Nombre que aparece en el prompt generado. Formato recomendado: DANIMARVIS_XXX</small>
+      </div>
+      ${paletteBuilderHTML({})}
+      <div class="form-group">
+        <label>Reglas de fondo</label>
+        <textarea name="background_rules" class="form-control" rows="3" placeholder="Describí cómo deben ser los fondos de los anuncios de este proveedor..."></textarea>
+      </div>
+      <div class="form-group">
+        <label>Reglas de acentos</label>
+        <textarea name="accent_rules" class="form-control" rows="3" placeholder="Describí cómo usar los colores de acento..."></textarea>
+      </div>
+      <div class="form-group">
+        <label>Reglas de firma visual</label>
+        <textarea name="signature_rules" class="form-control" rows="3" placeholder="Elementos visuales distintivos de este estilo..."></textarea>
+      </div>
+      <div class="form-group">
+        <label>Restricciones del perfil</label>
+        <textarea name="negative_rules" class="form-control" rows="3" placeholder="Qué NO hacer en los anuncios de este estilo..."></textarea>
+      </div>
+      <div class="form-group">
+        <label>Texto de envío</label>
+        <input type="text" name="shipping_rule" class="form-control" placeholder="Envío: GRATIS a ..." />
+        <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">Si está vacío, se usa el valor por defecto.</small>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn--secondary" onclick="closeModal()">Cancelar</button>
+        <button type="submit" class="btn btn--primary">Crear estilo</button>
+      </div>
+    </form>
+  `, 'modal-content--wide');
+
+  initPaletteBuilder();
+
+  document.getElementById('style-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(e.target));
+    data.code = data.code.trim().toUpperCase();
+    data.name = data.name.trim();
+    data.style_name = data.style_name.trim();
+    data.palette = collectPalette();
+    if (!data.code || !data.name || !data.style_name) {
+      showToast('Código, nombre y nombre de estilo son obligatorios', 'error');
+      return;
+    }
+    try {
+      await api.createProviderStyle(data);
+      showToast(`Estilo ${data.code} creado`, 'success');
+      closeModal(true);
+      render(currentContainer);
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
 }
 
 function snapshotForm(form) {

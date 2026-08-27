@@ -12,8 +12,10 @@ const PROMPT_KEY = 'danimarvis_images_prompt';
 const GENERATED_FOLDER_KEY = 'danimarvis_images_generated_folder';
 
 let promptFamilies = [];
+let promptFormats = [];
 let selFamily = '';
 let selVariant = '';
+let selFormat = '4:5';
 
 function loadConfig() {
   try {
@@ -44,18 +46,20 @@ export async function renderImages(container, onDone) {
   container.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-secondary)">Cargando productos...</div>';
 
   try {
-    const products = await api.getProducts();
-    renderForm(container, products, onDone);
+    const [products, providers] = await Promise.all([api.getProducts(), api.getProviders()]);
+    renderForm(container, products, providers, onDone);
   } catch (err) {
     container.innerHTML = `<div class="empty-state"><h3>Error</h3><p>${err.message}</p></div>`;
   }
 }
 
-function renderForm(container, products, onDone) {
+function renderForm(container, products, providers, onDone) {
   const config = loadConfig();
   const selectedIds = new Set(products.map(p => p.id));
   let filterQ = '';
   let filterCat = '';
+  let filterProvider = '';
+  let filterVisible = '';
   let previewProductId = products[0]?.id || '';
   let aiEnabled = !!localStorage.getItem('ai_bg');
   let aiBg = localStorage.getItem('ai_bg') || '';
@@ -67,6 +71,8 @@ function renderForm(container, products, onDone) {
   function getFiltered() {
     return products.filter(p => {
       if (filterCat && p.category !== filterCat) return false;
+      if (filterProvider && p.provider_id !== filterProvider) return false;
+      if (filterVisible !== '' && String(p.catalog_visible) !== filterVisible) return false;
       if (filterQ) {
         const q = filterQ.toLowerCase();
         if (!p.name.toLowerCase().includes(q) && !(p.description || '').toLowerCase().includes(q)) return false;
@@ -114,6 +120,7 @@ function renderForm(container, products, onDone) {
       <label style="display:flex;align-items:center;gap:10px;padding:8px;border-radius:6px;cursor:pointer;font-size:.85rem;${selectedIds.has(p.id) ? 'background:var(--bg)' : ''}">
         <input type="checkbox" class="img-product-cb" value="${p.id}" ${selectedIds.has(p.id) ? 'checked' : ''} />
         <span style="flex:1">${escHtml(p.name)}</span>
+        <span style="color:var(--text-muted);font-size:.78rem">${escHtml(p.provider_name || '—')}</span>
         <span style="color:var(--text-muted);font-size:.78rem">${escHtml(p.category || '—')}</span>
         <span style="font-weight:600;font-size:.82rem">${formatPrice(p.price)}</span>
         <button type="button" class="btn btn--sm btn--ghost img-gen-copy" data-id="${p.id}" title="Copiar prompt para generar el anuncio" style="padding:2px 6px;font-size:.85rem">📋</button>
@@ -215,7 +222,16 @@ function renderForm(container, products, onDone) {
             <h3 style="margin:0 0 12px;font-size:1rem">Filtrar productos</h3>
             <div style="display:flex;gap:8px;margin-bottom:16px">
               <input type="text" id="img-search" class="form-control" placeholder="Buscar producto..." style="flex:1" />
-              <select id="img-category" class="form-control form-control--small" style="max-width:200px">
+              <select id="img-provider" class="form-control form-control--small" style="max-width:160px">
+                <option value="">Todos los proveedores</option>
+                ${providers.map(p => `<option value="${escHtml(p.id)}">${escHtml(p.name)}</option>`).join('')}
+              </select>
+              <select id="img-visible" class="form-control form-control--small" style="max-width:110px">
+                <option value="">Todos</option>
+                <option value="1">Visibles</option>
+                <option value="0">Ocultos</option>
+              </select>
+              <select id="img-category" class="form-control form-control--small" style="max-width:160px">
                 <option value="">Todas las categorías</option>
                 ${categoryOptions(products)}
               </select>
@@ -309,6 +325,10 @@ function renderForm(container, products, onDone) {
                 <label style="font-size:.78rem;color:var(--text-secondary);display:block;margin-bottom:4px">Variante</label>
                 <select id="img-prompt-variant" class="form-control form-control--small" disabled></select>
               </div>
+              <div style="flex:1">
+                <label style="font-size:.78rem;color:var(--text-secondary);display:block;margin-bottom:4px">Formato</label>
+                <select id="img-prompt-format" class="form-control form-control--small"></select>
+              </div>
             </div>
             <details style="margin-bottom:12px">
               <summary style="cursor:pointer;font-size:.8rem;color:var(--text-secondary)">Ver / copiar prompt generado</summary>
@@ -363,6 +383,7 @@ function renderForm(container, products, onDone) {
   renderPreviewProductSelect();
   renderAiThumb();
   refreshPreview();
+  selFormat = localStorage.getItem('danimarvis_prompt_format') || '4:5';
   loadPromptFamilies();
 
   const debouncedSearch = debounce(() => {
@@ -374,6 +395,16 @@ function renderForm(container, products, onDone) {
 
   document.getElementById('img-category').addEventListener('change', (e) => {
     filterCat = e.target.value;
+    renderProductList();
+  });
+
+  document.getElementById('img-provider').addEventListener('change', (e) => {
+    filterProvider = e.target.value;
+    renderProductList();
+  });
+
+  document.getElementById('img-visible').addEventListener('change', (e) => {
+    filterVisible = e.target.value;
     renderProductList();
   });
 
@@ -499,6 +530,7 @@ function renderForm(container, products, onDone) {
         product_id: product.id,
         family: selFamily || undefined,
         variant: selVariant || undefined,
+        format: selFormat || '4:5',
       });
       setPromptPreview(data.prompt, data.meta);
       await copyText(data.prompt);
@@ -519,6 +551,11 @@ function renderForm(container, products, onDone) {
 
   document.getElementById('img-prompt-variant').addEventListener('change', (e) => {
     selVariant = e.target.value;
+  });
+
+  document.getElementById('img-prompt-format').addEventListener('change', (e) => {
+    selFormat = e.target.value;
+    localStorage.setItem('danimarvis_prompt_format', selFormat);
   });
 
   document.getElementById('img-prompt-copy').addEventListener('click', () => {
@@ -661,10 +698,15 @@ function copyText(text) {
 
 async function loadPromptFamilies() {
   try {
-    const data = await api.getPromptFamilies();
-    promptFamilies = data.families || [];
+    const [famData, fmtData] = await Promise.all([
+      api.getPromptFamilies(),
+      api.getPromptFormats(),
+    ]);
+    promptFamilies = famData.families || [];
+    promptFormats = fmtData.formats || [];
   } catch (err) {
     promptFamilies = [];
+    promptFormats = [];
   }
   renderPromptSelects();
 }
@@ -672,6 +714,7 @@ async function loadPromptFamilies() {
 function renderPromptSelects() {
   const famSel = document.getElementById('img-prompt-family');
   const varSel = document.getElementById('img-prompt-variant');
+  const fmtSel = document.getElementById('img-prompt-format');
   if (!famSel) return;
   famSel.innerHTML = '<option value="">Automático</option>' + promptFamilies.map(f =>
     `<option value="${f.id}" ${selFamily === f.id ? 'selected' : ''}>${escHtml(f.name)}</option>`
@@ -686,12 +729,18 @@ function renderPromptSelects() {
     varSel.innerHTML = '<option value="">Automático</option>';
     varSel.disabled = true;
   }
+  if (fmtSel) {
+    fmtSel.innerHTML = promptFormats.map(f =>
+      `<option value="${f.id}" ${selFormat === f.id ? 'selected' : ''}>${escHtml(f.label)}</option>`
+    ).join('');
+  }
 }
 
 function setPromptPreview(prompt, meta) {
   const metaEl = document.getElementById('img-prompt-meta');
   if (metaEl && meta) {
-    metaEl.textContent = `Familia ${meta.family} · Variante ${meta.variant}${meta.automatic ? ' · rotación automática' : ''} · ${meta.product_name}`;
+    const providerInfo = meta.provider_style_code ? ` · Proveedor: ${meta.provider_style_code}` : '';
+    metaEl.textContent = `Familia ${meta.family} · Variante ${meta.variant} · Formato ${meta.format || '4:5'}${providerInfo}${meta.automatic ? ' · rotación automática' : ''} · ${meta.product_name}`;
   }
   const ta = document.getElementById('img-prompt-preview');
   if (ta) ta.value = prompt || '';

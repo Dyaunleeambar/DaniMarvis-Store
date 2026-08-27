@@ -80,6 +80,9 @@ export async function initDB() {
   migratePromptEngine();
   migrateGeneratedImages();
   migrateCommissionCurrency();
+  migrateProviderStyleCode();
+  migrateProviderStyles();
+  migrateWarrantyRules();
   saveDB();
 }
 
@@ -352,6 +355,91 @@ function migrateCommissionCurrency() {
   try {
     db.exec("ALTER TABLE sales ADD COLUMN commission_currency TEXT DEFAULT 'USD'");
   } catch (_) {}
+}
+
+function migrateProviderStyleCode() {
+  try {
+    db.exec("ALTER TABLE providers ADD COLUMN provider_style_code TEXT");
+  } catch (_) {}
+}
+
+function migrateProviderStyles() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS provider_styles (
+      code TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      style_name TEXT NOT NULL,
+      palette TEXT DEFAULT '{}',
+      background_rules TEXT DEFAULT '',
+      accent_rules TEXT DEFAULT '',
+      signature_rules TEXT DEFAULT '',
+      negative_rules TEXT DEFAULT '',
+      shipping_rule TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+  `);
+
+  try {
+    db.exec("ALTER TABLE provider_styles ADD COLUMN shipping_rule TEXT DEFAULT ''");
+  } catch (_) {}
+
+  // Backfill shipping_rule for existing styles that have empty shipping_rule
+  db.prepare("UPDATE provider_styles SET shipping_rule = 'Envío: GRATIS a Matanzas, Cienfuegos y Villa Clara' WHERE code = 'GE' AND (shipping_rule IS NULL OR shipping_rule = '')").run();
+  db.prepare("UPDATE provider_styles SET shipping_rule = 'Envío: GRATIS a Matanzas y Cienfuegos' WHERE code = 'EM' AND (shipping_rule IS NULL OR shipping_rule = '')").run();
+  db.prepare("UPDATE provider_styles SET shipping_rule = 'Envío: GRATIS a Matanzas y Cienfuegos' WHERE code = 'MM' AND (shipping_rule IS NULL OR shipping_rule = '')").run();
+
+  const existing = db.prepare('SELECT COUNT(*) as c FROM provider_styles').get();
+  if (existing.c === 0) {
+    const defaults = [
+      {
+        code: 'GE', name: 'MiPime Gabriel y Erika', style_name: 'DANIMARVIS_CLASSIC',
+        palette: JSON.stringify({ navy: '#08245A', deep_navy: '#061633', orange: '#FF6A00', gold: '#D9A928', white: '#FFFFFF', coral: 'conservar_firma_original' }),
+        background_rules: 'Navy profundo como color estructural dominante. Blanco para respiración, títulos y módulos.',
+        accent_rules: 'Naranja como acento dinámico. Dorado principalmente en el precio. Puede usar brochazos o diagonales solo como recursos secundarios.',
+        signature_rules: 'Estructura clásica DaniMarvis. Navy dominante + naranja + dorado + blanco. No necesita sello público de proveedor.',
+        negative_rules: 'No confundirse con el perfil MM. Los brochazos son secundarios, no principales.',
+        shipping_rule: 'Envío: GRATIS a Matanzas, Cienfuegos y Villa Clara',
+      },
+      {
+        code: 'EM', name: 'TCP El Marinero', style_name: 'DANIMARVIS_RED',
+        palette: JSON.stringify({ primary: 'tonos_rojos', structure: '#08245A', accent: 'rojo_familia', gold: '#D9A928', white: '#FFFFFF' }),
+        background_rules: 'Cambiar el protagonismo cromático hacia una familia de tonos rojos. Los rojos funcionan como identidad del perfil, no como estética de "ofertón". Navy puede permanecer como estructura secundaria o contraste.',
+        accent_rules: 'Tonos rojos como identidad del perfil. Dorado continúa reservado principalmente al precio.',
+        signature_rules: 'Tonos rojos + estructura visual DaniMarvis. La estructura debe seguir siendo claramente DaniMarvis aunque el color dominante sea rojo.',
+        negative_rules: 'No usar rojos como estética de "ofertón". No perder la arquitectura visual DaniMarvis.',
+        shipping_rule: 'Envío: GRATIS a Matanzas y Cienfuegos',
+      },
+      {
+        code: 'MM', name: 'MiPimeMelani', style_name: 'DANIMARVIS_MELANI',
+        palette: JSON.stringify({ background: 'claro_luminoso', coral: 'suave', navy: 'secundario', gold: '#D9A928', white: '#FFFFFF' }),
+        background_rules: 'Fondo predominantemente claro, limpio y luminoso. El navy reaparece como elemento estructural secundario. Detrás o alrededor del logo pueden aparecer toques sutiles de navy (pinceladas o manchas controladas).',
+        accent_rules: 'Brochazos/pinceladas como recurso gráfico distintivo. Coral/rojo suave y otros acentos conviven con blanco sin saturar. Dorado para precio manteniendo sobriedad.',
+        signature_rules: 'Fondo claro + brochazos + MM circular + navy sutil. Añadir un identificador interno "MM" dentro de un círculo discreto, elegante y reconocible.',
+        negative_rules: 'No saturar con colores. No perder orden, legibilidad ni jerarquía comercial.',
+        shipping_rule: 'Envío: GRATIS a Matanzas y Cienfuegos',
+      },
+    ];
+
+    for (const d of defaults) {
+      db.prepare(`INSERT INTO provider_styles (code, name, style_name, palette, background_rules, accent_rules, signature_rules, negative_rules, shipping_rule)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(d.code, d.name, d.style_name, d.palette, d.background_rules, d.accent_rules, d.signature_rules, d.negative_rules, d.shipping_rule);
+    }
+    console.log('[DB] Perfiles de proveedor por defecto creados: GE, EM, MM');
+  }
+}
+
+function migrateWarrantyRules() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS warranty_rules (
+      id TEXT PRIMARY KEY,
+      provider_id TEXT NOT NULL,
+      keyword TEXT NOT NULL,
+      warranty_text TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (provider_id) REFERENCES providers(id)
+    );
+  `);
 }
 
 function seedIfEmpty() {
