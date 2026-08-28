@@ -314,13 +314,7 @@ function renderPage(container, settings, categories, providerStyles) {
       fields.forEach(el => { data[el.dataset.field] = el.value; });
       const paletteSection = container.querySelector(`.style-palette-section[data-code="${code}"]`);
       if (paletteSection) {
-        const palette = {};
-        paletteSection.querySelectorAll('.palette-row').forEach(row => {
-          const label = row.querySelector('.palette-label').value.trim();
-          const hex = row.querySelector('.palette-color').value;
-          if (label) palette[label] = hex;
-        });
-        data.palette = palette;
+        data.palette = collectPaletteFrom(paletteSection);
       }
       try {
         await api.updateProviderStyle(code, data);
@@ -332,6 +326,7 @@ function renderPage(container, settings, categories, providerStyles) {
   });
 
   initPaletteBuilder();
+  refreshPaletteSummaries();
 
   document.getElementById('btn-add-style')?.addEventListener('click', () => openStyleForm());
 
@@ -436,12 +431,23 @@ const BRAND_BASE_COLORS = [
   { label: 'Blanco', hex: '#FFFFFF' },
 ];
 
+function normalizePaletteEntries(palette = {}) {
+  const entries = Object.entries(palette || {}).filter(([k]) => k);
+  if (entries.length === 0) return [{ label: '', hex: '#08245A', pct: 0 }];
+  return entries.map(([label, val]) => {
+    if (val && typeof val === 'object' && typeof val.hex === 'string') {
+      const pct = Number(val.pct);
+      return { label, hex: val.hex, pct: Number.isFinite(pct) ? pct : 0 };
+    }
+    return { label, hex: typeof val === 'string' ? val : '#08245A', pct: 0 };
+  });
+}
+
 function paletteBuilderHTML(existingPalette = {}) {
-  const entries = Object.entries(existingPalette).filter(([k]) => k);
-  const rows = entries.length > 0 ? entries : [['', '#c9847a']];
+  const rows = normalizePaletteEntries(existingPalette);
   return `
     <div class="form-group">
-      <label>Paleta de colores</label>
+      <label>Paleta de colores y proporciones</label>
       <div style="margin-bottom:10px">
         <div style="font-size:.75rem;color:var(--text-muted);margin-bottom:6px">Paleta base DaniMarvis (referencia):</div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
@@ -454,23 +460,30 @@ function paletteBuilderHTML(existingPalette = {}) {
         </div>
       </div>
       <div class="palette-rows" style="display:flex;flex-direction:column;gap:6px">
-        ${rows.map(([label, hex], i) => paletteRowHTML(label, hex, i)).join('')}
+        ${rows.map(r => paletteRowHTML(r.label, r.hex, r.pct)).join('')}
       </div>
       <button type="button" class="btn btn--sm btn--ghost palette-add-btn" style="margin-top:6px">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         Agregar color
       </button>
-      <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:4px">Colores específicos de este estilo. Se suman a la paleta base del BRAND_DNA.</small>
+      <div class="palette-summary"></div>
+      <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:4px">Colores específicos de este estilo. Mové la barra para ajustar la proporción de cada color; en el prompt se envía como rango (±10%).</small>
     </div>
   `;
 }
 
-function paletteRowHTML(label = '', hex = '#000000', idx = 0) {
+function paletteRowHTML(label = '', hex = '#08245A', pct = 0) {
+  const safePct = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
   return `
-    <div class="palette-row" style="display:flex;gap:6px;align-items:center">
-      <input type="text" class="form-control palette-label" placeholder="Nombre" value="${escAttr(label)}" style="flex:1;font-size:.82rem" />
-      <input type="color" class="palette-color" value="${hex}" style="width:36px;height:32px;padding:2px;border:1px solid var(--border);border-radius:4px;cursor:pointer;flex-shrink:0" />
-      <span class="palette-hex" style="font-size:.75rem;font-family:monospace;color:var(--text-muted);min-width:60px">${escHtml(hex)}</span>
+    <div class="palette-row" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px">
+      <input type="text" class="form-control palette-label" placeholder="Nombre" value="${escAttr(label)}" style="flex:1 1 110px;font-size:.82rem" />
+      <input type="color" class="palette-color" value="${hex}" style="width:34px;height:30px;padding:2px;border:1px solid var(--border);border-radius:4px;cursor:pointer;flex-shrink:0" />
+      <span class="palette-hex" style="font-size:.72rem;font-family:monospace;color:var(--text-muted);min-width:52px">${escHtml(hex)}</span>
+      <div style="flex:1 1 150px;display:flex;align-items:center;gap:6px;min-width:150px">
+        <input type="range" class="palette-pct" min="0" max="100" step="1" value="${safePct}" style="flex:1" title="Proporción del color" />
+        <input type="number" class="palette-pct-num" min="0" max="100" value="${safePct}" style="width:50px;font-size:.8rem;padding:4px 6px;border:1px solid var(--border);border-radius:4px" />
+        <span style="font-size:.75rem;color:var(--text-muted)">%</span>
+      </div>
       <button type="button" class="btn btn--sm btn--ghost palette-remove" style="color:var(--error);padding:2px 4px;flex-shrink:0" title="Eliminar">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
@@ -478,14 +491,85 @@ function paletteRowHTML(label = '', hex = '#000000', idx = 0) {
   `;
 }
 
-function collectPalette() {
+function setPalettePct(row, v) {
+  const clamped = Math.max(0, Math.min(100, Math.round(Number(v) || 0)));
+  const s = row.querySelector('.palette-pct');
+  const n = row.querySelector('.palette-pct-num');
+  if (s) s.value = clamped;
+  if (n) n.value = clamped;
+}
+
+function normalizePalette(root) {
+  const formGroup = root.closest('.form-group') || (root.classList && root.classList.contains('form-group') ? root : null);
+  if (!formGroup) return;
+  const rows = Array.from(formGroup.querySelectorAll('.palette-row'));
+  if (rows.length === 0) return;
+  const pcts = rows.map(r => Number(r.querySelector('.palette-pct').value) || 0);
+  const sum = pcts.reduce((a, b) => a + b, 0);
+  if (sum === 0) {
+    const each = Math.floor(100 / rows.length);
+    rows.forEach((r, i) => setPalettePct(r, i === rows.length - 1 ? 100 - each * (rows.length - 1) : each));
+  } else {
+    let assigned = 0;
+    rows.forEach((r, i) => {
+      if (i === rows.length - 1) {
+        setPalettePct(r, 100 - assigned);
+      } else {
+        const v = Math.round((pcts[i] / sum) * 100);
+        setPalettePct(r, v);
+        assigned += v;
+      }
+    });
+  }
+  renderPaletteSummary(root);
+}
+
+function renderPaletteSummary(root) {
+  const formGroup = root.closest ? root.closest('.form-group') : null;
+  const container = formGroup || root;
+  const box = container.querySelector && container.querySelector('.palette-summary');
+  if (!box) return;
+  const rows = Array.from(container.querySelectorAll('.palette-row'));
+  const items = rows.map(row => ({
+    hex: row.querySelector('.palette-color').value,
+    pct: Number(row.querySelector('.palette-pct').value) || 0,
+    name: (row.querySelector('.palette-label').value || '').trim(),
+  }));
+  const total = items.reduce((s, i) => s + Math.max(0, i.pct), 0);
+  if (items.length === 0) { box.innerHTML = ''; return; }
+  box.innerHTML = `
+    <div style="margin-top:10px;display:flex;flex-direction:column;gap:4px">
+      <div style="display:flex;height:14px;border-radius:6px;overflow:hidden;border:1px solid var(--border)">
+        ${items.map(i => `<div title="${escAttr(i.name)} ${i.pct}%" style="flex:${Math.max(i.pct, 0.1)};background:${i.hex};min-width:${i.pct > 0 ? '2px' : '0'}"></div>`).join('')}
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <span style="font-size:.72rem;color:var(--text-muted)">Total: <b>${total}%</b>${total > 100 ? ' <span style="color:#b8860b">(supera 100%)</span>' : ''}</span>
+        <button type="button" class="btn btn--sm btn--ghost palette-reset-btn" style="padding:2px 8px;font-size:.75rem">Normalizar a 100%</button>
+      </div>
+    </div>
+  `;
+}
+
+function refreshPaletteSummaries() {
+  document.querySelectorAll('.palette-rows').forEach(rowsEl => {
+    renderPaletteSummary(rowsEl);
+  });
+}
+
+function collectPaletteFrom(root) {
   const palette = {};
-  document.querySelectorAll('.palette-row').forEach(row => {
+  (root || document).querySelectorAll('.palette-row').forEach(row => {
     const label = row.querySelector('.palette-label').value.trim();
     const hex = row.querySelector('.palette-color').value;
-    if (label) palette[label] = hex;
+    const pctInput = row.querySelector('.palette-pct');
+    const pct = Number(pctInput ? pctInput.value : 0);
+    if (label) palette[label] = { hex, pct: Math.max(0, Math.min(100, Math.round(pct || 0))) };
   });
   return palette;
+}
+
+function collectPalette() {
+  return collectPaletteFrom(document);
 }
 
 function initPaletteBuilder() {
@@ -495,7 +579,21 @@ function initPaletteBuilder() {
   document.addEventListener('input', (e) => {
     if (e.target.classList.contains('palette-color')) {
       const hex = e.target.value;
-      e.target.closest('.palette-row').querySelector('.palette-hex').textContent = hex;
+      const row = e.target.closest('.palette-row');
+      row.querySelector('.palette-hex').textContent = hex;
+    } else if (e.target.classList.contains('palette-pct')) {
+      const row = e.target.closest('.palette-row');
+      setPalettePct(row, e.target.value);
+      renderPaletteSummary(row);
+    } else if (e.target.classList.contains('palette-pct-num')) {
+      const row = e.target.closest('.palette-row');
+      const n = Number(e.target.value);
+      const clamped = Math.max(0, Math.min(100, Math.round(n || 0)));
+      setPalettePct(row, clamped);
+      renderPaletteSummary(row);
+    } else if (e.target.classList.contains('palette-label')) {
+      const row = e.target.closest('.palette-row');
+      renderPaletteSummary(row);
     }
   });
 
@@ -505,6 +603,7 @@ function initPaletteBuilder() {
       const parent = row.parentElement;
       if (parent.querySelectorAll('.palette-row').length > 1) {
         row.remove();
+        renderPaletteSummary(row);
       } else {
         showToast('Debe haber al menos un color', 'warning');
       }
@@ -512,9 +611,12 @@ function initPaletteBuilder() {
     if (e.target.closest('.palette-add-btn')) {
       const rowsContainer = e.target.closest('.form-group').querySelector('.palette-rows');
       if (rowsContainer) {
-        const idx = rowsContainer.querySelectorAll('.palette-row').length;
-        rowsContainer.insertAdjacentHTML('beforeend', paletteRowHTML('', '#000000', idx));
+        rowsContainer.insertAdjacentHTML('beforeend', paletteRowHTML('', '#08245A', 0));
+        renderPaletteSummary(rowsContainer);
       }
+    }
+    if (e.target.closest('.palette-reset-btn')) {
+      normalizePalette(e.target.closest('.form-group'));
     }
   });
 }
@@ -577,6 +679,7 @@ function openStyleForm() {
   `, 'modal-content--wide');
 
   initPaletteBuilder();
+  refreshPaletteSummaries();
 
   document.getElementById('style-form').addEventListener('submit', async (e) => {
     e.preventDefault();

@@ -13,6 +13,7 @@ function loadConfig() {
     style: 'table',
     fields: [...DEFAULT_FIELDS],
     header: 'DaniMarvis Store',
+    footer: '',
   };
 }
 
@@ -64,6 +65,9 @@ export function renderConfig(container) {
         <h3 style="margin:0 0 12px;font-size:1rem">Encabezado del PDF</h3>
         <input type="text" id="export-header" class="form-control" value="${escHtml(config.header)}" placeholder="Nombre del proyecto o empresa" />
 
+        <h3 style="margin:28px 0 12px;font-size:1rem">Pie de página del PDF</h3>
+        <textarea id="export-footer" class="form-control" rows="3" placeholder="Párrafo de agradecimiento que irá al final del documento...">${escHtml(config.footer)}</textarea>
+
         <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
           <button class="btn btn--primary" id="export-save-config">Guardar configuración</button>
         </div>
@@ -82,7 +86,8 @@ export function renderConfig(container) {
     const style = container.querySelector('input[name="export-style"]:checked')?.value || 'table';
     const fields = [...container.querySelectorAll('input[name="export-field"]:checked')].map(cb => cb.value);
     const header = document.getElementById('export-header').value.trim() || 'DaniMarvis Store';
-    saveConfig({ style, fields, header });
+    const footer = document.getElementById('export-footer').value.trim();
+    saveConfig({ style, fields, header, footer });
     showToast('Configuración guardada', 'success');
   });
 }

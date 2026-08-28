@@ -11,3 +11,4 @@ backend/backups/*
 !backend/backups/.gitkeep
 dist2/
 dist3/
+server.log

@@ -14,7 +14,7 @@ function loadConfig() {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) return JSON.parse(saved);
   } catch {}
-  return { style: 'table', fields: [...DEFAULT_FIELDS], header: 'DaniMarvis Store' };
+  return { style: 'table', fields: [...DEFAULT_FIELDS], header: 'DaniMarvis Store', footer: '' };
 }
 
 function categoryOptions(products, selected = '') {
@@ -42,11 +42,13 @@ function renderForm(container, products, providers, config, onDone) {
   let filterQ = '';
   let filterCat = '';
   let filterProvider = '';
+  let filterVisible = '';
 
   function getFiltered() {
     return products.filter(p => {
       if (filterCat && p.category !== filterCat) return false;
       if (filterProvider && p.provider_id !== filterProvider) return false;
+      if (filterVisible !== '' && String(p.catalog_visible) !== filterVisible) return false;
       if (filterQ) {
         const q = filterQ.toLowerCase();
         if (!p.name.toLowerCase().includes(q) && !(p.description || '').toLowerCase().includes(q)) return false;
@@ -104,6 +106,11 @@ function renderForm(container, products, providers, config, onDone) {
           <select id="export-provider" class="form-control form-control--small" style="max-width:200px">
             <option value="">Todos los proveedores</option>
             ${providers.map(p => `<option value="${escHtml(p.id)}">${escHtml(p.name)}</option>`).join('')}
+          </select>
+          <select id="export-visible" class="form-control form-control--small" style="max-width:120px">
+            <option value="">Todos</option>
+            <option value="1">Visibles</option>
+            <option value="0">Ocultos</option>
           </select>
           <select id="export-category" class="form-control form-control--small" style="max-width:200px">
             <option value="">Todas las categorías</option>
@@ -167,6 +174,11 @@ function renderForm(container, products, providers, config, onDone) {
     renderProductList();
   });
 
+  document.getElementById('export-visible').addEventListener('change', (e) => {
+    filterVisible = e.target.value;
+    renderProductList();
+  });
+
   document.getElementById('export-select-all').addEventListener('change', (e) => {
     const filtered = getFiltered();
     if (e.target.checked) {
@@ -207,11 +219,12 @@ function renderForm(container, products, providers, config, onDone) {
     const title = filterCat ? `Productos - ${filterCat}` : 'Productos';
 
     try {
-      generatePDF(selected, {
+      await generatePDF(selected, {
         style: config.style,
         fields,
         title: `${title} (${selected.length} productos)`,
         header: config.header,
+        footer: config.footer,
       });
 
       await api.createExport({

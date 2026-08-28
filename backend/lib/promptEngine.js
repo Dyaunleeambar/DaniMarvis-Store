@@ -336,11 +336,43 @@ Mantener márgenes seguros de ${f.safe_margin} para lectura en móvil (Facebook/
 El texto principal y el precio deben estar dentro del área segura.`;
 }
 
+function parsePaletteColors(ps) {
+  const raw = ps.palette && typeof ps.palette === 'object' ? ps.palette : {};
+  return Object.entries(raw)
+    .filter(([k]) => k)
+    .map(([label, val]) => {
+      if (val && typeof val === 'object' && typeof val.hex === 'string') {
+        const pct = Number(val.pct);
+        return { label, hex: val.hex, pct: Number.isFinite(pct) && pct > 0 ? pct : 0 };
+      }
+      if (typeof val === 'string' && val.startsWith('#')) {
+        return { label, hex: val, pct: 0 };
+      }
+      return null;
+    })
+    .filter(Boolean);
+}
+
+function pctRange(pct) {
+  if (!pct || pct <= 0) return '<5%';
+  const lo = Math.max(0, Math.round(pct - 10));
+  const hi = Math.min(100, Math.round(pct + 10));
+  return lo === hi ? `${lo}%` : `${lo}–${hi}%`;
+}
+
 function providerStyleBlock(providerStyle) {
   const ps = providerStyle || DEFAULT_PROVIDER_STYLE;
-  const paletteStr = ps.palette && typeof ps.palette === 'object'
-    ? Object.entries(ps.palette).map(([k, v]) => `  - ${k}: ${v}`).join('\n')
+  const colors = parsePaletteColors(ps);
+
+  const paletteStr = colors.length > 0
+    ? colors.map(c => `  - ${c.label}: ${c.hex}`).join('\n')
     : 'Usar paleta DaniMarvis estándar.';
+
+  const proportionStr = colors.filter(c => c.pct > 0).length > 0
+    ? `Proporción orientativa de la paleta del proveedor (dentro del BRAND_DNA): ${colors
+        .filter(c => c.pct > 0)
+        .map(c => `${c.label} ${pctRange(c.pct)}`).join(', ')}.`
+    : '';
 
   return `[PROVIDER_STYLE]
 Proveedor: ${ps.name}
@@ -348,6 +380,7 @@ Código: ${ps.code}
 Estilo: ${ps.style_name}
 Paleta del perfil:
 ${paletteStr}
+${proportionStr}
 Reglas de fondo: ${ps.background_rules}
 Reglas de acentos: ${ps.accent_rules}
 Firma visual: ${ps.signature_rules}

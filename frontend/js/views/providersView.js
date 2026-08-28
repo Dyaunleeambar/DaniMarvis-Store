@@ -117,7 +117,16 @@ window._openProviderForm = function(provider) {
 function parsePalette(palette) {
   try {
     const obj = typeof palette === 'string' ? JSON.parse(palette) : (palette || {});
-    return Object.entries(obj).filter(([, v]) => typeof v === 'string' && v.startsWith('#'));
+    return Object.entries(obj).map(([label, v]) => {
+      if (v && typeof v === 'object' && typeof v.hex === 'string') {
+        const pct = Number(v.pct);
+        return { label, hex: v.hex, pct: Number.isFinite(pct) && pct > 0 ? pct : 0 };
+      }
+      if (typeof v === 'string' && v.startsWith('#')) {
+        return { label, hex: v, pct: 0 };
+      }
+      return null;
+    }).filter(Boolean);
   } catch { return []; }
 }
 
@@ -132,8 +141,8 @@ function styleSummaryHTML(style) {
   return `
     ${palette.length > 0 ? `
       <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
-        ${palette.map(([name, hex]) =>
-          `<span title="${escHtml(name)}: ${hex}" style="display:inline-flex;align-items:center;gap:3px;font-size:.72rem;color:var(--text-muted)"><span style="width:12px;height:12px;border-radius:50%;background:${hex};border:1px solid var(--border);display:inline-block"></span>${hex}</span>`
+        ${palette.map(c =>
+          `<span title="${escHtml(c.label)}: ${c.hex}${c.pct ? ' · ' + c.pct + '%' : ''}" style="display:inline-flex;align-items:center;gap:3px;font-size:.72rem;color:var(--text-muted)"><span style="width:12px;height:12px;border-radius:50%;background:${c.hex};border:1px solid var(--border);display:inline-block"></span>${c.hex}${c.pct ? ` <b>${c.pct}%</b>` : ''}</span>`
         ).join('')}
       </div>` : ''}
     ${rules.length > 0 ? `
