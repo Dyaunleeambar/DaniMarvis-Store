@@ -25,10 +25,9 @@ function sanitize(text) {
     .replace(/[\u{FE00}-\u{FE0F}]/gu, '')
     .replace(/[\u{200D}]/gu, '')
     .replace(/[\u{20E3}]/gu, '')
-    .replace(/[^\x00-\x7F]/g, (ch) => {
-      const map = { '\u00D1': 'N', '\u00F1': 'n', '\u00C1': 'A', '\u00E1': 'a', '\u00C9': 'E', '\u00E9': 'e', '\u00CD': 'I', '\u00ED': 'i', '\u00D3': 'O', '\u00F3': 'o', '\u00DA': 'U', '\u00FA': 'u', '\u00DC': 'U', '\u00FC': 'u' };
-      return map[ch] || '';
-    });
+    // Conserva el rango imprimible + Latin-1 (tildes, ñ, ü) que soporta la fuente
+    // estándar de jsPDF (WinAnsi/CP1252); quita el resto de símbolos no soportados.
+    .replace(/[^\u0020-\u00FF]/g, '');
 }
 
 function isBulletLine(l) {
