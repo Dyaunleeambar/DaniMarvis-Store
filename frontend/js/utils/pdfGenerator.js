@@ -25,9 +25,10 @@ function sanitize(text) {
     .replace(/[\u{FE00}-\u{FE0F}]/gu, '')
     .replace(/[\u{200D}]/gu, '')
     .replace(/[\u{20E3}]/gu, '')
-    // Conserva el rango imprimible + Latin-1 (tildes, ñ, ü) que soporta la fuente
-    // estándar de jsPDF (WinAnsi/CP1252); quita el resto de símbolos no soportados.
-    .replace(/[^\u0020-\u00FF]/g, '');
+    // Conserva tabulaciones, saltos de línea y el rango imprimible + Latin-1
+    // (tildes, ñ, ü) que soporta la fuente estándar de jsPDF (WinAnsi/CP1252);
+    // quita el resto de símbolos no soportados.
+    .replace(/[^\u0009\u000A\u000D\u0020-\u00FF]/g, '');
 }
 
 function isBulletLine(l) {
