@@ -210,6 +210,23 @@ const FAMILIES = {
 - Fondo limpio para que el badge destaque.
 - [CTA_WHATSAPP] en la zona inferior.`,
       },
+      C4: {
+        name: 'C4 — Flyer',
+        objective: 'Flyer profesional con producto, features, precio y badges de confianza. Layout vertical dinámico.',
+        cta: 'Consulta por WhatsApp',
+        composition: `- Layout vertical: producto a la derecha (~60% del lienzo), texto/features a la izquierda (~40%).
+- Fondo rojo oscuro con pinceladas diagonales sutiles que den movimiento sin saturar.
+- Header: barra oscura con logo DaniMarvis a la izquierda y badge del proveedor a la derecha.
+- El badge del proveedor muestra SOLO el código del proveedor (ej: "VL"), nunca el nombre completo.
+- Grid de 4-6 features vertical a la izquierda: cada uno con círculo blanco, icono simple y texto breve.
+- Nombre del producto grande, blanco, en mayúsculas sobre el fondo.
+- Precio dorado con efecto 3D como segundo foco visual, ubicado debajo del nombre o junto al producto.
+- Badges de confianza debajo del precio: "Garantía X meses" (escudo) + "Envío Gratis" (camión).
+- Franja inferior con 4-6 badges horizontales de features adicionales, cada uno con icono y texto breve.
+- [CTA_WHATSAPP] en barra verde al fondo de la pieza.
+- El producto debe mantener proporciones, colores y materiales reales.
+- Los pinceladas van SOLO en el fondo, nunca sobre el producto ni el texto.`,
+      },
     },
   },
   D: {
@@ -255,7 +272,7 @@ const FAMILIES = {
 export const VARIANTS_ORDER = {
   A: ['A1', 'A2', 'A3'],
   B: ['B1', 'B2', 'B3'],
-  C: ['C1', 'C2', 'C3'],
+  C: ['C1', 'C2', 'C3', 'C4'],
   D: ['D1', 'D2', 'D3'],
 };
 
@@ -387,6 +404,8 @@ Firma visual: ${ps.signature_rules}
 ${ps.negative_rules ? `Restricciones del perfil: ${ps.negative_rules}` : ''}
 Regla: usar este perfil para diferenciar visualmente el origen del producto sin
 convertirlo en una comunicación obligatoria para el cliente.
+Si se incluye un badge o sello de proveedor en la pieza (p. ej. en el header),
+mostrar SOLO el código del proveedor ("${ps.code}"), nunca el nombre completo.
 No permitir que el perfil de proveedor altere datos del producto, logo principal,
 proporciones ni reglas de veracidad.`;
 }
