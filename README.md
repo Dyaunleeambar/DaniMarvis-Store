@@ -601,6 +601,29 @@ El panel incluye un **motor de prompts** que construye el texto listo para gener
 5. Guarda la imagen en la carpeta indicada.
 6. Importa la carpeta desde el panel.
 
+### Estilos visuales de proveedor
+
+Cada proveedor puede tener un **perfil de estilo visual** (`style_name`) que define paleta de colores, reglas de fondo, acentos, firma visual y restricciones. El prompt generado inyecta automáticamente ese bloque `[PROVIDER_STYLE]`.
+
+| Código | Proveedor | `style_name` |
+|--------|-----------|--------------|
+| `GE` | MiPime Gabriel y Erika | `DANIMARVIS_G_ERIKA` |
+| `EM` | TCP El Marinero | `DANIMARVIS_MARINERO` |
+| `MM` | MiPimeMelani | `DANIMARVIS_MELANI` |
+
+> **Badge de proveedor:** si la pieza incluye un badge o sello de proveedor (p. ej. en el header), los prompts instructan mostrar **solo el código** (`GE`, `EM`, `MM`, etc.), nunca el nombre completo. Aplica a todos los estilos y variantes.
+
+### Familias creativas y variantes
+
+| Familia | Propósito | Variantes |
+|---------|-----------|-----------|
+| **A — HERO** | Atención + presentación | A1 Front, A2 Angle, A3 Float |
+| **B — CATALOG** | Información técnica | B1 Grid, B2 Minimal, B3 Detail |
+| **C — OFFER** | Oportunidad + acción | C1 Block, C2 Strike, C3 Badge, C4 Flyer |
+| **D — LIFESTYLE** | Deseo + experiencia | D1 Home, D2 Use, D3 Aspirational |
+
+La variante **C4 — Flyer** genera piezas tipo folleto profesional: producto a la derecha con grid de características a la izquierda, precio destacado, badges de confianza y franja de features.
+
 ---
 
 ## Catálogo Público (GitHub Pages)

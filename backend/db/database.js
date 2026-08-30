@@ -389,11 +389,15 @@ function migrateProviderStyles() {
   db.prepare("UPDATE provider_styles SET shipping_rule = 'Envío: GRATIS a Matanzas y Cienfuegos' WHERE code = 'EM' AND (shipping_rule IS NULL OR shipping_rule = '')").run();
   db.prepare("UPDATE provider_styles SET shipping_rule = 'Envío: GRATIS a Matanzas y Cienfuegos' WHERE code = 'MM' AND (shipping_rule IS NULL OR shipping_rule = '')").run();
 
+  // Renombrar estilos por defecto para unificar el formato de nombres
+  db.prepare("UPDATE provider_styles SET style_name = 'DANIMARVIS_G_ERIKA', updated_at = datetime('now') WHERE code = 'GE' AND style_name = 'DANIMARVIS_CLASSIC'").run();
+  db.prepare("UPDATE provider_styles SET style_name = 'DANIMARVIS_MARINERO', updated_at = datetime('now') WHERE code = 'EM' AND style_name = 'DANIMARVIS_RED'").run();
+
   const existing = db.prepare('SELECT COUNT(*) as c FROM provider_styles').get();
   if (existing.c === 0) {
     const defaults = [
       {
-        code: 'GE', name: 'MiPime Gabriel y Erika', style_name: 'DANIMARVIS_CLASSIC',
+        code: 'GE', name: 'MiPime Gabriel y Erika', style_name: 'DANIMARVIS_G_ERIKA',
         palette: JSON.stringify({ navy: '#08245A', deep_navy: '#061633', orange: '#FF6A00', gold: '#D9A928', white: '#FFFFFF', coral: 'conservar_firma_original' }),
         background_rules: 'Navy profundo como color estructural dominante. Blanco para respiración, títulos y módulos.',
         accent_rules: 'Naranja como acento dinámico. Dorado principalmente en el precio. Puede usar brochazos o diagonales solo como recursos secundarios.',
@@ -402,7 +406,7 @@ function migrateProviderStyles() {
         shipping_rule: 'Envío: GRATIS a Matanzas, Cienfuegos y Villa Clara',
       },
       {
-        code: 'EM', name: 'TCP El Marinero', style_name: 'DANIMARVIS_RED',
+        code: 'EM', name: 'TCP El Marinero', style_name: 'DANIMARVIS_MARINERO',
         palette: JSON.stringify({ primary: 'tonos_rojos', structure: '#08245A', accent: 'rojo_familia', gold: '#D9A928', white: '#FFFFFF' }),
         background_rules: 'Cambiar el protagonismo cromático hacia una familia de tonos rojos. Los rojos funcionan como identidad del perfil, no como estética de "ofertón". Navy puede permanecer como estructura secundaria o contraste.',
         accent_rules: 'Tonos rojos como identidad del perfil. Dorado continúa reservado principalmente al precio.',
