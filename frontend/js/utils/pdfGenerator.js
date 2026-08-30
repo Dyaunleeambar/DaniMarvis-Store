@@ -279,6 +279,12 @@ function renderTableWithPhotos(doc, products, fields, startY, photoData, title) 
   }
 
   // ── Preparar filas ──
+  // Altura máxima de la imagen en la 1ra página para que una única fila (producto
+  // con foto) quepa tras el encabezado de título sin generar una página en blanco.
+  const bottomLimitPre = pageH - 18;
+  const firstPageRowSpace = bottomLimitPre - startY - headerH - 2;
+  const maxImgH = Math.max(30, Math.min(130, firstPageRowSpace - 34));
+
   const prepped = products.map(product => {
     const cells = {};
     let imgDisp = null;
@@ -291,8 +297,7 @@ function renderTableWithPhotos(doc, products, fields, startY, photoData, title) 
         const img = photoData[product.id];
         if (img) {
           const dispW = w - pad * 2;
-          const maxH = 130;
-          const scale = Math.min(1, dispW / img.w, maxH / img.h);
+          const scale = Math.min(1, dispW / img.w, maxImgH / img.h);
           imgDisp = { w: img.w * scale, h: img.h * scale };
           textH += imgDisp.h + 6;
         }
@@ -311,17 +316,31 @@ function renderTableWithPhotos(doc, products, fields, startY, photoData, title) 
   let y = startY;
   const bottomLimit = pageH - 18;
   const topOnNewPage = 16;
+  let headerDrawn = false;
 
-  drawHeader(y);
-  y += headerH;
+  function ensureHeader() {
+    if (!headerDrawn) {
+      drawHeader(y);
+      y += headerH;
+      headerDrawn = true;
+    }
+  }
+
+  // Dibujar el encabezado de tabla solo si la primera fila entra en la página actual,
+  // para no dejar la primera página casi vacía (hoja en blanco) cuando hay un solo producto.
+  if (prepped.length > 0 && y + headerH + prepped[0].rowH > bottomLimit) {
+    doc.addPage();
+    y = topOnNewPage;
+  }
+  ensureHeader();
 
   prepped.forEach(({ product, cells, rowH }, ri) => {
     // Si la fila no entra completa, pasar a una nueva página
     if (y + rowH > bottomLimit) {
       doc.addPage();
       y = topOnNewPage;
-      drawHeader(y);
-      y += headerH;
+      headerDrawn = false;
+      ensureHeader();
     }
 
     // Fondo alternado
