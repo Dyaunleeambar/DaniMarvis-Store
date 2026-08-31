@@ -123,6 +123,19 @@ export async function generatePDF(products, options = {}) {
   const orientation = photoEnabled ? 'landscape' : (products.length > 5 ? 'landscape' : 'portrait');
   const doc = new JsPDF({ orientation });
 
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+
+  // Reserva inferior para el pie de página + total, para que el contenido de las
+  // tablas no se superponga con ellos al final del documento.
+  const footerText = options.footer && String(options.footer).trim() ? String(options.footer).trim() : '';
+  let footerReserve = 20; // espacio fijo para la línea de total
+  if (footerText) {
+    const fl = doc.splitTextToSize(sanitize(footerText), pageW - 28).length;
+    footerReserve = fl * 4 + 26;
+  }
+  const bottomReserve = footerReserve;
+
   let photoData = {};
   if (photoEnabled) {
     for (const p of products) {
@@ -149,16 +162,14 @@ export async function generatePDF(products, options = {}) {
   doc.line(14, 38, doc.internal.pageSize.getWidth() - 14, 38);
 
   if (style === 'list') {
-    renderListStyle(doc, products, fields, 44);
+    renderListStyle(doc, products, fields, 44, bottomReserve);
   } else if (photoEnabled) {
-    renderTableWithPhotos(doc, products, fields, 44, photoData, title);
+    renderTableWithPhotos(doc, products, fields, 44, photoData, title, bottomReserve);
   } else {
-    renderTableStyle(doc, products, fields, 44);
+    renderTableStyle(doc, products, fields, 44, bottomReserve);
   }
 
   const total = products.reduce((s, p) => s + (p.price || 0), 0);
-  const pageW = doc.internal.pageSize.getWidth();
-  const pageH = doc.internal.pageSize.getHeight();
 
   if (options.footer) {
     doc.setFont('helvetica', 'normal');
@@ -180,7 +191,7 @@ export async function generatePDF(products, options = {}) {
   doc.save(`${title.replace(/\s+/g, '_')}_${Date.now()}.pdf`);
 }
 
-function renderTableStyle(doc, products, fields, startY) {
+function renderTableStyle(doc, products, fields, startY, bottomReserve = 0) {
   const textFields = fields.filter(f => f !== 'photo');
   const headers = textFields.map(f => sanitize(FIELD_LABELS[f] || f));
   const rows = products.map(p => formatRow(p, textFields));
@@ -204,14 +215,14 @@ function renderTableStyle(doc, products, fields, startY) {
     alternateRowStyles: { fillColor: [245, 241, 240] },
     styles: { cellPadding: 3, overflow: 'linebreak' },
     columnStyles,
-    margin: { left: 14, right: 14 },
+    margin: { left: 14, right: 14, bottom: 14 + bottomReserve },
     rowPageBreakAvoid: 'avoid',
   });
 }
 
 // Tabla con foto: nombre en la 1ra columna (con la imagen debajo, grande),
 // campos en las siguientes y la descripción como última columna. Sin cortes.
-function renderTableWithPhotos(doc, products, fields, startY, photoData, title) {
+function renderTableWithPhotos(doc, products, fields, startY, photoData, title, bottomReserve = 0) {
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
   const margin = 14;
@@ -280,8 +291,9 @@ function renderTableWithPhotos(doc, products, fields, startY, photoData, title) 
 
   // ── Preparar filas ──
   // Altura máxima de la imagen en la 1ra página para que una única fila (producto
-  // con foto) quepa tras el encabezado de título sin generar una página en blanco.
-  const bottomLimitPre = pageH - 18;
+  // con foto) quepa tras el encabezado de título sin generar una página en blanco,
+  // respetando el espacio reservado abajo para el pie de página.
+  const bottomLimitPre = pageH - 18 - bottomReserve;
   const firstPageRowSpace = bottomLimitPre - startY - headerH - 2;
   const maxImgH = Math.max(30, Math.min(130, firstPageRowSpace - 34));
 
@@ -314,7 +326,7 @@ function renderTableWithPhotos(doc, products, fields, startY, photoData, title) 
 
   // ── Dibujar ──
   let y = startY;
-  const bottomLimit = pageH - 18;
+  const bottomLimit = pageH - 18 - bottomReserve;
   const topOnNewPage = 16;
   let headerDrawn = false;
 
@@ -381,14 +393,14 @@ function renderTableWithPhotos(doc, products, fields, startY, photoData, title) 
   });
 }
 
-function renderListStyle(doc, products, fields, startY) {
+function renderListStyle(doc, products, fields, startY, bottomReserve = 0) {
   let y = startY;
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 14;
   const maxW = pageW - margin * 2;
 
   products.forEach((product, i) => {
-    if (y > doc.internal.pageSize.getHeight() - 40) {
+    if (y > doc.internal.pageSize.getHeight() - 40 - bottomReserve) {
       doc.addPage();
       y = 20;
     }
