@@ -126,15 +126,15 @@ export async function generatePDF(products, options = {}) {
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
 
-  // Reserva inferior para el pie de página + total, para que el contenido de las
-  // tablas no se superponga con ellos al final del documento.
+  // Margen inferior del contenido (12 mm). El pie de página y el total se colocan
+  // en esa zona, justo debajo del último elemento de contenido.
   const footerText = options.footer && String(options.footer).trim() ? String(options.footer).trim() : '';
-  let footerReserve = 20; // espacio fijo para la línea de total
+  let footerLinesCount = 0;
   if (footerText) {
-    const fl = doc.splitTextToSize(sanitize(footerText), pageW - 28).length;
-    footerReserve = fl * 4 + 26;
+    footerLinesCount = doc.splitTextToSize(sanitize(footerText), pageW - 28).length;
   }
-  const bottomReserve = footerReserve;
+  // Distancia desde el borde inferior hasta donde puede llegar el contenido.
+  const bottomReserve = footerText ? 16 + footerLinesCount * 4 : 12;
 
   let photoData = {};
   if (photoEnabled) {
@@ -176,17 +176,17 @@ export async function generatePDF(products, options = {}) {
     doc.setFontSize(9);
     doc.setTextColor(120, 120, 120);
     const footerLines = doc.splitTextToSize(sanitize(options.footer), pageW - 28);
-    const footerTop = pageH - 20 - footerLines.length * 4;
-    doc.text(footerLines, 14, footerTop);
+    const footerBottom = pageH - 10 - footerLines.length * 4;
+    doc.text(footerLines, 14, footerBottom);
     doc.setDrawColor(201, 132, 122);
     doc.setLineWidth(0.5);
-    doc.line(14, footerTop - 3, pageW - 14, footerTop - 3);
+    doc.line(14, footerBottom - 3, pageW - 14, footerBottom - 3);
   }
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10);
   doc.setTextColor(60, 60, 60);
-  doc.text(sanitize(`Total: ${products.length} producto(s)  ·  Valor total: $${total.toFixed(2)}`), 14, pageH - 14);
+  doc.text(sanitize(`Total: ${products.length} producto(s)  ·  Valor total: $${total.toFixed(2)}`), 14, pageH - 5);
 
   doc.save(`${title.replace(/\s+/g, '_')}_${Date.now()}.pdf`);
 }
@@ -215,7 +215,7 @@ function renderTableStyle(doc, products, fields, startY, bottomReserve = 0) {
     alternateRowStyles: { fillColor: [245, 241, 240] },
     styles: { cellPadding: 3, overflow: 'linebreak' },
     columnStyles,
-    margin: { left: 14, right: 14, bottom: 14 + bottomReserve },
+    margin: { left: 14, right: 14, bottom: bottomReserve + 2 },
     rowPageBreakAvoid: 'avoid',
   });
 }
@@ -293,7 +293,7 @@ function renderTableWithPhotos(doc, products, fields, startY, photoData, title, 
   // Altura máxima de la imagen en la 1ra página para que una única fila (producto
   // con foto) quepa tras el encabezado de título sin generar una página en blanco,
   // respetando el espacio reservado abajo para el pie de página.
-  const bottomLimitPre = pageH - 18 - bottomReserve;
+  const bottomLimitPre = pageH - bottomReserve;
   const firstPageRowSpace = bottomLimitPre - startY - headerH - 2;
   const maxImgH = Math.max(30, Math.min(130, firstPageRowSpace - 34));
 
@@ -326,7 +326,7 @@ function renderTableWithPhotos(doc, products, fields, startY, photoData, title, 
 
   // ── Dibujar ──
   let y = startY;
-  const bottomLimit = pageH - 18 - bottomReserve;
+  const bottomLimit = pageH - bottomReserve;
   const topOnNewPage = 16;
   let headerDrawn = false;
 
@@ -400,7 +400,7 @@ function renderListStyle(doc, products, fields, startY, bottomReserve = 0) {
   const maxW = pageW - margin * 2;
 
   products.forEach((product, i) => {
-    if (y > doc.internal.pageSize.getHeight() - 40 - bottomReserve) {
+    if (y > doc.internal.pageSize.getHeight() - bottomReserve) {
       doc.addPage();
       y = 20;
     }

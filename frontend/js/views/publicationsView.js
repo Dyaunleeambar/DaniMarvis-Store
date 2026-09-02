@@ -13,6 +13,28 @@ let currentContainer = null;
 let allPublications = [];
 let allProducts = [];
 
+const FILTERS_KEY = 'danimarvis_pub_filters';
+
+function loadPubFilters() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(FILTERS_KEY) || '{}');
+    return {
+      search: saved.search || '',
+      category: saved.category || '',
+      provider: saved.provider || '',
+      visibility: saved.visibility || '',
+    };
+  } catch {
+    return { search: '', category: '', provider: '', visibility: '' };
+  }
+}
+
+function savePubFilters(filters) {
+  try {
+    localStorage.setItem(FILTERS_KEY, JSON.stringify(filters));
+  } catch {}
+}
+
 function truncate(text, len = 120) {
   if (!text) return '';
   return text.length > len ? text.slice(0, len) + '...' : text;
@@ -278,6 +300,23 @@ window._openPublicationForm = function(pub) {
   const visibilitySelect = document.getElementById('pub-product-visibility');
   const productSelect = document.getElementById('pub-product-select');
 
+  if (!isEdit) {
+    const saved = loadPubFilters();
+    searchInput.value = saved.search;
+    if (saved.category) catSelect.value = saved.category;
+    if (saved.provider) providerSelect.value = saved.provider;
+    if (saved.visibility !== '') visibilitySelect.value = saved.visibility;
+  }
+
+  function saveFilters() {
+    savePubFilters({
+      search: searchInput.value,
+      category: catSelect.value,
+      provider: providerSelect.value,
+      visibility: visibilitySelect.value,
+    });
+  }
+
   function renderProductSelect() {
     const q = searchInput.value.toLowerCase();
     const cat = catSelect.value;
@@ -298,10 +337,24 @@ window._openPublicationForm = function(pub) {
   }
 
   const debouncedRender = debounce(renderProductSelect, 200);
-  searchInput.addEventListener('input', debouncedRender);
-  catSelect.addEventListener('change', renderProductSelect);
-  providerSelect.addEventListener('change', renderProductSelect);
-  visibilitySelect.addEventListener('change', renderProductSelect);
+  searchInput.addEventListener('input', () => {
+    debouncedRender();
+    saveFilters();
+  });
+  catSelect.addEventListener('change', () => {
+    renderProductSelect();
+    saveFilters();
+  });
+  providerSelect.addEventListener('change', () => {
+    renderProductSelect();
+    saveFilters();
+  });
+  visibilitySelect.addEventListener('change', () => {
+    renderProductSelect();
+    saveFilters();
+  });
+
+  renderProductSelect();
 
   function renderThumbs() {
     thumbsContainer.innerHTML = pubImages.map((url, i) =>
