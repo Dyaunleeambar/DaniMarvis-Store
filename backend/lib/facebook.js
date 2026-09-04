@@ -1,6 +1,14 @@
 const GRAPH_API = 'https://graph.facebook.com/v22.0';
 
-export async function publishToFacebook(pageId, accessToken, { message, imageUrl }) {
+function scheduledParams(scheduledAt) {
+  if (!scheduledAt) return { published: 'true' };
+  return {
+    published: 'false',
+    scheduled_publish_time: Math.floor(new Date(scheduledAt).getTime() / 1000)
+  };
+}
+
+export async function publishToFacebook(pageId, accessToken, { message, imageUrl, scheduledAt }) {
   if (!pageId || !accessToken) {
     throw new Error('Facebook no configurado. Configurá Page ID y Access Token en Ajustes.');
   }
@@ -14,7 +22,7 @@ export async function publishToFacebook(pageId, accessToken, { message, imageUrl
       url: imageUrl,
       message,
       access_token: accessToken,
-      published: 'true'
+      ...scheduledParams(scheduledAt)
     });
 
     const res = await fetch(url, { method: 'POST', body });
@@ -27,7 +35,7 @@ export async function publishToFacebook(pageId, accessToken, { message, imageUrl
   const body = new URLSearchParams({
     message,
     access_token: accessToken,
-    published: 'true'
+    ...scheduledParams(scheduledAt)
   });
 
   const res = await fetch(url, { method: 'POST', body });

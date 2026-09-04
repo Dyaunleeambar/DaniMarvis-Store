@@ -9,7 +9,7 @@ const MIN_INTERVAL_MS = 4 * 60 * 60 * 1000;
 router.get('/', (req, res) => {
   const db = getDB();
   const items = db.prepare(`
-    SELECT pq.*, p.publish_text, p.product_name, p.images
+    SELECT pq.*, p.publish_text, p.product_name, p.images, p.publication_date
     FROM publication_queue pq
     LEFT JOIN publications p ON p.id = pq.publication_id
     ORDER BY pq.created_at DESC
@@ -20,41 +20,67 @@ router.get('/', (req, res) => {
   res.json(items);
 });
 
+router.get('/due', (req, res) => {
+  const db = getDB();
+  const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const items = db.prepare(`
+    SELECT pq.*, p.publish_text, p.product_name, p.images, p.publication_date
+    FROM publication_queue pq
+    LEFT JOIN publications p ON p.id = pq.publication_id
+    WHERE pq.status = 'pending' AND (pq.scheduled_at IS NULL OR pq.scheduled_at <= ?)
+    ORDER BY COALESCE(pq.scheduled_at, pq.created_at) ASC
+  `).all(now);
+  for (const item of items) {
+    try { item.images = JSON.parse(item.images || '[]'); } catch { item.images = []; }
+  }
+  res.json(items);
+});
+
 router.post('/', (req, res) => {
   const db = getDB();
-  const { publication_id, group_name, group_url, variant_index, variant_text, scheduled_at } = req.body;
+  const { publication_id, group_name, group_url, group_ids, variant_index, variant_text, scheduled_at } = req.body;
 
-  if (!group_name || !group_name.trim()) {
-    return res.status(400).json({ error: 'El nombre del grupo es obligatorio' });
+  let targets = [];
+  if (Array.isArray(group_ids) && group_ids.length > 0) {
+    const rows = db.prepare('SELECT id, name, url FROM facebook_groups WHERE id IN (' +
+      group_ids.map(() => '?').join(',') + ')').all(...group_ids);
+    targets = rows.map(g => ({ group_name: g.name, group_url: g.url }));
+  } else if (group_name && group_name.trim()) {
+    targets = [{ group_name: group_name.trim(), group_url: group_url || '' }];
+  }
+
+  if (targets.length === 0) {
+    return res.status(400).json({ error: 'Elegí al menos un grupo o escribí el nombre del grupo' });
   }
 
   let publishText = '';
-  let productName = '';
-  let images = [];
   if (publication_id) {
-    const pub = db.prepare('SELECT publish_text, product_name, images FROM publications WHERE id = ?').get(publication_id);
-    if (pub) {
-      publishText = pub.publish_text || '';
-      productName = pub.product_name || '';
-      try { images = JSON.parse(pub.images || '[]'); } catch { images = []; }
-    }
+    const pub = db.prepare('SELECT publish_text FROM publications WHERE id = ?').get(publication_id);
+    if (pub) publishText = pub.publish_text || '';
   }
 
-  const id = uuid();
-  const text = variant_text || publishText;
-  db.prepare(`
-    INSERT INTO publication_queue (id, publication_id, group_name, group_url, variant_index, variant_text, scheduled_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(id, publication_id || null, group_name.trim(), group_url || '', variant_index || 0, text, scheduled_at || null);
+  const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const createdItems = [];
+  for (const target of targets) {
+    const id = uuid();
+    const text = variant_text || publishText;
+    db.prepare(`
+      INSERT INTO publication_queue (id, publication_id, group_name, group_url, variant_index, variant_text, scheduled_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, publication_id || null, target.group_name, target.group_url || '', variant_index || 0, text, scheduled_at || null);
 
-  const created = db.prepare(`
-    SELECT pq.*, p.publish_text, p.product_name, p.images
-    FROM publication_queue pq
-    LEFT JOIN publications p ON p.id = pq.publication_id
-    WHERE pq.id = ?
-  `).get(id);
-  try { created.images = JSON.parse(created.images || '[]'); } catch { created.images = []; }
-  res.status(201).json(created);
+    const created = db.prepare(`
+      SELECT pq.*, p.publish_text, p.product_name, p.images, p.publication_date
+      FROM publication_queue pq
+      LEFT JOIN publications p ON p.id = pq.publication_id
+      WHERE pq.id = ?
+    `).get(id);
+    try { created.images = JSON.parse(created.images || '[]'); } catch { created.images = []; }
+    createdItems.push(created);
+  }
+
+  if (createdItems.length === 1) return res.status(201).json(createdItems[0]);
+  res.status(201).json(createdItems);
 });
 
 router.patch('/:id', (req, res) => {
@@ -74,7 +100,7 @@ router.patch('/:id', (req, res) => {
   }
 
   const updated = db.prepare(`
-    SELECT pq.*, p.publish_text, p.product_name, p.images
+    SELECT pq.*, p.publish_text, p.product_name, p.images, p.publication_date
     FROM publication_queue pq
     LEFT JOIN publications p ON p.id = pq.publication_id
     WHERE pq.id = ?

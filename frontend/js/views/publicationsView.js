@@ -1,5 +1,6 @@
 import { api } from '../db/api.js';
 import { openModal, closeModal, setModalCloseGuard, showToast, confirmDialog } from '../core/app.js';
+import { navigate } from '../core/router.js';
 import { formatDate, debounce } from '../utils/utils.js';
 
 function escHtml(str) {
@@ -530,23 +531,167 @@ window._editPublication = async function(id) {
 };
 
 window._publishPublication = async function(id, platform = 'facebook') {
-  const name = platform === 'instagram' ? 'Instagram' : 'Facebook';
-  const ok = await confirmDialog(`¿Publicar en ${name}?`);
-  if (!ok) return;
+  const isIg = platform === 'instagram';
+
+  let publications = [];
+  let groups = [];
+  let settings = null;
   try {
-    const result = await api.publishPublication(id, platform);
-    showToast(`Publicado en ${result.platform}`, 'success');
-    if (result.post_url) {
-      const view = await confirmDialog('Publicación exitosa. ¿Abrir en el navegador?', {
-        title: 'Publicado',
-        confirmText: 'Abrir',
-        danger: false
-      });
-      if (view) window.open(result.post_url, '_blank');
+    publications = await api.getPublications();
+  } catch { /* continúa con lista vacía */ }
+  try {
+    groups = await api.getGroups();
+  } catch {}
+  try {
+    settings = await api.getSettings();
+  } catch {}
+
+  const defaultPubId = id || publications[0]?.id || '';
+  const fbConfig = settings?.publish_config?.facebook || {};
+
+  openModal(`
+    <div class="modal-header">
+      <h2>${isIg ? 'Publicar en Instagram' : 'Publicar en Facebook'}</h2>
+      <button class="modal-close" onclick="closeModal()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Publicación</label>
+        <select id="pubx-select" class="form-control">
+          ${publications.length ? publications.map(p =>
+            `<option value="${p.id}" ${p.id === defaultPubId ? 'selected' : ''}>${escHtml(p.product_name || 'Sin producto')} — ${formatDate(p.publication_date || p.created_at)}</option>`
+          ).join('') : '<option value="">Sin publicaciones</option>'}
+        </select>
+      </div>
+
+      ${isIg ? '' : `
+      <div class="form-group">
+        <label>Grupos de Facebook</label>
+        <div id="pubx-groups" style="display:flex;flex-direction:column;gap:6px;max-height:220px;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:10px;background:var(--bg)">
+          ${groups.length ? groups.map(g =>
+            `<label style="display:flex;align-items:center;gap:8px;font-size:.82rem;cursor:pointer">
+              <input type="checkbox" value="${g.id}" class="pubx-group-cb" /> ${escHtml(g.name)}
+            </label>`
+          ).join('') : '<span style="font-size:.78rem;color:var(--text-muted)">No hay grupos registrados. Agregalos en "Gestionar grupos".</span>'}
+        </div>
+        ${groups.length ? `
+        <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+          <button type="button" class="btn btn--sm btn--ghost" id="pubx-select-all">Todos</button>
+          <button type="button" class="btn btn--sm btn--ghost" id="pubx-select-none">Ninguno</button>
+          <button type="button" class="btn btn--sm btn--secondary" id="pubx-manage-groups">Gestionar grupos</button>
+        </div>` : `
+        <div style="margin-top:6px">
+          <button type="button" class="btn btn--sm btn--secondary" id="pubx-manage-groups">Gestionar grupos</button>
+        </div>`}
+        <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:6px">
+          Se agenda la publicación en cada grupo elegido. Cuando llegue la hora quedará "Listo para publicar" en la Cola de Publicaciones.
+        </small>
+      </div>
+      `}
+
+      <div class="form-group">
+        <label>Programar para (opcional)</label>
+        <input type="datetime-local" id="pubx-sched" class="form-control" />
+        <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">
+          Vacío = los grupos quedan listos ya y la Página se publica de inmediato. Mínimo 10 minutos para programar.
+        </small>
+      </div>
+
+      ${!isIg ? `
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:.85rem">
+          <input type="checkbox" id="pubx-page" /> Publicar también en mi Página (API)
+        </label>
+        ${fbConfig.page_id && fbConfig.access_token
+          ? `<small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">
+              La publicación sale por API a tu Página (${escHtml(fbConfig.page_id)}). Si programás, la publica Meta solo.
+            </small>`
+          : `<small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">
+              Aún no configuraste tu Página. Publicar solo ahí requiere el Page ID y el Access Token.
+              <a href="#" id="pubx-go-settings">Configurar en Ajustes</a>.
+            </small>`}
+      </div>
+      ` : ''}
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn btn--secondary" onclick="closeModal()">Cancelar</button>
+      <button type="button" class="btn btn--primary" id="pubx-submit">${isIg ? 'Publicar' : 'Agendar / Publicar'}</button>
+    </div>
+  `);
+
+  const selectEl = document.getElementById('pubx-select');
+  const schedEl = document.getElementById('pubx-sched');
+  const submitBtn = document.getElementById('pubx-submit');
+
+  document.getElementById('pubx-select-all')?.addEventListener('click', () => {
+    document.querySelectorAll('.pubx-group-cb').forEach(cb => { cb.checked = true; });
+  });
+  document.getElementById('pubx-select-none')?.addEventListener('click', () => {
+    document.querySelectorAll('.pubx-group-cb').forEach(cb => { cb.checked = false; });
+  });
+  document.getElementById('pubx-manage-groups')?.addEventListener('click', () => {
+    closeModal(true);
+    navigate('#/pub-queue?tab=groups');
+  });
+  document.getElementById('pubx-go-settings')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    closeModal(true);
+    navigate('#/settings');
+  });
+
+  submitBtn?.addEventListener('click', async () => {
+    if (submitBtn.disabled) return;
+    const pubId = selectEl?.value;
+    if (!pubId || !publications.some(p => p.id === pubId)) {
+      showToast('Elegí una publicación', 'warning');
+      return;
     }
-  } catch (err) {
-    showToast(err.message, 'error');
-  }
+
+    const sched = schedEl?.value || '';
+    const iso = sched ? new Date(sched).toISOString() : null;
+    const groupIds = [...document.querySelectorAll('.pubx-group-cb:checked')].map(cb => cb.value);
+    const doPage = !!document.getElementById('pubx-page')?.checked;
+    const hasPageConfig = !!(fbConfig.page_id && fbConfig.access_token);
+
+    if (doPage && !hasPageConfig) {
+      showToast('Configurá tu Page ID y Access Token en Ajustes para publicar en la Página', 'warning');
+      return;
+    }
+
+    if (!groupIds.length && !doPage && !isIg) {
+      showToast(hasPageConfig
+        ? 'Elegí al menos un grupo, o marcá "Publicar también en mi Página"'
+        : 'Elegí al menos un grupo, o configurá tu Página en Ajustes para publicar solo ahí', 'warning');
+      return;
+    }
+
+    submitBtn.disabled = true;
+    try {
+      if (groupIds.length) {
+        await api.addToPubQueue({
+          publication_id: pubId,
+          group_ids: groupIds,
+          scheduled_at: iso ? iso.slice(0, 19).replace('T', ' ') : null,
+        });
+        showToast(sched ? `${groupIds.length} grupo(s) agendado(s) para ${new Date(sched).toLocaleString()}` : `${groupIds.length} grupo(s) listos para publicar`, 'success');
+      }
+      if (doPage) {
+        const result = await api.publishPublication(pubId, 'facebook', iso);
+        showToast(sched ? 'Página: publicación programada en Meta' : 'Página: publicación realizada', 'success');
+        if (result.post_url && !sched) {
+          const openIt = await confirmDialog('¿Abrir la publicación?', { title: 'Publicado', confirmText: 'Abrir', danger: false });
+          if (openIt) window.open(result.post_url, '_blank');
+        }
+      }
+      closeModal(true);
+      render(currentContainer);
+    } catch (err) {
+      showToast(err.message, 'error');
+      submitBtn.disabled = false;
+    }
+  });
 };
 
 window._copyPublication = async function(id) {

@@ -55,6 +55,15 @@ function generateVariants(text) {
 
 export async function render(container) {
   currentContainer = container;
+  const qIndex = window.location.hash.indexOf('?');
+  const query = qIndex >= 0 ? window.location.hash.slice(qIndex + 1) : '';
+  const params = new URLSearchParams(query);
+  if (params.get('tab') === 'groups') currentTab = 'groups';
+  else if (params.get('tab') === 'pending') currentTab = 'pending';
+  else if (params.get('tab') === 'add') currentTab = 'add';
+  else if (params.get('tab') === 'history') currentTab = 'history';
+  else if (params.get('tab') === 'timers') currentTab = 'timers';
+
   container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-secondary)">Cargando...</div>';
   try {
     renderPage(container);
@@ -79,6 +88,7 @@ function renderPage(container) {
         <button class="btn btn--sm ${currentTab === 'add' ? 'btn--primary' : 'btn--secondary'}" id="tab-add">Agregar a cola</button>
         <button class="btn btn--sm ${currentTab === 'history' ? 'btn--primary' : 'btn--secondary'}" id="tab-history">Historial</button>
         <button class="btn btn--sm ${currentTab === 'timers' ? 'btn--primary' : 'btn--secondary'}" id="tab-timers">Temporizadores</button>
+        <button class="btn btn--sm ${currentTab === 'groups' ? 'btn--primary' : 'btn--secondary'}" id="tab-groups">Grupos</button>
       </div>
       <div id="pubq-tab-content"></div>
     </div>
@@ -88,6 +98,7 @@ function renderPage(container) {
   document.getElementById('tab-add').addEventListener('click', () => { currentTab = 'add'; renderPage(container); });
   document.getElementById('tab-history').addEventListener('click', () => { currentTab = 'history'; renderPage(container); });
   document.getElementById('tab-timers').addEventListener('click', () => { currentTab = 'timers'; renderPage(container); });
+  document.getElementById('tab-groups').addEventListener('click', () => { currentTab = 'groups'; renderPage(container); });
 
   const content = document.getElementById('pubq-tab-content');
 
@@ -96,17 +107,20 @@ function renderPage(container) {
     case 'add': renderAddForm(content); break;
     case 'history': renderHistory(content); break;
     case 'timers': renderTimers(content); break;
+    case 'groups': renderGroups(content); break;
   }
 }
 
 async function renderPending(container) {
   container.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-secondary)">Cargando cola...</div>';
   try {
-    const [items, timerData] = await Promise.all([
+    const [items, timerData, dueItems] = await Promise.all([
       api.getPubQueue(),
-      api.getPubQueueTimer()
+      api.getPubQueueTimer(),
+      api.getPubQueueDue()
     ]);
 
+    const dueIds = new Set(dueItems.map(d => d.id));
     const pending = items.filter(i => i.status === 'pending');
     const timerMap = {};
     for (const t of timerData.timers) {
@@ -118,7 +132,7 @@ async function renderPending(container) {
         <div class="empty-state" style="padding:48px">
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
           <h3>Cola vacía</h3>
-          <p>Agregá publicaciones desde la pestaña "Agregar a cola"</p>
+          <p>Agregá publicaciones desde "Publicar en Facebook" o la pestaña "Agregar a cola"</p>
         </div>`;
       return;
     }
@@ -128,16 +142,28 @@ async function renderPending(container) {
         ${pending.map(item => {
           const timer = timerMap[item.group_name.toLowerCase()];
           const canPublish = !timer || timer.can_publish;
+          const isDue = dueIds.has(item.id);
+
+          let stateHtml = '';
+          if (item.scheduled_at && !isDue) {
+            stateHtml = `<span style="font-size:.72rem;color:var(--text-muted)">📅 Programado para ${formatDateTime(item.scheduled_at)}</span>`;
+          } else if (isDue) {
+            stateHtml = `<span style="font-size:.72rem;color:var(--success);font-weight:600">⏰ Listo para publicar</span>`;
+          } else {
+            stateHtml = `<span style="font-size:.72rem;color:var(--success)">✓ Listo</span>`;
+          }
+
           const timerHtml = timer && !canPublish
-            ? `<span style="font-size:.72rem;color:var(--text-muted)">⏰ ${formatTimer(timer.remaining_ms)}</span>`
-            : `<span style="font-size:.72rem;color:var(--success)">✓ Listo</span>`;
+            ? `<span style="font-size:.72rem;color:var(--text-muted)">⏳ ${formatTimer(timer.remaining_ms)} cooldown del grupo</span>`
+            : '';
 
           return `
             <div class="card" style="padding:16px" data-id="${item.id}">
               <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
                 <div style="flex:1;min-width:0">
-                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
                     <span style="font-weight:600;font-size:.9rem;color:var(--rose)">${escHtml(item.group_name)}</span>
+                    ${stateHtml}
                     ${timerHtml}
                     ${item.variant_index > 0 ? `<span style="font-size:.68rem;padding:2px 6px;border-radius:50px;background:var(--bg);color:var(--text-muted)">variante ${item.variant_index}</span>` : ''}
                   </div>
@@ -147,6 +173,7 @@ async function renderPending(container) {
                   <div style="font-size:.72rem;color:var(--text-muted)">Clic en el texto para copiar</div>
                 </div>
                 <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">
+                  ${isDue ? `<button class="btn btn--sm btn--primary pubq-open-group" data-id="${item.id}">Abrir grupo + copiar</button>` : ''}
                   <button class="btn btn--sm btn--primary pubq-mark-published" data-id="${item.id}" ${!canPublish ? 'disabled style="opacity:.5"' : ''}>Publicado</button>
                   <button class="btn btn--sm btn--ghost pubq-skip" data-id="${item.id}">Omitir</button>
                   <button class="btn btn--sm btn--ghost pubq-delete" data-id="${item.id}" style="color:var(--error)">Quitar</button>
@@ -161,6 +188,24 @@ async function renderPending(container) {
         const text = el.dataset.text;
         navigator.clipboard.writeText(text).then(() => {
           showToast('Texto copiado al portapapeles', 'success');
+        }).catch(() => {
+          showToast('No se pudo copiar', 'error');
+        });
+      });
+    });
+
+    container.querySelectorAll('.pubq-open-group').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const item = pending.find(i => i.id === btn.dataset.id);
+        if (!item) return;
+        const text = item.variant_text || item.publish_text || '';
+        navigator.clipboard.writeText(text).then(() => {
+          if (item.group_url) {
+            window.open(item.group_url, '_blank');
+            showToast('Texto copiado. Pegalo en el grupo', 'success');
+          } else {
+            showToast('Sin URL del grupo. Texto copiado.', 'success');
+          }
         }).catch(() => {
           showToast('No se pudo copiar', 'error');
         });
@@ -427,6 +472,107 @@ async function renderTimers(container) {
   } catch (err) {
     container.innerHTML = `<div class="empty-state"><h3>Error</h3><p>${err.message}</p></div>`;
   }
+}
+
+async function renderGroups(container) {
+  container.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-secondary)">Cargando grupos...</div>';
+  let groups = [];
+  try {
+    groups = await api.getGroups();
+  } catch (err) {
+    container.innerHTML = `<div class="empty-state"><h3>Error</h3><p>${err.message}</p></div>`;
+    return;
+  }
+
+  container.innerHTML = `
+    <div style="padding:16px;max-width:720px">
+      <div class="card" style="padding:16px;margin-bottom:12px">
+        <h3 style="margin:0 0 12px;font-size:.95rem">Agregar grupo de Facebook</h3>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input type="text" id="g-new-name" class="form-control" placeholder="Nombre del grupo" style="flex:1;min-width:180px" />
+          <input type="text" id="g-new-url" class="form-control" placeholder="https://facebook.com/groups/..." style="flex:2;min-width:220px" />
+          <button class="btn btn--primary" id="g-add-btn">Agregar</button>
+        </div>
+        <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:6px">
+          Facebook ya no permite publicar por API en grupos; esta lista alimenta el modal "Publicar en Facebook" para armar tu agenda.
+        </small>
+      </div>
+
+      ${groups.length === 0
+        ? '<div class="empty-state" style="padding:36px"><h3>Sin grupos</h3><p>Agregá los grupos donde publicás</p></div>'
+        : `<div style="display:flex;flex-direction:column;gap:8px">
+            ${groups.map(g => `
+              <div class="card" style="padding:12px;display:flex;justify-content:space-between;align-items:center;gap:12px" data-id="${g.id}">
+                <div style="flex:1;min-width:0">
+                  <div style="font-weight:600;font-size:.88rem">${escHtml(g.name)}</div>
+                  ${g.url ? `<a href="${escAttr(g.url)}" target="_blank" rel="noopener" style="font-size:.72rem;color:var(--text-muted)">${escHtml(g.url)}</a>` : '<span style="font-size:.72rem;color:var(--text-muted)">Sin URL</span>'}
+                </div>
+                <div style="display:flex;gap:6px;flex-shrink:0">
+                  <button class="btn btn--sm btn--ghost g-edit" data-id="${g.id}">Editar</button>
+                  <button class="btn btn--sm btn--ghost g-remove" data-id="${g.id}" style="color:var(--error)">Eliminar</button>
+                </div>
+              </div>
+            `).join('')}
+          </div>`
+      }
+    </div>
+  `;
+
+  document.getElementById('g-add-btn')?.addEventListener('click', async () => {
+    const name = document.getElementById('g-new-name').value.trim();
+    const url = document.getElementById('g-new-url').value.trim();
+    if (!name) { showToast('Escribí el nombre del grupo', 'error'); return; }
+    try {
+      await api.createGroup({ name, url });
+      showToast('Grupo agregado', 'success');
+      renderGroups(container);
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+
+  container.querySelectorAll('.g-remove').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const ok = await confirmDialog('¿Eliminar este grupo? Las publicaciones ya agendadas no se tocan.');
+      if (!ok) return;
+      try {
+        await api.deleteGroup(btn.dataset.id);
+        showToast('Grupo eliminado', 'success');
+        renderGroups(container);
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+  });
+
+  container.querySelectorAll('.g-edit').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const card = btn.closest('.card');
+      card.querySelector('div[style*="flex:1"]').style.display = 'none';
+      card.querySelector('.g-edit').style.display = 'none';
+      card.querySelector('.g-remove').style.display = 'none';
+      card.innerHTML += `
+        <div style="display:flex;gap:6px;flex:1;flex-wrap:wrap" id="g-edit-form">
+          <input type="text" id="g-edit-name" class="form-control" value="${escAttr(groups.find(x => x.id === btn.dataset.id)?.name || '')}" placeholder="Nombre" />
+          <input type="text" id="g-edit-url" class="form-control" value="${escAttr(groups.find(x => x.id === btn.dataset.id)?.url || '')}" placeholder="https://..." />
+          <button class="btn btn--sm btn--primary" id="g-edit-save">Guardar</button>
+          <button class="btn btn--sm btn--ghost" id="g-edit-cancel">Cancelar</button>
+        </div>`;
+      document.getElementById('g-edit-cancel').addEventListener('click', () => renderGroups(container));
+      document.getElementById('g-edit-save').addEventListener('click', async () => {
+        const name = document.getElementById('g-edit-name').value.trim();
+        const url = document.getElementById('g-edit-url').value.trim();
+        if (!name) { showToast('El nombre es obligatorio', 'error'); return; }
+        try {
+          await api.updateGroup(btn.dataset.id, { name, url });
+          showToast('Grupo actualizado', 'success');
+          renderGroups(container);
+        } catch (err) {
+          showToast(err.message, 'error');
+        }
+      });
+    });
+  });
 }
 
 function startTimerRefresh() {

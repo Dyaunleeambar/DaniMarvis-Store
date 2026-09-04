@@ -83,6 +83,7 @@ export async function initDB() {
   migrateProviderStyleCode();
   migrateProviderStyles();
   migrateWarrantyRules();
+  migrateFacebookGroups();
   saveDB();
 }
 
@@ -431,6 +432,19 @@ function migrateProviderStyles() {
     }
     console.log('[DB] Perfiles de proveedor por defecto creados: GE, EM, MM');
   }
+}
+
+function migrateFacebookGroups() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS facebook_groups (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      url TEXT DEFAULT '',
+      sort_order INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+  `);
 }
 
 function migrateWarrantyRules() {

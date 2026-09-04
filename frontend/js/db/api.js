@@ -106,7 +106,7 @@ export const api = {
   updatePublication: (id, data) => request('PUT', `/publications/${id}`, data),
   deletePublication: (id) => request('DELETE', `/publications/${id}`),
   reorderPublications: (order) => request('PATCH', '/publications/reorder', { order }),
-  publishPublication: (id, platform = 'facebook') => request('POST', `/publications/${id}/publish`, { platform }),
+  publishPublication: (id, platform = 'facebook', scheduledAt = null) => request('POST', `/publications/${id}/publish`, { platform, scheduled_at: scheduledAt }),
 
   // AI
   generateDescription: (data) => request('POST', '/generate-description', data),
@@ -131,10 +131,17 @@ export const api = {
 
   // Publication Queue
   getPubQueue: () => request('GET', '/pub-queue'),
+  getPubQueueDue: () => request('GET', '/pub-queue/due'),
   addToPubQueue: (data) => request('POST', '/pub-queue', data),
   updatePubQueue: (id, data) => request('PATCH', `/pub-queue/${id}`, data),
   deletePubQueue: (id) => request('DELETE', `/pub-queue/${id}`),
   getPubQueueTimer: () => request('GET', '/pub-queue/timer'),
+
+  // Facebook Groups
+  getGroups: () => request('GET', '/groups'),
+  createGroup: (data) => request('POST', '/groups', data),
+  updateGroup: (id, data) => request('PUT', `/groups/${id}`, data),
+  deleteGroup: (id) => request('DELETE', `/groups/${id}`),
 
   // Prompt Engine
   getPromptFamilies: () => request('GET', '/prompt-engine/families'),

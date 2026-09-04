@@ -111,9 +111,21 @@ router.post('/:id/publish', async (req, res) => {
   try { pc = JSON.parse(settings.publish_config || '{}'); } catch {}
   const fb = pc.facebook || {};
 
-  const { platform = 'facebook' } = req.body;
+  const { platform = 'facebook', scheduled_at } = req.body;
   const images = [];
   try { images.push(...JSON.parse(pub.images || '[]')); } catch {}
+
+  if (scheduled_at) {
+    const diffMs = new Date(scheduled_at).getTime() - Date.now();
+    const minMs = 10 * 60 * 1000;
+    const maxMs = 75 * 24 * 60 * 60 * 1000;
+    if (diffMs < minMs) {
+      return res.status(400).json({ error: 'Programá con al menos 10 minutos de anticipación' });
+    }
+    if (diffMs > maxMs) {
+      return res.status(400).json({ error: 'Solo se puede programar hasta 75 días en el futuro' });
+    }
+  }
 
   try {
     let result;
@@ -126,7 +138,8 @@ router.post('/:id/publish', async (req, res) => {
     } else {
       result = await publishToFacebook(fb.page_id, fb.access_token, {
         message: pub.publish_text,
-        imageUrl: images[0] || null
+        imageUrl: images[0] || null,
+        scheduledAt: scheduled_at || null
       });
     }
     res.json(result);
