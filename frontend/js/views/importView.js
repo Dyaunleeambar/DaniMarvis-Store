@@ -165,6 +165,9 @@ function renderResults(container, data) {
                 <option value="">— Sin producto / no aplicar —</option>
                 ${productOptions}
               </select>
+              <button type="button" class="btn btn--sm btn--ghost imp-discard" title="Descartar esta imagen (no analizar)" style="padding:4px 7px;color:var(--text-muted);flex-shrink:0">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
               <button type="button" class="btn btn--sm btn--ghost imp-new" title="Crear producto nuevo con los datos de esta imagen" style="padding:4px 7px;color:var(--rose);flex-shrink:0">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               </button>
@@ -182,9 +185,14 @@ function renderResults(container, data) {
   }).join('');
 
   results.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-      <div style="font-size:.85rem;color:var(--text-secondary)">
-        Proveedor: <b>${escHtml(data.provider)}</b> · ${data.items.length} imagen(es)
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+      <div style="display:flex;align-items:center;gap:14px">
+        <label style="display:flex;align-items:center;gap:5px;font-size:.82rem;cursor:pointer">
+          <input type="checkbox" id="imp-toggle-all" checked /> Marcar / desmarcar todos
+        </label>
+        <div style="font-size:.85rem;color:var(--text-secondary)">
+          Proveedor: <b>${escHtml(data.provider)}</b> · ${data.items.length} imagen(es)
+        </div>
       </div>
       <label style="display:flex;align-items:center;gap:6px;font-size:.82rem;cursor:pointer">
         <input type="checkbox" id="imp-hide-absent" /> Ocultar productos del proveedor que no aparecen
@@ -224,6 +232,18 @@ function renderResults(container, data) {
     btn.addEventListener('click', () => {
       card.dataset.visible = card.dataset.visible === '0' ? '1' : '0';
       updateEyeIcon(btn, card);
+    });
+  });
+
+  document.getElementById('imp-toggle-all').addEventListener('change', (e) => {
+    const checked = e.target.checked;
+    results.querySelectorAll('.imp-apply').forEach(cb => { cb.checked = checked; });
+  });
+
+  results.querySelectorAll('.imp-discard').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const card = btn.closest('[data-idx]');
+      if (card) card.remove();
     });
   });
 
