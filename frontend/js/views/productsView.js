@@ -147,6 +147,9 @@ function renderTable(container, products, providers) {
                         <button class="btn btn--sm btn--ghost" onclick="window._editProduct('${p.id}')" title="Editar">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                         </button>
+                        <button class="btn btn--sm btn--ghost" onclick="window._duplicateProduct('${p.id}')" title="Duplicar para otro proveedor">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                        </button>
                         <button class="btn btn--sm btn--ghost" onclick="window._deleteProduct('${p.id}')" title="Eliminar" style="color:var(--error)">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                         </button>
@@ -208,6 +211,7 @@ async function ensureFormMeta() {
 
 export async function openProductForm(product, options = {}) {
   await ensureFormMeta();
+  const isDuplicate = !!options.isDuplicate;
   const presetName = options.name;
   const presetPrice = options.price;
   const presetProviderId = options.providerId;
@@ -227,7 +231,7 @@ export async function openProductForm(product, options = {}) {
 
   const formHtml = `
     <form id="product-form">
-      <input type="hidden" name="id" value="${product?.id || ''}" />
+      <input type="hidden" name="id" value="${isDuplicate ? '' : (product?.id || '')}" />
       <div class="form-group">
         <label>Nombre del producto *</label>
         <input type="text" name="name" class="form-control" value="${escAttr(product?.name || presetName || '')}" required />
@@ -334,7 +338,7 @@ export async function openProductForm(product, options = {}) {
       </div>
       <div class="form-actions">
         <button type="button" class="btn btn--secondary" onclick="closeModal()">Cancelar</button>
-        <button type="submit" class="btn btn--primary">${product ? 'Guardar cambios' : 'Crear producto'}</button>
+        <button type="submit" class="btn btn--primary">${product && !isDuplicate ? 'Guardar cambios' : 'Crear producto'}</button>
       </div>
     </form>`;
 
@@ -344,7 +348,7 @@ export async function openProductForm(product, options = {}) {
 
   openModal(`
     <div class="modal-header">
-      <h2>${product ? 'Editar producto' : 'Nuevo producto'}</h2>
+      <h2>${isDuplicate ? 'Duplicar producto' : (product ? 'Editar producto' : 'Nuevo producto')}</h2>
       <button class="modal-close" onclick="closeModal()">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
@@ -607,7 +611,7 @@ export async function openProductForm(product, options = {}) {
 
     try {
       let createdProduct;
-      if (product) {
+      if (product && !isDuplicate) {
         await api.updateProduct(product.id, data);
         showToast('Producto actualizado', 'success');
       } else {
@@ -628,8 +632,17 @@ export async function openProductForm(product, options = {}) {
   });
 }
 
-window._openProductForm = function(product) {
-  openProductForm(product);
+window._openProductForm = function(product, options = {}) {
+  openProductForm(product, options);
+};
+
+window._duplicateProduct = async function(id) {
+  try {
+    const product = await api.getProduct(id);
+    window._openProductForm(product, { isDuplicate: true });
+  } catch (err) {
+    showToast('Error al cargar producto', 'error');
+  }
 };
 
 function snapshotForm(form) {
