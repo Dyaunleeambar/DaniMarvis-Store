@@ -213,7 +213,7 @@ app.post('/api/generate-description', async (req, res) => {
           { role: 'user', content: userPrompt }
         ],
         temperature: 0.7,
-        max_tokens: 600
+        max_tokens: 1500
       })
     });
 
@@ -222,7 +222,13 @@ app.post('/api/generate-description', async (req, res) => {
       throw new Error(`API ${response.status}: ${errBody.slice(0, 200)}`);
     }
 
-    const data = await response.json();
+    const rawBody = await response.text().catch(() => '');
+    let data;
+    try {
+      data = JSON.parse(rawBody);
+    } catch {
+      throw new Error('El proveedor no devolvió JSON válido. Revisá la URL del API en Ajustes > Generación con IA.');
+    }
     const generated = data.choices?.[0]?.message?.content?.trim();
     if (!generated) throw new Error('La IA no generó contenido');
 

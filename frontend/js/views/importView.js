@@ -5,6 +5,9 @@ import { openProductForm } from './productsView.js';
 function escHtml(str) {
   return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+function escAttr(str) {
+  return String(str ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
 
 const EYE_OPEN = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
 const EYE_CLOSED = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
@@ -132,6 +135,13 @@ function renderResults(container, data) {
     return;
   }
 
+  const categories = [...new Set(data.products.map(p => p.category).filter(Boolean))].sort();
+  function categoryOptions(selected = '') {
+    return categories.map(c =>
+      `<option value="${escAttr(c)}" ${selected === c ? 'selected' : ''}>${escHtml(c)}</option>`
+    ).join('');
+  }
+
   const itemsHtml = data.items.map((it, i) => {
     if (it.error) {
       return `
@@ -139,7 +149,10 @@ function renderResults(container, data) {
           <b>${escHtml(it.filename)}</b> — <span style="color:var(--error)">${escHtml(it.error)}</span>
         </div>`;
     }
-    const productOptions = data.products.map(p =>
+    const matchProduct = it.product ? data.products.find(p => p.id === it.product.id) : null;
+    const defaultCat = matchProduct?.category || '';
+    const initialPool = defaultCat ? data.products.filter(p => p.category === defaultCat) : data.products;
+    const productOptions = initialPool.map(p =>
       `<option value="${p.id}" ${it.product && p.id === it.product.id ? 'selected' : ''}>${escHtml(p.name)}</option>`
     ).join('');
     const matchBadge = it.product
@@ -160,8 +173,12 @@ function renderResults(container, data) {
             <span style="font-size:.72rem;color:var(--text-muted);word-break:break-all;flex:1">${escHtml(it.filename)}</span>
           </div>
           <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-            <div style="display:flex;gap:6px;align-items:center;flex:1;min-width:260px">
-              <select class="imp-product form-control form-control--small" style="flex:1;min-width:150px">
+            <div style="display:flex;gap:6px;align-items:center;flex:1;min-width:320px">
+              <select class="imp-filter-cat form-control form-control--small" style="max-width:120px;flex-shrink:0" title="Filtrar productos por categoría">
+                <option value="">Todas las categorías</option>
+                ${categoryOptions(defaultCat)}
+              </select>
+              <select class="imp-product form-control form-control--small" style="flex:1;min-width:130px">
                 <option value="">— Sin producto / no aplicar —</option>
                 ${productOptions}
               </select>
@@ -174,7 +191,7 @@ function renderResults(container, data) {
               <button type="button" class="btn btn--sm btn--ghost imp-eye" title="Mostrar/ocultar en catálogo" style="padding:4px 7px;flex-shrink:0"></button>
             </div>
             <input type="number" step="any" min="1" class="imp-price form-control form-control--small" value="${priceVal}" style="max-width:110px" placeholder="Precio USD" />
-            <span style="font-size:.78rem;color:var(--text-muted)">actual: ${current}</span>
+            <span class="imp-current" style="font-size:.78rem;color:var(--text-muted)">actual: ${current}</span>
           </div>
           <details style="font-size:.72rem;color:var(--text-muted)">
             <summary style="cursor:pointer">Texto detectado por OCR</summary>
@@ -235,6 +252,45 @@ function renderResults(container, data) {
     });
   });
 
+  function updateCurrentPrice(card) {
+    const select = card.querySelector('.imp-product');
+    if (!select) return;
+    const p = data.products.find(pr => pr.id === select.value);
+    const span = card.querySelector('.imp-current');
+    if (!span) return;
+    span.textContent = p
+      ? `actual: $${Number(p.price).toLocaleString('es-CO')}`
+      : 'actual: —';
+  }
+
+  results.querySelectorAll('[data-idx]').forEach(card => {
+    const catSel = card.querySelector('.imp-filter-cat');
+    if (!catSel) return;
+    function renderCardOptions() {
+      const cat = catSel.value;
+      const select = card.querySelector('.imp-product');
+      const currentVal = select.value;
+      const pool = data.products.filter(p => {
+        if (cat && p.category !== cat) return false;
+        return true;
+      });
+      let html = '<option value="">— Sin producto / no aplicar —</option>';
+      for (const p of pool) {
+        html += `<option value="${p.id}" ${p.id === currentVal ? 'selected' : ''}>${escHtml(p.name)}</option>`;
+      }
+      if (currentVal) {
+        const kept = data.products.find(p => p.id === currentVal);
+        if (kept && !pool.some(p => p.id === currentVal)) {
+          html += `<option value="${currentVal}" selected>${escHtml(kept.name)}</option>`;
+        }
+      }
+      select.innerHTML = html;
+    }
+    catSel.addEventListener('change', renderCardOptions);
+    const prodSel = card.querySelector('.imp-product');
+    prodSel.addEventListener('change', () => updateCurrentPrice(card));
+  });
+
   document.getElementById('imp-toggle-all').addEventListener('change', (e) => {
     const checked = e.target.checked;
     results.querySelectorAll('.imp-apply').forEach(cb => { cb.checked = checked; });
@@ -272,6 +328,7 @@ function renderResults(container, data) {
               select.insertAdjacentHTML('beforeend', `<option value="${created.id}" selected>${escHtml(created.name)}</option>`);
               select.value = created.id;
             }
+            updateCurrentPrice(card);
             const apply = card.querySelector('.imp-apply');
             if (apply && !apply.checked) apply.checked = true;
           },

@@ -32,7 +32,7 @@ router.post('/analyze', async (req, res) => {
   if (!provider) return res.status(404).json({ error: 'Proveedor no encontrado' });
 
   const products = db.prepare(
-    'SELECT id, name, price, catalog_visible FROM products WHERE provider_id = ? ORDER BY name'
+    'SELECT id, name, price, category, catalog_visible FROM products WHERE provider_id = ? ORDER BY name'
   ).all(provider_id);
 
   const outDir = join(__dirname, '..', 'uploads', 'import');

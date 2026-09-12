@@ -91,21 +91,22 @@ function renderPage(container, settings, categories, providerStyles) {
               <div class="form-row">
                 <div class="form-group">
                   <label>API URL</label>
-                  <input type="url" name="ai_api_url" class="form-control" value="${escAttr(ai.api_url || 'https://api.openai.com/v1')}" placeholder="https://api.openai.com/v1" />
+                  <input type="url" name="ai_api_url" class="form-control" value="${escAttr(ai.api_url || 'https://openrouter.ai/api/v1')}" placeholder="https://openrouter.ai/api/v1" />
                 </div>
                 <div class="form-group">
                   <label>Modelo</label>
-                  <input type="text" name="ai_model" class="form-control" value="${escAttr(ai.model || 'gpt-4o-mini')}" placeholder="gpt-4o-mini" />
+                  <input type="text" name="ai_model" class="form-control" value="${escAttr(ai.model || 'nex-agi/nex-n2.5-pro:free')}" placeholder="nex-agi/nex-n2.5-pro:free" />
                 </div>
               </div>
               <div class="form-group">
                 <label>API Key</label>
-                <input type="password" name="ai_api_key" class="form-control" value="${escAttr(ai.api_key || '')}" placeholder="sk-..." />
+                <input type="password" name="ai_api_key" class="form-control" value="${escAttr(ai.api_key || '')}" placeholder="sk-or-v1-... / AIza..." />
                 <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">
-                  Probá gratis con <a href="https://freetokenrouter.cn" target="_blank" rel="noopener">Free Token Router</a>
-                  (modelo: <code>qwen-turbo</code>, URL: <code>https://freetokenrouter.cn/api/v1</code>)
-                  o <a href="https://openrouter.ai" target="_blank" rel="noopener">OpenRouter</a>
-                  (modelo: <code>openrouter/free</code>)
+                  Probá gratis con <a href="https://openrouter.ai" target="_blank" rel="noopener">OpenRouter</a>
+                  (URL: <code>https://openrouter.ai/api/v1</code>, modelo: <code>nex-agi/nex-n2.5-pro:free</code>)
+                  o con <a href="https://console.groq.com" target="_blank" rel="noopener">Groq</a>
+                  (URL: <code>https://api.groq.com/openai/v1</code>, modelo: <code>llama-3.3-70b-versatile</code>).
+                  Los modelos <code>:free</code> de OpenRouter cambian; si fallan, elegí otro de la lista <a href="https://openrouter.ai/models?fmt=cards&order=top-weekly&q=free" target="_blank" rel="noopener">free</a>.
                 </small>
               </div>
               <div class="form-group">

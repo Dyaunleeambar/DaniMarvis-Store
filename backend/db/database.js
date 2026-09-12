@@ -266,9 +266,9 @@ function migratePublishConfig() {
       template: '#DaniMarvis_Store\nCatálogo: https://dyaunleeambar.github.io/DaniMarvis-Store/public-catalog/\nConsultas al WhatsApp: http://bit.ly/danimarvis_store\n{DESCRIPTION}\nPrecio: ${PRICE} USD\nFormas de pago: USD, MN al cambio del día previo acuerdo, Zelle\nEnvío gratis a Matanzas, Cienfuegos y Villa Clara\nWhatsApp: 54115666 / 53760493 / http://bit.ly/danimarvis_store\n#DaniMarvis_Store\nhttps://www.facebook.com/profile.php?id=61591067843509\nQuiénes somos\nGestores de ventas que trabajan directamente con importadores. Ofrecemos una experiencia de compra segura, clara y acompañada, desde la consulta hasta el hogar.',
       ai: {
         enabled: false,
-        api_url: 'https://api.openai.com/v1',
+        api_url: 'https://openrouter.ai/api/v1',
         api_key: '',
-        model: 'gpt-4o-mini',
+        model: 'nex-agi/nex-n2.5-pro:free',
         system_prompt: 'Genera una descripción atractiva y profesional para un producto de catálogo de ventas. Responde ÚNICAMENTE con el texto de la descripción, sin explicaciones adicionales. Incluye:\n1) Una línea con el nombre del producto y un eslogan corto separado por "–".\n2) Un párrafo descriptivo destacando características y beneficios.\n3) Una sección "Características esenciales" con bullets puntos clave.\nUsa un tono persuasivo pero profesional. Máximo 250 palabras.'
       }
     });
