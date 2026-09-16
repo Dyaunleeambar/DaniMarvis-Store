@@ -492,6 +492,7 @@ export async function buildCatalogHtml(products, uploadsDir) {
       transform: scale(1) translateY(0);
     }
     .modal-img {
+      position: relative;
       width: 100%;
       height: 280px;
       background: var(--bg);
@@ -567,6 +568,103 @@ export async function buildCatalogHtml(products, uploadsDir) {
       transition: background .15s;
     }
     .modal-close:hover { background: rgba(0,0,0,.7); }
+
+    /* ── Lightbox / Ampliar imagen ────────────────────────── */
+    .zoom-btn {
+      position: absolute;
+      right: 10px;
+      bottom: 10px;
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      background: rgba(0,0,0,.55);
+      border: none;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: background .15s;
+      z-index: 5;
+    }
+    .zoom-btn:hover { background: rgba(0,0,0,.8); }
+    .zoom-btn svg { pointer-events: none; }
+    .zoom-btn:focus-visible { outline: 2px solid var(--rose); }
+
+    .zoom-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.9);
+      z-index: 1100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity .2s, visibility .2s;
+    }
+    .zoom-overlay.open { opacity: 1; visibility: visible; }
+    .zoom-close {
+      position: absolute;
+      top: 14px;
+      right: 16px;
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      background: rgba(255,255,255,.14);
+      border: none;
+      color: #fff;
+      font-size: 1.5rem;
+      line-height: 1;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 5;
+      transition: background .15s;
+    }
+    .zoom-close:hover { background: rgba(255,255,255,.28); }
+    .zoom-stage {
+      max-width: 94vw;
+      max-height: 86vh;
+      overflow: auto;
+      border-radius: 6px;
+      cursor: zoom-in;
+      overscroll-behavior: contain;
+    }
+    .zoom-stage.zoomed { cursor: grab; }
+    .zoom-stage.zoomed:active { cursor: grabbing; }
+    .zoom-stage img {
+      display: block;
+      max-width: 94vw;
+      max-height: 86vh;
+      width: auto;
+      height: auto;
+      object-fit: contain;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+    .zoom-stage.zoomed img {
+      width: 160%;
+      max-width: none;
+      max-height: none;
+      height: auto;
+    }
+    .zoom-hint {
+      position: absolute;
+      bottom: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: rgba(255,255,255,.65);
+      font-size: .75rem;
+      text-align: center;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    @media (max-width: 600px) {
+      .zoom-stage { max-width: 100vw; max-height: 76vh; }
+      .zoom-stage img { max-width: 100vw; max-height: 76vh; }
+    }
 
     .empty-msg {
       text-align: center;
@@ -686,6 +784,15 @@ export async function buildCatalogHtml(products, uploadsDir) {
     </div>
   </div>
 
+  <!-- Lightbox: ampliar imagen del producto -->
+  <div class="zoom-overlay" id="zoom-modal" role="dialog" aria-label="Imagen ampliada">
+    <button class="zoom-close" id="zoom-close-btn" aria-label="Cerrar" title="Cerrar">&times;</button>
+    <div class="zoom-stage" id="zoom-stage">
+      <img id="zoom-img" src="" alt="" />
+    </div>
+    <div class="zoom-hint" id="zoom-hint">Hacé clic en la imagen para aumentarla · arrastrá para moverte</div>
+  </div>
+
   <script>
     const products = ${productsJson};
 
@@ -709,8 +816,13 @@ export async function buildCatalogHtml(products, uploadsDir) {
       if (!p) return;
 
       let imgHtml;
+      let zoomSrc = null;
       if (p.image_local) {
-        imgHtml = '<img src="' + escape(p.image_local) + '" alt="' + escape(p.name) + '" />';
+        zoomSrc = p.image_local;
+        imgHtml = '<img src="' + escape(p.image_local) + '" alt="' + escape(p.name) + '" />' +
+          '<button class="zoom-btn" id="zoom-open-btn" title="Ampliar imagen" aria-label="Ampliar imagen">' +
+            '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>' +
+          '</button>';
       } else if (p.image_url) {
         imgHtml = '<div class="no-img"><svg width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".4"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></div>';
       } else {
@@ -730,7 +842,71 @@ export async function buildCatalogHtml(products, uploadsDir) {
         '</div>';
 
       document.getElementById('preview-modal').classList.add('open');
+
+      const zoomBtn = document.getElementById('zoom-open-btn');
+      if (zoomBtn) {
+        zoomBtn.addEventListener('click', () => { if (zoomSrc) openZoom(zoomSrc, p.name); });
+      }
+      const modalImg = document.querySelector('.modal-img img');
+      if (modalImg) {
+        modalImg.style.cursor = 'zoom-in';
+        modalImg.addEventListener('click', () => { if (zoomSrc) openZoom(zoomSrc, p.name); });
+      }
     }
+
+    function openZoom(src, alt) {
+      const img = document.getElementById('zoom-img');
+      const stage = document.getElementById('zoom-stage');
+      img.src = src;
+      img.alt = alt || '';
+      stage.classList.remove('zoomed');
+      stage.scrollLeft = 0;
+      stage.scrollTop = 0;
+      document.getElementById('zoom-modal').classList.add('open');
+      document.body.style.overflow = 'hidden';
+    }
+
+    function closeZoom() {
+      document.getElementById('zoom-modal').classList.remove('open');
+      const img = document.getElementById('zoom-img');
+      img.src = '';
+      document.body.style.overflow = '';
+    }
+
+    // Pan con arrastre + toggle de zoom al hacer clic
+    (function setupZoom() {
+      const stage = document.getElementById('zoom-stage');
+      let down = null;
+      let dragMoved = false;
+
+      stage.addEventListener('pointerdown', (e) => {
+        down = { x: e.clientX, y: e.clientY, sl: stage.scrollLeft, st: stage.scrollTop, moved: false };
+        if (stage.setPointerCapture) stage.setPointerCapture(e.pointerId);
+      });
+      stage.addEventListener('pointermove', (e) => {
+        if (!down) return;
+        const dx = e.clientX - down.x;
+        const dy = e.clientY - down.y;
+        if (Math.abs(dx) + Math.abs(dy) > 6) down.moved = true;
+        if (down.moved) {
+          stage.scrollLeft = down.sl - dx;
+          stage.scrollTop = down.st - dy;
+        }
+      });
+      stage.addEventListener('pointerup', () => {
+        dragMoved = down ? down.moved : false;
+        down = null;
+      });
+      stage.addEventListener('click', () => {
+        if (dragMoved) { dragMoved = false; return; }
+        stage.classList.toggle('zoomed');
+      });
+
+      document.getElementById('zoom-close-btn').addEventListener('click', closeZoom);
+      document.getElementById('zoom-modal').addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) closeZoom();
+      });
+    })();
 
     function closePreview() {
       document.getElementById('preview-modal').classList.remove('open');
@@ -758,7 +934,9 @@ export async function buildCatalogHtml(products, uploadsDir) {
         if (e.target === e.currentTarget) closePreview();
       });
       document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') closePreview();
+        if (e.key !== 'Escape') return;
+        if (document.getElementById('zoom-modal').classList.contains('open')) closeZoom();
+        else closePreview();
       });
 
       // Filters

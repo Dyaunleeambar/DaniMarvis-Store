@@ -43,7 +43,7 @@ async function main() {
   const { join } = await import('path');
 
   const uploadsDir = join(PROJECT_ROOT, 'backend', 'uploads');
-  const html = buildCatalogHtml(parsed, uploadsDir);
+  const html = await buildCatalogHtml(parsed, uploadsDir);
   mkdirSync(OUTPUT_DIR, { recursive: true });
   writeFileSync(join(OUTPUT_DIR, 'index.html'), html, 'utf-8');
 
