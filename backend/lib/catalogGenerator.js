@@ -30,6 +30,36 @@ function parseImages(p) {
   return [];
 }
 
+// Renderiza la descripción de la tarjeta como una lista compacta de viñetas
+function cardDescList(desc) {
+  const lines = String(desc ?? '')
+    .split('\n')
+    .map(l => l.trim())
+    .filter(Boolean);
+  if (!lines.length) return '';
+
+  const MAX_ITEMS = 3;
+  const MAX_CHARS = 110;
+  const bulletRe = /^[💥•▪◦●★✅✔]\s*/u;
+
+  const items = [];
+  let chars = 0;
+  for (const raw of lines) {
+    if (items.length >= MAX_ITEMS) break;
+    const line = escapeHtml(raw.replace(bulletRe, ''));
+    if (items.length > 0 && chars + line.length > MAX_CHARS) break;
+    items.push(line);
+    chars += line.length;
+  }
+
+  const more = items.length < lines.length;
+
+  return '<ul class="product-card__desc">' +
+    items.map(l => '<li>' + l + '</li>').join('') +
+    (more ? '<li class="desc-more">…</li>' : '') +
+    '</ul>';
+}
+
 export async function buildCatalogHtml(products, uploadsDir) {
   const categories = [...new Set(products.map(p => p.category).filter(Boolean))];
 
@@ -87,7 +117,7 @@ export async function buildCatalogHtml(products, uploadsDir) {
         <div class="product-card__body">
           <h3 class="product-card__name">${escapeHtml(p.name)}</h3>
           <div class="product-card__price">${formatCurrency(p.price)}</div>
-          ${p.description ? `<p class="product-card__desc">${escapeHtml(p.description.slice(0, 100))}${p.description.length > 100 ? '...' : ''}</p>` : ''}
+          ${p.description ? cardDescList(p.description) : ''}
           <div class="product-card__actions">
             <a href="${waLink}" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -403,14 +433,35 @@ export async function buildCatalogHtml(products, uploadsDir) {
       margin-top: 2px;
     }
     .product-card__desc {
-      font-size: .78rem;
-      color: var(--text-secondary);
-      line-height: 1.5;
+      margin: 8px 0 0;
+      padding: 0;
+      list-style: none;
       display: -webkit-box;
-      -webkit-line-clamp: 2;
+      -webkit-line-clamp: 3;
       -webkit-box-orient: vertical;
       overflow: hidden;
     }
+    .product-card__desc li {
+      display: block;
+      position: relative;
+      padding-left: 12px;
+      font-size: .78rem;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+    .product-card__desc li::before {
+      content: '';
+      position: absolute;
+      left: 1px;
+      top: .55em;
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--rose);
+      opacity: .8;
+    }
+    .product-card__desc li.desc-more { color: var(--text-muted); }
+    .product-card__desc li.desc-more::before { background: transparent; }
     .product-card__actions {
       display: flex;
       gap: 8px;
@@ -529,6 +580,7 @@ export async function buildCatalogHtml(products, uploadsDir) {
       color: var(--text-secondary);
       line-height: 1.6;
       margin-bottom: 8px;
+      white-space: pre-line;
     }
     .modal-body .category-tag {
       display: inline-block;

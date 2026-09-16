@@ -289,14 +289,35 @@
       margin-top: 2px;
     }
     .product-card__desc {
-      font-size: .78rem;
-      color: var(--text-secondary);
-      line-height: 1.5;
+      margin: 8px 0 0;
+      padding: 0;
+      list-style: none;
       display: -webkit-box;
-      -webkit-line-clamp: 2;
+      -webkit-line-clamp: 3;
       -webkit-box-orient: vertical;
       overflow: hidden;
     }
+    .product-card__desc li {
+      display: block;
+      position: relative;
+      padding-left: 12px;
+      font-size: .78rem;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+    .product-card__desc li::before {
+      content: '';
+      position: absolute;
+      left: 1px;
+      top: .55em;
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--rose);
+      opacity: .8;
+    }
+    .product-card__desc li.desc-more { color: var(--text-muted); }
+    .product-card__desc li.desc-more::before { background: transparent; }
     .product-card__actions {
       display: flex;
       gap: 8px;
@@ -378,6 +399,7 @@
       transform: scale(1) translateY(0);
     }
     .modal-img {
+      position: relative;
       width: 100%;
       height: 280px;
       background: var(--bg);
@@ -414,6 +436,7 @@
       color: var(--text-secondary);
       line-height: 1.6;
       margin-bottom: 8px;
+      white-space: pre-line;
     }
     .modal-body .category-tag {
       display: inline-block;
@@ -453,6 +476,103 @@
       transition: background .15s;
     }
     .modal-close:hover { background: rgba(0,0,0,.7); }
+
+    /* ── Lightbox / Ampliar imagen ────────────────────────── */
+    .zoom-btn {
+      position: absolute;
+      right: 10px;
+      bottom: 10px;
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      background: rgba(0,0,0,.55);
+      border: none;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: background .15s;
+      z-index: 5;
+    }
+    .zoom-btn:hover { background: rgba(0,0,0,.8); }
+    .zoom-btn svg { pointer-events: none; }
+    .zoom-btn:focus-visible { outline: 2px solid var(--rose); }
+
+    .zoom-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.9);
+      z-index: 1100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity .2s, visibility .2s;
+    }
+    .zoom-overlay.open { opacity: 1; visibility: visible; }
+    .zoom-close {
+      position: absolute;
+      top: 14px;
+      right: 16px;
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      background: rgba(255,255,255,.14);
+      border: none;
+      color: #fff;
+      font-size: 1.5rem;
+      line-height: 1;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 5;
+      transition: background .15s;
+    }
+    .zoom-close:hover { background: rgba(255,255,255,.28); }
+    .zoom-stage {
+      max-width: 94vw;
+      max-height: 86vh;
+      overflow: auto;
+      border-radius: 6px;
+      cursor: zoom-in;
+      overscroll-behavior: contain;
+    }
+    .zoom-stage.zoomed { cursor: grab; }
+    .zoom-stage.zoomed:active { cursor: grabbing; }
+    .zoom-stage img {
+      display: block;
+      max-width: 94vw;
+      max-height: 86vh;
+      width: auto;
+      height: auto;
+      object-fit: contain;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+    .zoom-stage.zoomed img {
+      width: 160%;
+      max-width: none;
+      max-height: none;
+      height: auto;
+    }
+    .zoom-hint {
+      position: absolute;
+      bottom: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: rgba(255,255,255,.65);
+      font-size: .75rem;
+      text-align: center;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    @media (max-width: 600px) {
+      .zoom-stage { max-width: 100vw; max-height: 76vh; }
+      .zoom-stage img { max-width: 100vw; max-height: 76vh; }
+    }
 
     .empty-msg {
       text-align: center;
@@ -575,10 +695,7 @@
         <div class="product-card__body">
           <h3 class="product-card__name">Split milexus (blanco) 1 tonelada</h3>
           <div class="product-card__price">$315.00 USD</div>
-          <p class="product-card__desc">Split milexus (blanco) 1 tonelada
-💥Voltaje: 220V
-💥Frecuencia: 60Hz
-💥Capacidad: 1 Tonelada (12,000...</p>
+          <ul class="product-card__desc"><li>Split milexus (blanco) 1 tonelada</li><li>Voltaje: 220V</li><li>Frecuencia: 60Hz</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Split%20milexus%20(blanco)%201%20tonelada*.%20Precio%3A%20%24315.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -590,9 +707,7 @@
         <div class="product-card__body">
           <h3 class="product-card__name">Split milexus (blanco) 1 tonelada + Soporte</h3>
           <div class="product-card__price">$330.00 USD</div>
-          <p class="product-card__desc">Split milexus (blanco) 1 tonelada + Soporte – Clima fresco y silencioso  
-
-Disfruta de un ambiente f...</p>
+          <ul class="product-card__desc"><li>Split milexus (blanco) 1 tonelada + Soporte – Clima fresco y silencioso</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Split%20milexus%20(blanco)%201%20tonelada%20%2B%20Soporte*.%20Precio%3A%20%24330.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -604,9 +719,7 @@ Disfruta de un ambiente f...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Altavoz Profesional Milexus 10&quot; (VL)</h3>
           <div class="product-card__price">$220.00 USD</div>
-          <p class="product-card__desc">Altavoz Profesional Milexus 10&quot; – Potencia y claridad en cada acorde.
-
-Diseñado para músicos, DJs y ...</p>
+          <ul class="product-card__desc"><li>Altavoz Profesional Milexus 10&quot; – Potencia y claridad en cada acorde.</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Altavoz%20Profesional%20Milexus%2010%22%20(VL)*.%20Precio%3A%20%24220.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -618,9 +731,7 @@ Diseñado para músicos, DJs y ...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Altavoz Profesional Milexus 6.5&quot; (VL)</h3>
           <div class="product-card__price">$145.00 USD</div>
-          <p class="product-card__desc">Milexus VL 6.5&quot; – Potencia y claridad que se hacen escuchar
-
-Altavoz profesional diseñado para quien...</p>
+          <ul class="product-card__desc"><li>Milexus VL 6.5&quot; – Potencia y claridad que se hacen escuchar</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Altavoz%20Profesional%20Milexus%206.5%22%20(VL)*.%20Precio%3A%20%24145.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -632,9 +743,7 @@ Altavoz profesional diseñado para quien...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Altavoz Profesional Milexus 8&quot; (VL)</h3>
           <div class="product-card__price">$200.00 USD</div>
-          <p class="product-card__desc">Altavoz Profesional Milexus 8&quot; – ¡El sonido que hace temblar cualquier fiesta!
-
-¿Quieres que tu próx...</p>
+          <ul class="product-card__desc"><li>Altavoz Profesional Milexus 8&quot; – ¡El sonido que hace temblar cualquier fiesta!</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Altavoz%20Profesional%20Milexus%208%22%20(VL)*.%20Precio%3A%20%24200.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -646,9 +755,7 @@ Altavoz profesional diseñado para quien...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Altavoz Profesional Milexus 8&quot; v.2 (VL)</h3>
           <div class="product-card__price">$165.00 USD</div>
-          <p class="product-card__desc">Altavoz Profesional Milexus 8&quot; v.2 (VL) – Potencia clara, sonido inigualable 
- 
-Este altavoz ofrece ...</p>
+          <ul class="product-card__desc"><li>Altavoz Profesional Milexus 8&quot; v.2 (VL) – Potencia clara, sonido inigualable</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Altavoz%20Profesional%20Milexus%208%22%20v.2%20(VL)*.%20Precio%3A%20%24165.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -660,9 +767,7 @@ Este altavoz ofrece ...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Licuadora Milexus baso de cristal 1.5Lts (ML-696G) (VL) </h3>
           <div class="product-card__price">$45.00 USD</div>
-          <p class="product-card__desc">Licuadora Milexus baso de cristal 1.5Lts (ML-696G) (VL) – Potencia y claridad en cada sorbo
-
-¿Quiere...</p>
+          <ul class="product-card__desc"><li>Licuadora Milexus baso de cristal 1.5Lts (ML-696G) (VL) – Potencia y claridad en cada sorbo</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Licuadora%20Milexus%20baso%20de%20cristal%201.5Lts%20(ML-696G)%20(VL)%20*.%20Precio%3A%20%2445.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -674,9 +779,7 @@ Este altavoz ofrece ...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Bicicleta 20 para niña con accesorios</h3>
           <div class="product-card__price">$140.00 USD</div>
-          <p class="product-card__desc">Bicicleta 20 para niña con accesorios – Diversión sobre dos ruedas  
-
-Esta bicicleta de 20 pulgadas ...</p>
+          <ul class="product-card__desc"><li>Bicicleta 20 para niña con accesorios – Diversión sobre dos ruedas</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Bicicleta%2020%20para%20ni%C3%B1a%20con%20accesorios*.%20Precio%3A%20%24140.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -688,8 +791,7 @@ Esta bicicleta de 20 pulgadas ...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Bicicleta 24 Chalenller</h3>
           <div class="product-card__price">$200.00 USD</div>
-          <p class="product-card__desc">Challenger 24&quot; – Bicicleta de Montaña 21 Velocidades / Frenos de Disco
-💥Cuadro: Aleación de alumini...</p>
+          <ul class="product-card__desc"><li>Challenger 24&quot; – Bicicleta de Montaña 21 Velocidades / Frenos de Disco</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Bicicleta%2024%20Chalenller*.%20Precio%3A%20%24200.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -701,9 +803,7 @@ Esta bicicleta de 20 pulgadas ...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Bicicleta 24 Silver Bike</h3>
           <div class="product-card__price">$200.00 USD</div>
-          <p class="product-card__desc">Bicicleta 24 Silver Bike – Tu compañera ideal para cada trayecto
-
-Disfruta de la libertad de moverte...</p>
+          <ul class="product-card__desc"><li>Bicicleta 24 Silver Bike – Tu compañera ideal para cada trayecto</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Bicicleta%2024%20Silver%20Bike*.%20Precio%3A%20%24200.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -715,9 +815,7 @@ Disfruta de la libertad de moverte...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Bicicleta 26 Silver Bike</h3>
           <div class="product-card__price">$220.00 USD</div>
-          <p class="product-card__desc">Bicicleta 26 Silver Bike – Tu ruta comienza aquí
-
-Ideal para desplazamientos diarios y paseos recrea...</p>
+          <ul class="product-card__desc"><li>Bicicleta 26 Silver Bike – Tu ruta comienza aquí</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Bicicleta%2026%20Silver%20Bike*.%20Precio%3A%20%24220.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -729,9 +827,7 @@ Ideal para desplazamientos diarios y paseos recrea...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Bicicleta Cruiser / Playera Urbana – 26&quot; Rosa</h3>
           <div class="product-card__price">$180.00 USD</div>
-          <p class="product-card__desc">Bicicleta Cruiser / Playera Urbana – 26&quot; Rosa – Tu ruta, tu ritmo, tu libertad
-
-Ideal para desplazam...</p>
+          <ul class="product-card__desc"><li>Bicicleta Cruiser / Playera Urbana – 26&quot; Rosa – Tu ruta, tu ritmo, tu libertad</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Bicicleta%20Cruiser%20%2F%20Playera%20Urbana%20%E2%80%93%2026%22%20Rosa*.%20Precio%3A%20%24180.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -743,9 +839,7 @@ Ideal para desplazam...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Calentador de Agua Eléctrico Royal 10.5Lts (GE)</h3>
           <div class="product-card__price">$110.00 USD</div>
-          <p class="product-card__desc">Calentador de Agua Eléctrico Royal 10.5Lts (GE) – Calor instantáneo, bienestar garantizado  
-
-El cal...</p>
+          <ul class="product-card__desc"><li>Calentador de Agua Eléctrico Royal 10.5Lts (GE) – Calor instantáneo, bienestar garantizado</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Calentador%20de%20Agua%20El%C3%A9ctrico%20Royal%2010.5Lts%20(GE)*.%20Precio%3A%20%24110.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -757,9 +851,7 @@ El cal...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Calentador de Agua Eléctrico Vivamax 30L (MM)</h3>
           <div class="product-card__price">$150.00 USD</div>
-          <p class="product-card__desc">Calentador de Agua Eléctrico Vivamax 30L – Agua caliente al instante 
- 
-Este calentador de agua eléc...</p>
+          <ul class="product-card__desc"><li>Calentador de Agua Eléctrico Vivamax 30L – Agua caliente al instante</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Calentador%20de%20Agua%20El%C3%A9ctrico%20Vivamax%2030L%20(MM)*.%20Precio%3A%20%24150.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -771,9 +863,7 @@ Este calentador de agua eléc...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Calentador de Agua Eléctrico Vivamax 50L (MM)</h3>
           <div class="product-card__price">$180.00 USD</div>
-          <p class="product-card__desc">Calentador de Agua Eléctrico Vivamax 50L – Agua caliente al instante 
- 
-Este calentador de agua eléc...</p>
+          <ul class="product-card__desc"><li>Calentador de Agua Eléctrico Vivamax 50L – Agua caliente al instante</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Calentador%20de%20Agua%20El%C3%A9ctrico%20Vivamax%2050L%20(MM)*.%20Precio%3A%20%24180.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -785,9 +875,7 @@ Este calentador de agua eléc...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">!!OFERTA ESPECIAL¡¡ Refrigerador EKO 12 pies + Nevera EKO 3.5 pies </h3>
           <div class="product-card__price">$860.00 USD</div>
-          <p class="product-card__desc">Combo Refrigerador EKO 12 pies + Nevera EKO 3.5 pies – La solución completa para tu hogar  
-
-Disfrut...</p>
+          <ul class="product-card__desc"><li>Combo Refrigerador EKO 12 pies + Nevera EKO 3.5 pies – La solución completa para tu hogar</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*!!OFERTA%20ESPECIAL%C2%A1%C2%A1%20Refrigerador%20EKO%2012%20pies%20%2B%20Nevera%20EKO%203.5%20pies%20*.%20Precio%3A%20%24860.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -799,7 +887,7 @@ Disfrut...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">!!OFERTA ESPECIAL¡¡ Refrigerador EKO 16 pies + Nevera EKO 3.5 pies </h3>
           <div class="product-card__price">$1,080.00 USD</div>
-          <p class="product-card__desc">¡OFERTA ESPECIAL! Combo Refrigerador EKO 16 pies + Nevera EKO 3.5 pies – Doble frescura para tu hoga...</p>
+          <ul class="product-card__desc"><li>¡OFERTA ESPECIAL! Combo Refrigerador EKO 16 pies + Nevera EKO 3.5 pies – Doble frescura para tu hogar</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*!!OFERTA%20ESPECIAL%C2%A1%C2%A1%20Refrigerador%20EKO%2016%20pies%20%2B%20Nevera%20EKO%203.5%20pies%20*.%20Precio%3A%20%241%2C080.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -811,9 +899,7 @@ Disfrut...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Combo de Arrocera Bravoking 1.8Lts + Reina Challenger 7.5Lts (MM)</h3>
           <div class="product-card__price">$95.00 USD</div>
-          <p class="product-card__desc">Combo Bravoking + Reina Challenger – Cocina fácil, ¡para toda la familia!
-
-¿Buscas practicality y ca...</p>
+          <ul class="product-card__desc"><li>Combo Bravoking + Reina Challenger – Cocina fácil, ¡para toda la familia!</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Combo%20de%20Arrocera%20Bravoking%201.8Lts%20%2B%20Reina%20Challenger%207.5Lts%20(MM)*.%20Precio%3A%20%2495.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -825,9 +911,7 @@ Disfrut...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Combo de Arrocera EKO 1.8Lts + Olla Reina Nizzato 6Lts (MM)</h3>
           <div class="product-card__price">$95.00 USD</div>
-          <p class="product-card__desc">Combo Arrocera EKO 1.8Lts + Olla Reina Nizzato 6Lts – Cocina fácil, cocina como en casa
-
-Prepara arr...</p>
+          <ul class="product-card__desc"><li>Combo Arrocera EKO 1.8Lts + Olla Reina Nizzato 6Lts – Cocina fácil, cocina como en casa</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Combo%20de%20Arrocera%20EKO%201.8Lts%20%2B%20Olla%20Reina%20Nizzato%206Lts%20(MM)*.%20Precio%3A%20%2495.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -839,9 +923,7 @@ Prepara arr...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Combo de Arrocera Estelectric 1.8Lts + Reina Challenger 7Lts (MM)</h3>
           <div class="product-card__price">$95.00 USD</div>
-          <p class="product-card__desc">Combo Estelectric + Challenger – Cocinar fácil nunca fue tan completo
-
-Lleva a tu hogar dos aliados ...</p>
+          <ul class="product-card__desc"><li>Combo Estelectric + Challenger – Cocinar fácil nunca fue tan completo</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Combo%20de%20Arrocera%20Estelectric%201.8Lts%20%2B%20Reina%20Challenger%207Lts%20(MM)*.%20Precio%3A%20%2495.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -853,7 +935,7 @@ Lleva a tu hogar dos aliados ...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Combo de Arrocera Unizuki Roja 4Lts + Olla Reina Challenger 7Lts (MM)</h3>
           <div class="product-card__price">$95.00 USD</div>
-          <p class="product-card__desc">Combo de Arrocera Unizuki Roja 4Lts + Olla Reina Challenger 7Lts – ¡Cocina completa, sabor garantiza...</p>
+          <ul class="product-card__desc"><li>Combo de Arrocera Unizuki Roja 4Lts + Olla Reina Challenger 7Lts – ¡Cocina completa, sabor garantizado!</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Combo%20de%20Arrocera%20Unizuki%20Roja%204Lts%20%2B%20Olla%20Reina%20Challenger%207Lts%20(MM)*.%20Precio%3A%20%2495.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -865,9 +947,7 @@ Lleva a tu hogar dos aliados ...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Bluetti AC180 </h3>
           <div class="product-card__price">$800.00 USD</div>
-          <p class="product-card__desc">Bluetti AC180 – La energía portátil que no falla cuando más la necesitas.
-
-Ideal para hogares, campi...</p>
+          <ul class="product-card__desc"><li>Bluetti AC180 – La energía portátil que no falla cuando más la necesitas.</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Bluetti%20AC180%20*.%20Precio%3A%20%24800.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -879,9 +959,7 @@ Ideal para hogares, campi...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Bluetti Elite 100 v2 (2025)</h3>
           <div class="product-card__price">$780.00 USD</div>
-          <p class="product-card__desc">Bluetti Elite 100 v2 (2025) – Energía imparable para tu día a día
-
-Olvídate de los apagones con la t...</p>
+          <ul class="product-card__desc"><li>Bluetti Elite 100 v2 (2025) – Energía imparable para tu día a día</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Bluetti%20Elite%20100%20v2%20(2025)*.%20Precio%3A%20%24780.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -893,9 +971,7 @@ Olvídate de los apagones con la t...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Estación de Energía Ecoflow Delta 3 Clásico 1024 w/h</h3>
           <div class="product-card__price">$730.00 USD</div>
-          <p class="product-card__desc">Estación de Energía Ecoflow Delta 3 Clásico 1024 w/h – Energía Limpia y Portabilidad Total  
-
-Una so...</p>
+          <ul class="product-card__desc"><li>Estación de Energía Ecoflow Delta 3 Clásico 1024 w/h – Energía Limpia y Portabilidad Total</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Estaci%C3%B3n%20de%20Energ%C3%ADa%20Ecoflow%20Delta%203%20Cl%C3%A1sico%201024%20w%2Fh*.%20Precio%3A%20%24730.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -907,9 +983,7 @@ Una so...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Paneles solares Boviet 545W (VL)</h3>
           <div class="product-card__price">$170.00 USD</div>
-          <p class="product-card__desc">Paneles Solares Boviet 545W (VL) – La energía del sol al servicio de tu hogar y negocio.
-
-Transforma...</p>
+          <ul class="product-card__desc"><li>Paneles Solares Boviet 545W (VL) – La energía del sol al servicio de tu hogar y negocio.</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Paneles%20solares%20Boviet%20545W%20(VL)*.%20Precio%3A%20%24170.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -921,9 +995,7 @@ Transforma...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Paneles solares Boviet 550W (VL)</h3>
           <div class="product-card__price">$170.00 USD</div>
-          <p class="product-card__desc">Paneles Solares Boviet 550W (VL) – La energía del sol al servicio de tu hogar y negocio.
-
-Transforma...</p>
+          <ul class="product-card__desc"><li>Paneles Solares Boviet 550W (VL) – La energía del sol al servicio de tu hogar y negocio.</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Paneles%20solares%20Boviet%20550W%20(VL)*.%20Precio%3A%20%24170.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -935,9 +1007,7 @@ Transforma...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Paneles solares Bovit 545W</h3>
           <div class="product-card__price">$290.00 USD</div>
-          <p class="product-card__desc">Paneles solares Bovit 545W – Energía limpia y potente para tu hogar
-
-Aprovecha el sol con estos pane...</p>
+          <ul class="product-card__desc"><li>Paneles solares Bovit 545W – Energía limpia y potente para tu hogar</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Paneles%20solares%20Bovit%20545W*.%20Precio%3A%20%24290.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -949,9 +1019,7 @@ Aprovecha el sol con estos pane...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">¡¡OFERTAZO!! Bluetti AC180 + 1 Panel solar Boviet 545W</h3>
           <div class="product-card__price">$1,075.00 USD</div>
-          <p class="product-card__desc">Bluetti AC180 + Panel Solar Boviet 545W – Energía limpia y confiable en cada viaje
-
-Lleva contigo la...</p>
+          <ul class="product-card__desc"><li>Bluetti AC180 + Panel Solar Boviet 545W – Energía limpia y confiable en cada viaje</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*%C2%A1%C2%A1OFERTAZO!!%20Bluetti%20AC180%20%2B%201%20Panel%20solar%20Boviet%20545W*.%20Precio%3A%20%241%2C075.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -963,7 +1031,7 @@ Lleva contigo la...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">¡¡OFERTAZO!! Bluetti Elite 100 v2 + 2 Paneles solares Boviet 545W</h3>
           <div class="product-card__price">$1,340.00 USD</div>
-          <p class="product-card__desc">**Bluetti Elite 100 v2 + 2 Paneles Solares Boviet 545W – Energía limpia y portabilidad a tu alcance*...</p>
+          <ul class="product-card__desc"><li>**Bluetti Elite 100 v2 + 2 Paneles Solares Boviet 545W – Energía limpia y portabilidad a tu alcance**</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*%C2%A1%C2%A1OFERTAZO!!%20Bluetti%20Elite%20100%20v2%20%2B%202%20Paneles%20solares%20Boviet%20545W*.%20Precio%3A%20%241%2C340.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -975,9 +1043,7 @@ Lleva contigo la...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">¡¡OFERTAZO!! Delta 3 Classic + 1 Panel solar Boviet 545W </h3>
           <div class="product-card__price">$1,005.00 USD</div>
-          <p class="product-card__desc">** ¡¡OFERTAZO!! – ¡Potencia tus hogares con energía limpia y económica!**  
-
-Con la Delta 3 Classic ...</p>
+          <ul class="product-card__desc"><li>** ¡¡OFERTAZO!! – ¡Potencia tus hogares con energía limpia y económica!**</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*%C2%A1%C2%A1OFERTAZO!!%20Delta%203%20Classic%20%2B%201%20Panel%20solar%20Boviet%20545W%20*.%20Precio%3A%20%241%2C005.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -989,9 +1055,7 @@ Con la Delta 3 Classic ...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Cocina de Kerosene Portátil – 1 Hornilla</h3>
           <div class="product-card__price">$30.00 USD</div>
-          <p class="product-card__desc">Fogón de Queroseno BIGWHEEL – Modelo NR33 (MNC)
-💥Material: Hierro con pintura resistente
-💥Dimensio...</p>
+          <ul class="product-card__desc"><li>Fogón de Queroseno BIGWHEEL – Modelo NR33 (MNC)</li><li>Material: Hierro con pintura resistente</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Cocina%20de%20Kerosene%20Port%C3%A1til%20%E2%80%93%201%20Hornilla*.%20Precio%3A%20%2430.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1003,9 +1067,7 @@ Con la Delta 3 Classic ...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Estufa Infrarojo Challenger 3500W</h3>
           <div class="product-card__price">$45.00 USD</div>
-          <p class="product-card__desc">Estufa Infrarojo Challenger 3500W – Calor rápido, sabor garantizado  
-
-Con su potencia de 3500 W y t...</p>
+          <ul class="product-card__desc"><li>Estufa Infrarojo Challenger 3500W – Calor rápido, sabor garantizado</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Estufa%20Infrarojo%20Challenger%203500W*.%20Precio%3A%20%2445.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1017,10 +1079,7 @@ Con su potencia de 3500 W y t...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Estufa Infrarojo Saco 2200W</h3>
           <div class="product-card__price">$40.00 USD</div>
-          <p class="product-card__desc">Estufa de Infrarrojo SACO – 2200W
-💥Marca: SACO  
-💥Tipo: Hornilla de infrarrojo  
-💥Potencia: 2200W...</p>
+          <ul class="product-card__desc"><li>Estufa de Infrarrojo SACO – 2200W</li><li>Marca: SACO</li><li>Tipo: Hornilla de infrarrojo</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Estufa%20Infrarojo%20Saco%202200W*.%20Precio%3A%20%2440.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1032,9 +1091,7 @@ Con su potencia de 3500 W y t...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Horno Eléctrico Freidora de Aire EKO – 22L</h3>
           <div class="product-card__price">$100.00 USD</div>
-          <p class="product-card__desc">Horno Eléctrico Freidora de Aire EKO – 22L – Cocina crujiente, sin complicaciones  
-
-Disfruta de fri...</p>
+          <ul class="product-card__desc"><li>Horno Eléctrico Freidora de Aire EKO – 22L – Cocina crujiente, sin complicaciones</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Horno%20El%C3%A9ctrico%20Freidora%20de%20Aire%20EKO%20%E2%80%93%2022L*.%20Precio%3A%20%24100.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1046,9 +1103,7 @@ Disfruta de fri...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Freidora de aire EKO doble </h3>
           <div class="product-card__price">$100.00 USD</div>
-          <p class="product-card__desc">Freidora de aire EKO doble – Cocina saludable sin aceite, sabor doble  
-
-Ideal para familias que bus...</p>
+          <ul class="product-card__desc"><li>Freidora de aire EKO doble – Cocina saludable sin aceite, sabor doble</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Freidora%20de%20aire%20EKO%20doble%20*.%20Precio%3A%20%24100.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1060,9 +1115,7 @@ Ideal para familias que bus...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Lavadora Automática Premier 11.5KG </h3>
           <div class="product-card__price">$330.00 USD</div>
-          <p class="product-card__desc">Lavadora Automática Premier 11.5Kg – Limpieza Profesional en tu Hogar
-
-Diseñada para hogares que bus...</p>
+          <ul class="product-card__desc"><li>Lavadora Automática Premier 11.5Kg – Limpieza Profesional en tu Hogar</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Lavadora%20Autom%C3%A1tica%20Premier%2011.5KG%20*.%20Precio%3A%20%24330.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1074,9 +1127,7 @@ Diseñada para hogares que bus...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Lavadora Automática Royal – 9 kg </h3>
           <div class="product-card__price">$290.00 USD</div>
-          <p class="product-card__desc">Lavadora Automática Royal – 9 kg (RWA090)  – ¡Lavado cómodo y eficiente!
-
-Diseñada para facilitar tu...</p>
+          <ul class="product-card__desc"><li>Lavadora Automática Royal – 9 kg (RWA090)  – ¡Lavado cómodo y eficiente!</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Lavadora%20Autom%C3%A1tica%20Royal%20%E2%80%93%209%20kg%20*.%20Precio%3A%20%24290.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1088,9 +1139,7 @@ Diseñada para facilitar tu...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Lavadora Automática Samsung 9Kg (VL)</h3>
           <div class="product-card__price">$315.00 USD</div>
-          <p class="product-card__desc">Lavadora Automática Samsung 9Kg (VL) – Tu ropa siempre impecable, sin esfuerzo
-
-Esta lavadora combin...</p>
+          <ul class="product-card__desc"><li>Lavadora Automática Samsung 9Kg (VL) – Tu ropa siempre impecable, sin esfuerzo</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Lavadora%20Autom%C3%A1tica%20Samsung%209Kg%20(VL)*.%20Precio%3A%20%24315.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1102,9 +1151,7 @@ Esta lavadora combin...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Lavadora Secadora al vapor EKO 11 KG </h3>
           <div class="product-card__price">$630.00 USD</div>
-          <p class="product-card__desc">LAVADORA SECADORA AL VAPOR 11 KG EKO – Lava, seca y cuida tu ropa
-
-Una solución práctica para lavar ...</p>
+          <ul class="product-card__desc"><li>LAVADORA SECADORA AL VAPOR 11 KG EKO – Lava, seca y cuida tu ropa</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Lavadora%20Secadora%20al%20vapor%20EKO%2011%20KG%20*.%20Precio%3A%20%24630.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1116,9 +1163,7 @@ Una solución práctica para lavar ...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Lavadora Semiautomática Milexus 7Kg (VL)</h3>
           <div class="product-card__price">$175.00 USD</div>
-          <p class="product-card__desc">Lavadora Semiautomática Milexus 7Kg (VL) – Tu ropa impecable en minutos  
-
-Disfruta de una limpieza ...</p>
+          <ul class="product-card__desc"><li>Lavadora Semiautomática Milexus 7Kg (VL) – Tu ropa impecable en minutos</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Lavadora%20Semiautom%C3%A1tica%20Milexus%207Kg%20(VL)*.%20Precio%3A%20%24175.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1130,9 +1175,7 @@ Disfruta de una limpieza ...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Lavadora semiautomática Challenger 10Kg</h3>
           <div class="product-card__price">$245.00 USD</div>
-          <p class="product-card__desc">**Lavadora semiautomática Challenger 10Kg – Potencia y eficiencia en cada ciclo** 
- 
-Ideal para fami...</p>
+          <ul class="product-card__desc"><li>**Lavadora semiautomática Challenger 10Kg – Potencia y eficiencia en cada ciclo**</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Lavadora%20semiautom%C3%A1tica%20Challenger%2010Kg*.%20Precio%3A%20%24245.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1144,9 +1187,7 @@ Ideal para fami...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Lavadora semiautomática Challenger 8Kg</h3>
           <div class="product-card__price">$190.00 USD</div>
-          <p class="product-card__desc">Lavadora Semiautomática Challenger 8 kg  – Ahorra agua y energía con cada lavado.
-
-Ideal para famili...</p>
+          <ul class="product-card__desc"><li>Lavadora Semiautomática Challenger 8 kg  – Ahorra agua y energía con cada lavado.</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Lavadora%20semiautom%C3%A1tica%20Challenger%208Kg*.%20Precio%3A%20%24190.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1158,9 +1199,7 @@ Ideal para famili...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Lavadora semiautomática Milexus 7Kg (RC)</h3>
           <div class="product-card__price">$190.00 USD</div>
-          <p class="product-card__desc">Lavadora semiautomática Milexus 7Kg – Eficiencia y ahorro para tu hogar –
-
-La solución práctica que ...</p>
+          <ul class="product-card__desc"><li>Lavadora semiautomática Milexus 7Kg – Eficiencia y ahorro para tu hogar –</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Lavadora%20semiautom%C3%A1tica%20Milexus%207Kg%20(RC)*.%20Precio%3A%20%24190.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1172,9 +1211,7 @@ La solución práctica que ...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Secadora a Vapor EKO – 8 kg </h3>
           <div class="product-card__price">$330.00 USD</div>
-          <p class="product-card__desc">Secadora a Vapor EKO – 8 kg  – Frescura total, sin complicaciones  
-
-Ideal para familias que buscan ...</p>
+          <ul class="product-card__desc"><li>Secadora a Vapor EKO – 8 kg  – Frescura total, sin complicaciones</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Secadora%20a%20Vapor%20EKO%20%E2%80%93%208%20kg%20*.%20Precio%3A%20%24330.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1186,8 +1223,7 @@ Ideal para familias que buscan ...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Bicimoto Galáctica JMD – Modelo CJXQS (GE)</h3>
           <div class="product-card__price">$1,800.00 USD</div>
-          <p class="product-card__desc">Bicimoto Galáctica JMD – Modelo CJXQS
-La Bicimoto Galáctica jmd CJXQS combina potencia, autonomía y ...</p>
+          <ul class="product-card__desc"><li>Bicimoto Galáctica JMD – Modelo CJXQS</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Bicimoto%20Gal%C3%A1ctica%20JMD%20%E2%80%93%20Modelo%20CJXQS%20(GE)*.%20Precio%3A%20%241%2C800.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1199,9 +1235,7 @@ La Bicimoto Galáctica jmd CJXQS combina potencia, autonomía y ...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Nevera EKO 3.5 pies (GE)</h3>
           <div class="product-card__price">$290.00 USD</div>
-          <p class="product-card__desc">Nevera EKO 3.5 pies (GE) – Frescura que se mantiene día tras día
-
-Diseñada para familias y hogares m...</p>
+          <ul class="product-card__desc"><li>Nevera EKO 3.5 pies (GE) – Frescura que se mantiene día tras día</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Nevera%20EKO%203.5%20pies%20(GE)*.%20Precio%3A%20%24290.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1213,9 +1247,7 @@ Diseñada para familias y hogares m...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Nevera Milexus - 4.2 pies (MM)</h3>
           <div class="product-card__price">$270.00 USD</div>
-          <p class="product-card__desc">Nevera Milexus – Enfriamiento confiable para tu hogar
-
-Diseñada para familias cubanas, esta nevera o...</p>
+          <ul class="product-card__desc"><li>Nevera Milexus – Enfriamiento confiable para tu hogar</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Nevera%20Milexus%20-%204.2%20pies%20(MM)*.%20Precio%3A%20%24270.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1227,9 +1259,7 @@ Diseñada para familias cubanas, esta nevera o...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Nevera Milexus - 4.2 pies + Regulador de voltaje (MM)</h3>
           <div class="product-card__price">$290.00 USD</div>
-          <p class="product-card__desc">Nevera Milexus – Enfriamiento confiable para tu hogar
-
-Diseñada para familias cubanas, esta nevera o...</p>
+          <ul class="product-card__desc"><li>Nevera Milexus – Enfriamiento confiable para tu hogar</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Nevera%20Milexus%20-%204.2%20pies%20%2B%20Regulador%20de%20voltaje%20(MM)*.%20Precio%3A%20%24290.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1241,9 +1271,7 @@ Diseñada para familias cubanas, esta nevera o...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Nevera Milexus 11.2 pies (VL)</h3>
           <div class="product-card__price">$470.00 USD</div>
-          <p class="product-card__desc">Nevera Milexus 11.2 pies (VL) – refrigeración práctica para tu hogar
-
-Mantén tus alimentos frescos y...</p>
+          <ul class="product-card__desc"><li>Nevera Milexus 11.2 pies (VL) – refrigeración práctica para tu hogar</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Nevera%20Milexus%2011.2%20pies%20(VL)*.%20Precio%3A%20%24470.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1255,9 +1283,7 @@ Mantén tus alimentos frescos y...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Nevera Milexus 4.2 pies (GE)</h3>
           <div class="product-card__price">$270.00 USD</div>
-          <p class="product-card__desc">Nevera Milexus 4.2 pies – Frescura y espacio en el tamaño ideal –
-
-Esta nevera es la solución perfec...</p>
+          <ul class="product-card__desc"><li>Nevera Milexus 4.2 pies – Frescura y espacio en el tamaño ideal –</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Nevera%20Milexus%204.2%20pies%20(GE)*.%20Precio%3A%20%24270.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1269,9 +1295,7 @@ Esta nevera es la solución perfec...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Nevera Milexus 4.2 pies (VL)</h3>
           <div class="product-card__price">$270.00 USD</div>
-          <p class="product-card__desc">Nevera Milexus 4.2 pies – Frescura y espacio en el tamaño ideal –
-
-Esta nevera es la solución perfec...</p>
+          <ul class="product-card__desc"><li>Nevera Milexus 4.2 pies – Frescura y espacio en el tamaño ideal –</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Nevera%20Milexus%204.2%20pies%20(VL)*.%20Precio%3A%20%24270.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1283,9 +1307,7 @@ Esta nevera es la solución perfec...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Nevera Milexus 7 pies (MM)</h3>
           <div class="product-card__price">$350.00 USD</div>
-          <p class="product-card__desc">Nevera Milexus 7 pies (MM) – Frío práctico para tu hogar
-
-Mantén tus alimentos frescos y organizados...</p>
+          <ul class="product-card__desc"><li>Nevera Milexus 7 pies (MM) – Frío práctico para tu hogar</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Nevera%20Milexus%207%20pies%20(MM)*.%20Precio%3A%20%24350.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1297,9 +1319,7 @@ Mantén tus alimentos frescos y organizados...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Nevera Milexus 7 pies (VL)</h3>
           <div class="product-card__price">$350.00 USD</div>
-          <p class="product-card__desc">Nevera Milexus 7 pies (VL) – Frío práctico para tu hogar
-
-Conserva alimentos y bebidas con comodidad...</p>
+          <ul class="product-card__desc"><li>Nevera Milexus 7 pies (VL) – Frío práctico para tu hogar</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Nevera%20Milexus%207%20pies%20(VL)*.%20Precio%3A%20%24350.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1311,9 +1331,7 @@ Conserva alimentos y bebidas con comodidad...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Nevera Milexus – 6 pies (170L) (GE)</h3>
           <div class="product-card__price">$320.00 USD</div>
-          <p class="product-card__desc">Nevera Milexus 6 pies (170 L) – Frío práctico para tu hogar
-
-Con 170 L de capacidad, esta nevera Mil...</p>
+          <ul class="product-card__desc"><li>Nevera Milexus 6 pies (170 L) – Frío práctico para tu hogar</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Nevera%20Milexus%20%E2%80%93%206%20pies%20(170L)%20(GE)*.%20Precio%3A%20%24320.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1325,9 +1343,7 @@ Con 170 L de capacidad, esta nevera Mil...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Nevera Milexus – 6 pies (170L) (MM)</h3>
           <div class="product-card__price">$320.00 USD</div>
-          <p class="product-card__desc">Nevera Milexus 6 pies (170 L) – Frío práctico para tu hogar
-
-Con 170 L de capacidad, esta nevera Mil...</p>
+          <ul class="product-card__desc"><li>Nevera Milexus 6 pies (170 L) – Frío práctico para tu hogar</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Nevera%20Milexus%20%E2%80%93%206%20pies%20(170L)%20(MM)*.%20Precio%3A%20%24320.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1339,9 +1355,7 @@ Con 170 L de capacidad, esta nevera Mil...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Nevera Milexus – 6 pies (170L) (VL)</h3>
           <div class="product-card__price">$320.00 USD</div>
-          <p class="product-card__desc">Nevera Milexus 6 pies (170 L) – Frío práctico para tu hogar
-
-Con 170 L de capacidad, esta nevera Mil...</p>
+          <ul class="product-card__desc"><li>Nevera Milexus 6 pies (170 L) – Frío práctico para tu hogar</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Nevera%20Milexus%20%E2%80%93%206%20pies%20(170L)%20(VL)*.%20Precio%3A%20%24320.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1353,11 +1367,7 @@ Con 170 L de capacidad, esta nevera Mil...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Nevera Royal 3.5 pies (GE)</h3>
           <div class="product-card__price">$300.00 USD</div>
-          <p class="product-card__desc">Nevera Royal 3.5 pies
-💥Consumo energético: 28 kWh/24 horas
-💥Voltaje: 115V
-💥Frecuencia: 60Hz
-💥Cap...</p>
+          <ul class="product-card__desc"><li>Nevera Royal 3.5 pies</li><li>Consumo energético: 28 kWh/24 horas</li><li>Voltaje: 115V</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Nevera%20Royal%203.5%20pies%20(GE)*.%20Precio%3A%20%24300.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1369,9 +1379,7 @@ Con 170 L de capacidad, esta nevera Mil...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Nevera Royal 5.5 pies (GE)</h3>
           <div class="product-card__price">$300.00 USD</div>
-          <p class="product-card__desc">Nevera Royal 5.5 pies – Frío práctico para tu día a día
-
-Compacta y funcional, esta nevera Royal es ...</p>
+          <ul class="product-card__desc"><li>Nevera Royal 5.5 pies – Frío práctico para tu día a día</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Nevera%20Royal%205.5%20pies%20(GE)*.%20Precio%3A%20%24300.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1383,9 +1391,7 @@ Compacta y funcional, esta nevera Royal es ...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Nevera Royal de 10 pies (Horizontal ) (VL)</h3>
           <div class="product-card__price">$440.00 USD</div>
-          <p class="product-card__desc">Nevera Royal de 10 pies horizontal – Más espacio para conservar
-
-La Nevera Royal de 10 pies ofrece u...</p>
+          <ul class="product-card__desc"><li>Nevera Royal de 10 pies horizontal – Más espacio para conservar</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Nevera%20Royal%20de%2010%20pies%20(Horizontal%20)%20(VL)*.%20Precio%3A%20%24440.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1397,9 +1403,7 @@ La Nevera Royal de 10 pies ofrece u...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Olla Arrocera Estelectric 1.8Lts (GE)</h3>
           <div class="product-card__price">$40.00 USD</div>
-          <p class="product-card__desc">Olla Arrocera Estelectric 1.8 L – Arroz listo con menos esfuerzo
-
-Ideal para hogares pequeños y uso ...</p>
+          <ul class="product-card__desc"><li>Olla Arrocera Estelectric 1.8 L – Arroz listo con menos esfuerzo</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Olla%20Arrocera%20Estelectric%201.8Lts%20(GE)*.%20Precio%3A%20%2440.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1411,11 +1415,7 @@ Ideal para hogares pequeños y uso ...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Olla Arrocera Royal de 2.2 lts</h3>
           <div class="product-card__price">$45.00 USD</div>
-          <p class="product-card__desc">Olla Arrocera Royal de 2.2 lts
-💥Capacidad: 2.2 litros  
-💥Potencia: 900W  
-💥Voltaje: 110V  
-💥Frec...</p>
+          <ul class="product-card__desc"><li>Olla Arrocera Royal de 2.2 lts</li><li>Capacidad: 2.2 litros</li><li>Potencia: 900W</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Olla%20Arrocera%20Royal%20de%202.2%20lts*.%20Precio%3A%20%2445.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1427,9 +1427,7 @@ Ideal para hogares pequeños y uso ...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Olla Reina Challenger 7Lts</h3>
           <div class="product-card__price">$60.00 USD</div>
-          <p class="product-card__desc">Olla Reina Challenger 7Lts – Sabor y rapidez en tu cocina  
-
-Ideal para familias que desean preparar...</p>
+          <ul class="product-card__desc"><li>Olla Reina Challenger 7Lts – Sabor y rapidez en tu cocina</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Olla%20Reina%20Challenger%207Lts*.%20Precio%3A%20%2460.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1441,9 +1439,7 @@ Ideal para familias que desean preparar...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Olla Reina Milexus 6Lts (analógica) (GE)</h3>
           <div class="product-card__price">$65.00 USD</div>
-          <p class="product-card__desc">Olla Reina Milexus 6Lts – Cocina con estilo y rapidez  
-
-La Olla Reina Milexus de 6 L combina capaci...</p>
+          <ul class="product-card__desc"><li>Olla Reina Milexus 6Lts – Cocina con estilo y rapidez</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Olla%20Reina%20Milexus%206Lts%20(anal%C3%B3gica)%20(GE)*.%20Precio%3A%20%2465.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1455,9 +1451,7 @@ La Olla Reina Milexus de 6 L combina capaci...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Olla Reina unizuki </h3>
           <div class="product-card__price">$55.00 USD</div>
-          <p class="product-card__desc">Olla Reina unizuki – Sabor y potencia
-  
-Con la Olla Reina unizuki tendrás una cocción precisa y ráp...</p>
+          <ul class="product-card__desc"><li>Olla Reina unizuki – Sabor y potencia</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Olla%20Reina%20unizuki%20*.%20Precio%3A%20%2455.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1469,9 +1463,7 @@ Con la Olla Reina unizuki tendrás una cocción precisa y ráp...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Olla arrocera Bravoking 1.8Lts</h3>
           <div class="product-card__price">$40.00 USD</div>
-          <p class="product-card__desc">Olla arrocera Bravoking 1.8Lts – Arroz perfecto sin esfuerzo, listo cuando tú lo estés.
-
-Ideal para ...</p>
+          <ul class="product-card__desc"><li>Olla arrocera Bravoking 1.8Lts – Arroz perfecto sin esfuerzo, listo cuando tú lo estés.</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Olla%20arrocera%20Bravoking%201.8Lts*.%20Precio%3A%20%2440.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1483,9 +1475,7 @@ Ideal para ...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Olla de presión Challenger 5Lts</h3>
           <div class="product-card__price">$35.00 USD</div>
-          <p class="product-card__desc">Olla de Presión CHALLENGER 5 Litros (Modelo OP‑INDSL) – Cocción rápida y sin complicaciones  
-
-Perfe...</p>
+          <ul class="product-card__desc"><li>Olla de Presión CHALLENGER 5 Litros (Modelo OP‑INDSL) – Cocción rápida y sin complicaciones</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Olla%20de%20presi%C3%B3n%20Challenger%205Lts*.%20Precio%3A%20%2435.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1497,9 +1487,7 @@ Perfe...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Colchón Camero EKO</h3>
           <div class="product-card__price">$180.00 USD</div>
-          <p class="product-card__desc">Colchón Camero EKO – Descansa natural, despierta renovado
-
-Disfruta de un soporte equilibrado que se...</p>
+          <ul class="product-card__desc"><li>Colchón Camero EKO – Descansa natural, despierta renovado</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Colch%C3%B3n%20Camero%20EKO*.%20Precio%3A%20%24180.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1511,9 +1499,7 @@ Disfruta de un soporte equilibrado que se...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Colchón Personal Valdatronic</h3>
           <div class="product-card__price">$130.00 USD</div>
-          <p class="product-card__desc">Colchón Personal Valdatronic – Descanso profundo, bienestar absoluto.
-
-Eleve su experiencia de desca...</p>
+          <ul class="product-card__desc"><li>Colchón Personal Valdatronic – Descanso profundo, bienestar absoluto.</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Colch%C3%B3n%20Personal%20Valdatronic*.%20Precio%3A%20%24130.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1525,12 +1511,7 @@ Eleve su experiencia de desca...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Contadora de dinero CHALLANGER </h3>
           <div class="product-card__price">$200.00 USD</div>
-          <p class="product-card__desc">Contadora de dinero CHALLANGER 
-💥110 V 
-💥60 hz
-💥80 Wmax
-💥Tamaño : 320 mm x 288 mm x 205 mm
-💥 Ac...</p>
+          <ul class="product-card__desc"><li>Contadora de dinero CHALLANGER</li><li>110 V</li><li>60 hz</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Contadora%20de%20dinero%20CHALLANGER%20*.%20Precio%3A%20%24200.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1542,9 +1523,7 @@ Eleve su experiencia de desca...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Lampara solar 100W </h3>
           <div class="product-card__price">$40.00 USD</div>
-          <p class="product-card__desc">Lámpara Solar 100W – Exterior
-💥Lámpara de calle privada sin electricidad
-💥protección contra la llu...</p>
+          <ul class="product-card__desc"><li>Lámpara Solar 100W – Exterior</li><li>Lámpara de calle privada sin electricidad</li><li>protección contra la lluvia</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Lampara%20solar%20100W%20*.%20Precio%3A%20%2440.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1556,9 +1535,7 @@ Eleve su experiencia de desca...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Lámpara Solar de Aluminio – 200W</h3>
           <div class="product-card__price">$90.00 USD</div>
-          <p class="product-card__desc">Lámpara Solar de Aluminio – 200W – Potencia y estilo bajo el sol
- 
-Con 200 W de energía solar, esta ...</p>
+          <ul class="product-card__desc"><li>Lámpara Solar de Aluminio – 200W – Potencia y estilo bajo el sol</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*L%C3%A1mpara%20Solar%20de%20Aluminio%20%E2%80%93%20200W*.%20Precio%3A%20%2490.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1570,9 +1547,7 @@ Con 200 W de energía solar, esta ...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Lámpara solar de 800 watt</h3>
           <div class="product-card__price">$100.00 USD</div>
-          <p class="product-card__desc">Lámpara solar 800 W – Luz potente y sostenible
-
-Ideal para iluminar patios, jardines y áreas exterio...</p>
+          <ul class="product-card__desc"><li>Lámpara solar 800 W – Luz potente y sostenible</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*L%C3%A1mpara%20solar%20de%20800%20watt*.%20Precio%3A%20%24100.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1584,10 +1559,7 @@ Ideal para iluminar patios, jardines y áreas exterio...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Moledora de carne Royal </h3>
           <div class="product-card__price">$110.00 USD</div>
-          <p class="product-card__desc">Moledora de Carne Royal – 900W
-💥Potencia: 900W  110V
-💥Material: Cuerpo metálico resistente  
-💥Cuc...</p>
+          <ul class="product-card__desc"><li>Moledora de Carne Royal – 900W</li><li>Potencia: 900W  110V</li><li>Material: Cuerpo metálico resistente</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Moledora%20de%20carne%20Royal%20*.%20Precio%3A%20%24110.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1599,9 +1571,7 @@ Ideal para iluminar patios, jardines y áreas exterio...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Pesa dijital</h3>
           <div class="product-card__price">$60.00 USD</div>
-          <p class="product-card__desc">Báscula Digital de Precisión – Exactitud en cada gramo
-
-Lleva el control total de tus mediciones con...</p>
+          <ul class="product-card__desc"><li>Báscula Digital de Precisión – Exactitud en cada gramo</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Pesa%20dijital*.%20Precio%3A%20%2460.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1613,9 +1583,7 @@ Lleva el control total de tus mediciones con...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Congelador Vertical Premier 145Lts (VL)</h3>
           <div class="product-card__price">$360.00 USD</div>
-          <p class="product-card__desc">Congelador Vertical Premier 145Lts – Frío que cabe en tu espacio
-
-El Congelador Vertical Premier 145...</p>
+          <ul class="product-card__desc"><li>Congelador Vertical Premier 145Lts – Frío que cabe en tu espacio</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Congelador%20Vertical%20Premier%20145Lts%20(VL)*.%20Precio%3A%20%24360.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1627,9 +1595,7 @@ El Congelador Vertical Premier 145...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Minibar Royal – 5.0 pies (EM)</h3>
           <div class="product-card__price">$200.00 USD</div>
-          <p class="product-card__desc">Minibar Royal 5 pies – Compacto y fresco  
-
-Disfruta de la comodidad de tener bebidas y alimentos fr...</p>
+          <ul class="product-card__desc"><li>Minibar Royal 5 pies – Compacto y fresco</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Minibar%20Royal%20%E2%80%93%205.0%20pies%20(EM)*.%20Precio%3A%20%24200.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1641,7 +1607,7 @@ Disfruta de la comodidad de tener bebidas y alimentos fr...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Refrgerador Hisense 7.3 pies doble puerta + dispensador (VL)</h3>
           <div class="product-card__price">$350.00 USD</div>
-          <p class="product-card__desc">Refrigerador Hisense 7.3 pies doble puerta + dispensador (VL) – Refrescancia que se adapta a tu hoga...</p>
+          <ul class="product-card__desc"><li>Refrigerador Hisense 7.3 pies doble puerta + dispensador (VL) – Refrescancia que se adapta a tu hogar</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Refrgerador%20Hisense%207.3%20pies%20doble%20puerta%20%2B%20dispensador%20(VL)*.%20Precio%3A%20%24350.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1653,7 +1619,7 @@ Disfruta de la comodidad de tener bebidas y alimentos fr...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Refrigerador EKO 12 pies doble puerta + dispensador (MM)</h3>
           <div class="product-card__price">$570.00 USD</div>
-          <p class="product-card__desc">Refrigerador EKO 12 pies doble puerta + dispensador – Frescura y practicidad en cada rincón de tu ho...</p>
+          <ul class="product-card__desc"><li>Refrigerador EKO 12 pies doble puerta + dispensador – Frescura y practicidad en cada rincón de tu hogar</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Refrigerador%20EKO%2012%20pies%20doble%20puerta%20%2B%20dispensador%20(MM)*.%20Precio%3A%20%24570.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1665,9 +1631,7 @@ Disfruta de la comodidad de tener bebidas y alimentos fr...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Refrigerador EKO 12 pies doble puerta y dispensador</h3>
           <div class="product-card__price">$570.00 USD</div>
-          <p class="product-card__desc">Refrigerador EKO 12 pies doble puerta y dispensador – Frio y frescura en cada detalle
-
-El refrigerad...</p>
+          <ul class="product-card__desc"><li>Refrigerador EKO 12 pies doble puerta y dispensador – Frio y frescura en cada detalle</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Refrigerador%20EKO%2012%20pies%20doble%20puerta%20y%20dispensador*.%20Precio%3A%20%24570.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1679,9 +1643,7 @@ El refrigerad...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Refrigerador EKO 16 pies con dispensador y congelación seca</h3>
           <div class="product-card__price">$790.00 USD</div>
-          <p class="product-card__desc">Refrigerador EKO 16 pies – Frescura y amplitud para tu hogar
-
-Mantén tus alimentos conservados por m...</p>
+          <ul class="product-card__desc"><li>Refrigerador EKO 16 pies – Frescura y amplitud para tu hogar</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Refrigerador%20EKO%2016%20pies%20con%20dispensador%20y%20congelaci%C3%B3n%20seca*.%20Precio%3A%20%24790.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1693,9 +1655,7 @@ Mantén tus alimentos conservados por m...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Refrigerador EKO 8.1 pies </h3>
           <div class="product-card__price">$400.00 USD</div>
-          <p class="product-card__desc">Refrigerador EKO 8.1 pies – Mantén tus alimentos frescos con estilo-
- 
-Ideal para hogares pequeños o...</p>
+          <ul class="product-card__desc"><li>Refrigerador EKO 8.1 pies – Mantén tus alimentos frescos con estilo-</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Refrigerador%20EKO%208.1%20pies%20*.%20Precio%3A%20%24400.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1707,9 +1667,7 @@ Ideal para hogares pequeños o...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Refrigerador Hisense 19.1 pies -inverter-</h3>
           <div class="product-card__price">$1,050.00 USD</div>
-          <p class="product-card__desc">**Refrigerador Hisense 19.1 pies - Inverter - Frío, Fresco y Eficiente**  
-
-Mantén tus alimentos fre...</p>
+          <ul class="product-card__desc"><li>**Refrigerador Hisense 19.1 pies - Inverter - Frío, Fresco y Eficiente**</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Refrigerador%20Hisense%2019.1%20pies%20-inverter-*.%20Precio%3A%20%241%2C050.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1721,9 +1679,7 @@ Mantén tus alimentos fre...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Refrigerador Hisense 7.3 pies (GE)</h3>
           <div class="product-card__price">$380.00 USD</div>
-          <p class="product-card__desc">Refrigerador Hisense 7.27 pies (GE) – Refrigeración confiable para tu cocina
-
-Mantén tus alimentos f...</p>
+          <ul class="product-card__desc"><li>Refrigerador Hisense 7.27 pies (GE) – Refrigeración confiable para tu cocina</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Refrigerador%20Hisense%207.3%20pies%20(GE)*.%20Precio%3A%20%24380.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1735,9 +1691,7 @@ Mantén tus alimentos f...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Refrigerador Milexus 16 pies (VL)</h3>
           <div class="product-card__price">$800.00 USD</div>
-          <p class="product-card__desc">Refrigerador Milexus 16 pies – Frescura máxima para tu hogar
-
-Mantén tus alimentos en perfecto estad...</p>
+          <ul class="product-card__desc"><li>Refrigerador Milexus 16 pies – Frescura máxima para tu hogar</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Refrigerador%20Milexus%2016%20pies%20(VL)*.%20Precio%3A%20%24800.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1749,9 +1703,7 @@ Mantén tus alimentos en perfecto estad...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Refrigerador Premier 8.7 pies</h3>
           <div class="product-card__price">$530.00 USD</div>
-          <p class="product-card__desc">Refrigerador Premier 8.7 pies – Frescura que cabe en tu cocina y en tu presupuesto.
-
-Este refrigerad...</p>
+          <ul class="product-card__desc"><li>Refrigerador Premier 8.7 pies – Frescura que cabe en tu cocina y en tu presupuesto.</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Refrigerador%20Premier%208.7%20pies*.%20Precio%3A%20%24530.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1763,9 +1715,7 @@ Este refrigerad...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Refrigerador Royal 7.3 pies (EM)</h3>
           <div class="product-card__price">$330.00 USD</div>
-          <p class="product-card__desc">**Refrigerador Royal 7.3 pies (EM) – Frescura compacta para tu hogar**
-
-Ideal para apartamentos, esp...</p>
+          <ul class="product-card__desc"><li>**Refrigerador Royal 7.3 pies (EM) – Frescura compacta para tu hogar**</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Refrigerador%20Royal%207.3%20pies%20(EM)*.%20Precio%3A%20%24330.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1777,9 +1727,7 @@ Ideal para apartamentos, esp...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Rrefrigerador Premier 10.5 pies con dispensador </h3>
           <div class="product-card__price">$600.00 USD</div>
-          <p class="product-card__desc">Refrigerador Premier 10.5 pies con dispensador – Frescura amplia para tu hogar
-
-Ideal para familias ...</p>
+          <ul class="product-card__desc"><li>Refrigerador Premier 10.5 pies con dispensador – Frescura amplia para tu hogar</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Rrefrigerador%20Premier%2010.5%20pies%20con%20dispensador%20*.%20Precio%3A%20%24600.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1791,9 +1739,7 @@ Ideal para familias ...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Smart TV BravoKing 50&quot; – 4K + Soporte</h3>
           <div class="product-card__price">$405.00 USD</div>
-          <p class="product-card__desc">Smart TV BravoKing 50&quot; – 4K + Soporte – Vive el cine en tu hogar
-
-Transforma tu sala en una verdader...</p>
+          <ul class="product-card__desc"><li>Smart TV BravoKing 50&quot; – 4K + Soporte – Vive el cine en tu hogar</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Smart%20TV%20BravoKing%2050%22%20%E2%80%93%204K%20%2B%20Soporte*.%20Precio%3A%20%24405.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1805,9 +1751,7 @@ Transforma tu sala en una verdader...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Smart TV BravoKing 50&quot; – UHD 4K </h3>
           <div class="product-card__price">$395.00 USD</div>
-          <p class="product-card__desc">Smart TV BravoKing 50&quot; – UHD 4K - tu ventana al entretenimiento.
-
-Disfruta de imágenes nítidas y col...</p>
+          <ul class="product-card__desc"><li>Smart TV BravoKing 50&quot; – UHD 4K - tu ventana al entretenimiento.</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Smart%20TV%20BravoKing%2050%22%20%E2%80%93%20UHD%204K%20*.%20Precio%3A%20%24395.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1819,9 +1763,7 @@ Disfruta de imágenes nítidas y col...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Smart TV MILEXUS 32&quot; </h3>
           <div class="product-card__price">$170.00 USD</div>
-          <p class="product-card__desc">Smart TV MILEXUS 32&quot; – Tu ventana al mundo en cada momento.
-
-Disfrutá de tus series, películas y con...</p>
+          <ul class="product-card__desc"><li>Smart TV MILEXUS 32&quot; – Tu ventana al mundo en cada momento.</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Smart%20TV%20MILEXUS%2032%22%20*.%20Precio%3A%20%24170.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1833,9 +1775,7 @@ Disfrutá de tus series, películas y con...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Smart TV MILEXUS 43&quot; </h3>
           <div class="product-card__price">$260.00 USD</div>
-          <p class="product-card__desc">**Smart TV MILEXUS 43&quot; – Tu ventana al entretenimiento en alta definición**
-
-Disfruta de imágenes ní...</p>
+          <ul class="product-card__desc"><li>**Smart TV MILEXUS 43&quot; – Tu ventana al entretenimiento en alta definición**</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Smart%20TV%20MILEXUS%2043%22%20*.%20Precio%3A%20%24260.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1847,11 +1787,7 @@ Disfruta de imágenes ní...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Televisor Smart TV Royal 43</h3>
           <div class="product-card__price">$270.00 USD</div>
-          <p class="product-card__desc">Smart TV Royal 43&quot; – 4323SBT
-💥Marca: Royal  
-💥Modelo: 4323SBT  
-💥Tipo: Smart TV LED  
-💥Tamaño: 4...</p>
+          <ul class="product-card__desc"><li>Smart TV Royal 43&quot; – 4323SBT</li><li>Marca: Royal</li><li>Modelo: 4323SBT</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Televisor%20Smart%20TV%20Royal%2043*.%20Precio%3A%20%24270.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1863,9 +1799,7 @@ Disfruta de imágenes ní...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Televisor Smart TV Vision 32&quot; con cajita interna + soporte (GE)</h3>
           <div class="product-card__price">$200.00 USD</div>
-          <p class="product-card__desc">Smart TV Vision 32&quot; con cajita interna y soporte – Entretenimiento completo, instalación fácil
-
-Disf...</p>
+          <ul class="product-card__desc"><li>Smart TV Vision 32&quot; con cajita interna y soporte – Entretenimiento completo, instalación fácil</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Televisor%20Smart%20TV%20Vision%2032%22%20con%20cajita%20interna%20%2B%20soporte%20(GE)*.%20Precio%3A%20%24200.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1877,11 +1811,7 @@ Disf...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Bomba de agua 1/2 hp Saco</h3>
           <div class="product-card__price">$45.00 USD</div>
-          <p class="product-card__desc">Bomba de agua autocebante 
-(Ladrón de agua )
-💥Potencia: 375W / 1/2 HP  
-💥Voltaje: 120V  
-💥Frecuen...</p>
+          <ul class="product-card__desc"><li>Bomba de agua autocebante</li><li>(Ladrón de agua )</li><li>Potencia: 375W / 1/2 HP</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Bomba%20de%20agua%201%2F2%20hp%20Saco*.%20Precio%3A%20%2445.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1893,9 +1823,7 @@ Disf...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Presurizador Dawang (LPA15-9)</h3>
           <div class="product-card__price">$55.00 USD</div>
-          <p class="product-card__desc">Presurizador Dawang (LPA15-9) – Potencia estable en cada presión.  
-
-Presurizador DAWANG LPA15‑9 — 1...</p>
+          <ul class="product-card__desc"><li>Presurizador Dawang (LPA15-9) – Potencia estable en cada presión.</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Presurizador%20Dawang%20(LPA15-9)*.%20Precio%3A%20%2455.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1907,9 +1835,7 @@ Presurizador DAWANG LPA15‑9 — 1...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Ventilador Bravoking 16&quot; (GE)</h3>
           <div class="product-card__price">$30.00 USD</div>
-          <p class="product-card__desc">Ventilador Bravoking 16&quot; (GE) – Frescura total  
-
-Descubre el Ventilador Bravoking 16&quot; (GE), la solu...</p>
+          <ul class="product-card__desc"><li>Ventilador Bravoking 16&quot; (GE) – Frescura total</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Ventilador%20Bravoking%2016%22%20(GE)*.%20Precio%3A%20%2430.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1921,9 +1847,7 @@ Descubre el Ventilador Bravoking 16&quot; (GE), la solu...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Ventilador EKO 16&quot; de pedestal (MM)</h3>
           <div class="product-card__price">$40.00 USD</div>
-          <p class="product-card__desc">Ventilador EKO 16&quot; de pedestal (MM) – Frescura que acompaña tu día
-
-Disfruta de una brisa constante ...</p>
+          <ul class="product-card__desc"><li>Ventilador EKO 16&quot; de pedestal (MM) – Frescura que acompaña tu día</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Ventilador%20EKO%2016%22%20de%20pedestal%20(MM)*.%20Precio%3A%20%2440.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1935,9 +1859,7 @@ Disfruta de una brisa constante ...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Ventilador Polux</h3>
           <div class="product-card__price">$75.00 USD</div>
-          <p class="product-card__desc">Ventilador Polux – Frescura que impulsa tu día  
-
-El Ventilador Polux brinda una brisa constante y s...</p>
+          <ul class="product-card__desc"><li>Ventilador Polux – Frescura que impulsa tu día</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Ventilador%20Polux*.%20Precio%3A%20%2475.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1949,9 +1871,7 @@ El Ventilador Polux brinda una brisa constante y s...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Ventilador de Pared EKO 18&quot; (40W) (MM)</h3>
           <div class="product-card__price">$45.00 USD</div>
-          <p class="product-card__desc">Ventilador de Pared EKO – Brisa fresca y eficiente para tu hogar
-
-Disfruta de una circulación de air...</p>
+          <ul class="product-card__desc"><li>Ventilador de Pared EKO – Brisa fresca y eficiente para tu hogar</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Ventilador%20de%20Pared%20EKO%2018%22%20(40W)%20(MM)*.%20Precio%3A%20%2445.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1963,9 +1883,7 @@ Disfruta de una circulación de air...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Ventilador Recargable  JMD F6 CAMPING FAN – 20,000 mAh (GE)</h3>
           <div class="product-card__price">$65.00 USD</div>
-          <p class="product-card__desc">Ventilador Recargable JMD F6 CAMPING FAN – Mantén tu espacio fresco donde quieras  
-
-Ideal para acam...</p>
+          <ul class="product-card__desc"><li>Ventilador Recargable JMD F6 CAMPING FAN – Mantén tu espacio fresco donde quieras</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Ventilador%20Recargable%20%20JMD%20F6%20CAMPING%20FAN%20%E2%80%93%2020%2C000%20mAh%20(GE)*.%20Precio%3A%20%2465.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1977,9 +1895,7 @@ Ideal para acam...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Ventilador Recargable  QAWTOR F6 CAMPING FAN – 20,000 mAh (GE)</h3>
           <div class="product-card__price">$65.00 USD</div>
-          <p class="product-card__desc">Ventilador Recargable QAWTOR F6 CAMPING FAN – Fresco donde quieras 
- 
-Este ventilador portátil de 20...</p>
+          <ul class="product-card__desc"><li>Ventilador Recargable QAWTOR F6 CAMPING FAN – Fresco donde quieras</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Ventilador%20Recargable%20%20QAWTOR%20F6%20CAMPING%20FAN%20%E2%80%93%2020%2C000%20mAh%20(GE)*.%20Precio%3A%20%2465.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -1991,9 +1907,7 @@ Este ventilador portátil de 20...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Ventilador Recargable F6S (GE)</h3>
           <div class="product-card__price">$65.00 USD</div>
-          <p class="product-card__desc">Ventilador Recargable F6S (GE) – Fresco donde quieras, sin cables
-
-El Ventilador Recargable F6S (GE)...</p>
+          <ul class="product-card__desc"><li>Ventilador Recargable F6S (GE) – Fresco donde quieras, sin cables</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Ventilador%20Recargable%20F6S%20(GE)*.%20Precio%3A%20%2465.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -2005,8 +1919,7 @@ El Ventilador Recargable F6S (GE)...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Ventilador recargable  JMD F22 CAMPING FAN – 40,000 mAh</h3>
           <div class="product-card__price">$90.00 USD</div>
-          <p class="product-card__desc">**Ventilador recargable JMD F22 – Potencia y portabilidad para tus aventuras al aire libre**  
-Ideal...</p>
+          <ul class="product-card__desc"><li>**Ventilador recargable JMD F22 – Potencia y portabilidad para tus aventuras al aire libre**</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Ventilador%20recargable%20%20JMD%20F22%20CAMPING%20FAN%20%E2%80%93%2040%2C000%20mAh*.%20Precio%3A%20%2490.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -2018,8 +1931,7 @@ Ideal...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Ventilador recargable JYSUPER Telescópico </h3>
           <div class="product-card__price">$85.00 USD</div>
-          <p class="product-card__desc">JYSUPER Telescopic Rechargeable Fan – Potencia fresca donde quieras  
-Disfruta de un flujo de aire p...</p>
+          <ul class="product-card__desc"><li>JYSUPER Telescopic Rechargeable Fan – Potencia fresca donde quieras</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Ventilador%20recargable%20JYSUPER%20Telesc%C3%B3pico%20*.%20Precio%3A%20%2485.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -2031,9 +1943,7 @@ Disfruta de un flujo de aire p...</p>
         <div class="product-card__body">
           <h3 class="product-card__name">Ventilador recargable Milexus  (De pedestal)</h3>
           <div class="product-card__price">$65.00 USD</div>
-          <p class="product-card__desc">**Ventilador recargable Milexus – Frescura sin límites, lleva el aire a donde tú quieras.**
-
-Diseñad...</p>
+          <ul class="product-card__desc"><li>**Ventilador recargable Milexus – Frescura sin límites, lleva el aire a donde tú quieras.**</li><li class="desc-more">…</li></ul>
           <div class="product-card__actions">
             <a href="https://wa.me/5353760493?text=Hola%2C%20me%20interesa%20*Ventilador%20recargable%20Milexus%20%20(De%20pedestal)*.%20Precio%3A%20%2465.00%20USD.%20%C2%BFEst%C3%A1%20disponible%3F" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -2043,7 +1953,7 @@ Diseñad...</p>
 
     <div class="footer">
       <div class="footer__brand">DANI <span>MARVIS</span> Store</div>
-      Catálogo generado el 16 de septiembre de 2026, 03:37 p.m.
+      Catálogo generado el 16 de septiembre de 2026, 03:50 p.m.
     </div>
   </div>
 
@@ -2057,6 +1967,15 @@ Diseñad...</p>
       <button class="modal-close" id="modal-close-btn">&times;</button>
       <div class="modal-content" id="modal-content"></div>
     </div>
+  </div>
+
+  <!-- Lightbox: ampliar imagen del producto -->
+  <div class="zoom-overlay" id="zoom-modal" role="dialog" aria-label="Imagen ampliada">
+    <button class="zoom-close" id="zoom-close-btn" aria-label="Cerrar" title="Cerrar">&times;</button>
+    <div class="zoom-stage" id="zoom-stage">
+      <img id="zoom-img" src="" alt="" />
+    </div>
+    <div class="zoom-hint" id="zoom-hint">Hacé clic en la imagen para aumentarla · arrastrá para moverte</div>
   </div>
 
   <script>
@@ -2082,8 +2001,13 @@ Diseñad...</p>
       if (!p) return;
 
       let imgHtml;
+      let zoomSrc = null;
       if (p.image_local) {
-        imgHtml = '<img src="' + escape(p.image_local) + '" alt="' + escape(p.name) + '" />';
+        zoomSrc = p.image_local;
+        imgHtml = '<img src="' + escape(p.image_local) + '" alt="' + escape(p.name) + '" />' +
+          '<button class="zoom-btn" id="zoom-open-btn" title="Ampliar imagen" aria-label="Ampliar imagen">' +
+            '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>' +
+          '</button>';
       } else if (p.image_url) {
         imgHtml = '<div class="no-img"><svg width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".4"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></div>';
       } else {
@@ -2103,7 +2027,71 @@ Diseñad...</p>
         '</div>';
 
       document.getElementById('preview-modal').classList.add('open');
+
+      const zoomBtn = document.getElementById('zoom-open-btn');
+      if (zoomBtn) {
+        zoomBtn.addEventListener('click', () => { if (zoomSrc) openZoom(zoomSrc, p.name); });
+      }
+      const modalImg = document.querySelector('.modal-img img');
+      if (modalImg) {
+        modalImg.style.cursor = 'zoom-in';
+        modalImg.addEventListener('click', () => { if (zoomSrc) openZoom(zoomSrc, p.name); });
+      }
     }
+
+    function openZoom(src, alt) {
+      const img = document.getElementById('zoom-img');
+      const stage = document.getElementById('zoom-stage');
+      img.src = src;
+      img.alt = alt || '';
+      stage.classList.remove('zoomed');
+      stage.scrollLeft = 0;
+      stage.scrollTop = 0;
+      document.getElementById('zoom-modal').classList.add('open');
+      document.body.style.overflow = 'hidden';
+    }
+
+    function closeZoom() {
+      document.getElementById('zoom-modal').classList.remove('open');
+      const img = document.getElementById('zoom-img');
+      img.src = '';
+      document.body.style.overflow = '';
+    }
+
+    // Pan con arrastre + toggle de zoom al hacer clic
+    (function setupZoom() {
+      const stage = document.getElementById('zoom-stage');
+      let down = null;
+      let dragMoved = false;
+
+      stage.addEventListener('pointerdown', (e) => {
+        down = { x: e.clientX, y: e.clientY, sl: stage.scrollLeft, st: stage.scrollTop, moved: false };
+        if (stage.setPointerCapture) stage.setPointerCapture(e.pointerId);
+      });
+      stage.addEventListener('pointermove', (e) => {
+        if (!down) return;
+        const dx = e.clientX - down.x;
+        const dy = e.clientY - down.y;
+        if (Math.abs(dx) + Math.abs(dy) > 6) down.moved = true;
+        if (down.moved) {
+          stage.scrollLeft = down.sl - dx;
+          stage.scrollTop = down.st - dy;
+        }
+      });
+      stage.addEventListener('pointerup', () => {
+        dragMoved = down ? down.moved : false;
+        down = null;
+      });
+      stage.addEventListener('click', () => {
+        if (dragMoved) { dragMoved = false; return; }
+        stage.classList.toggle('zoomed');
+      });
+
+      document.getElementById('zoom-close-btn').addEventListener('click', closeZoom);
+      document.getElementById('zoom-modal').addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) closeZoom();
+      });
+    })();
 
     function closePreview() {
       document.getElementById('preview-modal').classList.remove('open');
@@ -2131,7 +2119,9 @@ Diseñad...</p>
         if (e.target === e.currentTarget) closePreview();
       });
       document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') closePreview();
+        if (e.key !== 'Escape') return;
+        if (document.getElementById('zoom-modal').classList.contains('open')) closeZoom();
+        else closePreview();
       });
 
       // Filters
