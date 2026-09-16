@@ -30,8 +30,8 @@ function parseImages(p) {
   return [];
 }
 
-// Renderiza la descripción de la tarjeta como una lista compacta de viñetas
-function cardDescList(desc) {
+// Renderiza la descripción de la tarjeta como lista de características esenciales
+function cardDescList(desc, productName) {
   const lines = String(desc ?? '')
     .split('\n')
     .map(l => l.trim())
@@ -40,19 +40,26 @@ function cardDescList(desc) {
 
   const MAX_ITEMS = 3;
   const MAX_CHARS = 110;
-  const bulletRe = /^[💥•▪◦●★✅✔]\s*/u;
+  const markerRe = /^[💥●•▪◦★✅✔⭐🔸➡⚡]\uFE0F?\s*/u;
+  const isHeader = l => /^caracter[- ]?ísticas esenciales\s*:/iu.test(l);
+
+  let pool = lines.filter(l => markerRe.test(l));
+  if (!pool.length) {
+    pool = lines.filter(l => l !== (productName || '').trim() && !isHeader(l));
+  }
+  if (!pool.length) return '';
 
   const items = [];
   let chars = 0;
-  for (const raw of lines) {
+  for (const raw of pool) {
     if (items.length >= MAX_ITEMS) break;
-    const line = escapeHtml(raw.replace(bulletRe, ''));
+    const line = escapeHtml(raw.replace(markerRe, ''));
     if (items.length > 0 && chars + line.length > MAX_CHARS) break;
     items.push(line);
     chars += line.length;
   }
 
-  const more = items.length < lines.length;
+  const more = items.length < pool.length;
 
   return '<ul class="product-card__desc">' +
     items.map(l => '<li>' + l + '</li>').join('') +
@@ -117,7 +124,7 @@ export async function buildCatalogHtml(products, uploadsDir) {
         <div class="product-card__body">
           <h3 class="product-card__name">${escapeHtml(p.name)}</h3>
           <div class="product-card__price">${formatCurrency(p.price)}</div>
-          ${p.description ? cardDescList(p.description) : ''}
+          ${p.description ? cardDescList(p.description, p.name) : ''}
           <div class="product-card__actions">
             <a href="${waLink}" target="_blank" class="btn-wa">Consultar</a>
           </div>
@@ -582,6 +589,30 @@ export async function buildCatalogHtml(products, uploadsDir) {
       margin-bottom: 8px;
       white-space: pre-line;
     }
+    .modal-desc {
+      list-style: none;
+      margin: 0 0 12px;
+      padding: 0;
+    }
+    .modal-desc li {
+      position: relative;
+      padding-left: 14px;
+      font-size: .9rem;
+      color: var(--text-secondary);
+      line-height: 1.6;
+      margin-bottom: 3px;
+    }
+    .modal-desc li::before {
+      content: '';
+      position: absolute;
+      left: 1px;
+      top: .62em;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--rose);
+      opacity: .8;
+    }
     .modal-body .category-tag {
       display: inline-block;
       padding: 3px 10px;
@@ -863,6 +894,15 @@ export async function buildCatalogHtml(products, uploadsDir) {
       return 'https://wa.me/${WHATSAPP_NUMBER}?text=' + encodeURIComponent(text);
     }
 
+    function essentialLines(desc, productName) {
+      const lines = String(desc || '').split('\\n').map(l => l.trim()).filter(Boolean);
+      const markerRe = /^[💥●•▪◦★✅✔⭐🔸➡⚡]\uFE0F?\s*/u;
+      const isHeader = l => /^caracter[- ]?ísticas esenciales\s*:/iu.test(l);
+      let pool = lines.filter(l => markerRe.test(l));
+      if (!pool.length) pool = lines.filter(l => l !== (productName || '').trim() && !isHeader(l));
+      return pool.map(l => l.replace(markerRe, ''));
+    }
+
     function openPreview(idx) {
       const p = products[idx];
       if (!p) return;
@@ -883,13 +923,23 @@ export async function buildCatalogHtml(products, uploadsDir) {
 
       const waLink = buildWaLink(p.name, p.price);
 
+      let descHtml;
+      if (p.description) {
+        const essentials = essentialLines(p.description, p.name);
+        descHtml = essentials.length
+          ? '<ul class="modal-desc">' + essentials.map(l => '<li>' + escape(l) + '</li>').join('') + '</ul>'
+          : '<p class="desc">' + escape(p.description) + '</p>';
+      } else {
+        descHtml = '';
+      }
+
       document.getElementById('modal-content').innerHTML =
         '<div class="modal-img">' + imgHtml + '</div>' +
         '<div class="modal-body">' +
           '<h2>' + escape(p.name) + '</h2>' +
           '<div class="price">' + formatPrice(p.price) + '</div>' +
           (p.category ? '<span class="category-tag">' + escape(p.category) + '</span>' : '') +
-          (p.description ? '<p class="desc">' + escape(p.description) + '</p>' : '') +
+          descHtml +
           '<a href="' + waLink + '" target="_blank" class="btn-wa">Consultar por WhatsApp</a>' +
         '</div>';
 
