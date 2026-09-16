@@ -442,4 +442,4 @@ function renderListStyle(doc, products, fields, startY, bottomReserve = 0) {
   });
 }
 
-export { FIELD_LABELS, DEFAULT_FIELDS };
+export { FIELD_LABELS, DEFAULT_FIELDS, sanitize };

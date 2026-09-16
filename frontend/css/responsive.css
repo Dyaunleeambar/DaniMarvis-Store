@@ -1,0 +1,160 @@
+/* ═══════════════════════════════════════════════════════════════════
+   DaniMarvis Store — Responsive (móvil / tablet)
+   ─────────────────────────────────────────────────────────────────
+   Se carga DESPUÉS de components.css y contiene SOLO media queries.
+   El diseño de escritorio (>768px) queda intacto.
+   Breakpoints: ≤768px (tablet y móvil) · ≤480px (teléfonos pequeños)
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── ≤768px: tablet y móvil ─────────────────────────────────────── */
+@media (max-width: 768px) {
+
+  /* Evita el zoom automático al enfocar campos en iOS/Android */
+  input, select, textarea,
+  .form-control,
+  .login-view .input { font-size: 16px; }
+
+  /* ── Topbar ── */
+  .topbar { padding: 0 12px; gap: 8px; }
+  .topbar-menu-btn {
+    display: flex;
+    min-width: 44px;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+  }
+  .topbar-title { min-width: 0; }
+  #page-title {
+    display: block;
+    font-size: .95rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* ── Sidebar como drawer lateral ──
+     (el toggle hamburguesa ya existe en js/core/app.js, sin cambios) */
+  .sidebar { width: min(300px, 85vw); }
+  .sidebar--open { box-shadow: 8px 0 32px rgba(0, 0, 0, .35); }
+  .sidebar-nav { overflow-y: auto; }
+  .sidebar-link {
+    min-height: 48px;
+    padding: 12px 14px;
+    font-size: .92rem;
+  }
+
+  /* ── Contenido ── */
+  .app-main { padding: 16px 12px; }
+  .page-header { margin-bottom: 16px; }
+  .page-header h1 { font-size: 1.15rem; }
+  .card { padding: 16px; }
+  .card--stat { gap: 10px; }
+  .stat-value { font-size: 1.25rem; }
+
+  /* ── Formularios: todo apilado a ancho completo ── */
+  .form-row { grid-template-columns: 1fr; }
+  /* form-row con columnas personalizadas en línea (p.ej. settings) */
+  .form-row[style] { grid-template-columns: 1fr !important; }
+  .form-control { padding: 10px 12px; }
+  .form-actions { flex-direction: column; align-items: stretch; }
+  .form-actions .btn { width: 100%; }
+
+  /* ── Controles táctiles: mínimo ~44px ── */
+  .btn { min-height: 44px; padding: 10px 16px; }
+  .btn--sm { min-height: 40px; padding: 8px 12px; }
+  .btn--icon { width: 44px; height: 44px; padding: 0; }
+  .btn--fab {
+    bottom: calc(16px + env(safe-area-inset-bottom));
+    right: 16px;
+  }
+  .modal-close { min-width: 44px; min-height: 44px; }
+  .img-thumb-remove { width: 24px; height: 24px; }
+
+  /* ── Tablas: scroll horizontal controlado ──
+     Las tablas conservan su estructura; el contenedor permite
+     desplazar con el dedo y la primera columna queda visible. */
+  .table-wrap {
+    margin: 0 -12px;
+    padding: 0 12px 4px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+  .table-wrap table { min-width: 640px; }
+  th, td { padding: 8px 10px; }
+  .table-wrap thead th:first-child,
+  .table-wrap tbody td:first-child {
+    position: sticky;
+    left: 0;
+    background: var(--bg-card);
+    z-index: 1;
+  }
+  .table-wrap thead th:first-child { background: var(--bg); }
+
+  /* ── Barra de filtros: controles a ancho completo ── */
+  .filter-bar .form-control,
+  .filter-bar .form-control--small {
+    flex: 1 1 100%;
+    width: 100%;
+    min-width: 0;
+  }
+  .filter-bar .btn { flex: 1 1 auto; }
+
+  /* ── Modales: hoja inferior casi a pantalla completa ── */
+  .modal-overlay,
+  .modal-confirm {
+    padding: 0;
+    align-items: flex-end;
+  }
+  .modal-content {
+    width: 100%;
+    max-width: 100%;
+    max-height: 94vh;
+    border-radius: 16px 16px 0 0;
+    padding: 20px 16px calc(20px + env(safe-area-inset-bottom));
+  }
+
+  /* ── Toast: ancho completo inferior ── */
+  .toast {
+    left: 12px;
+    right: 12px;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    max-width: none;
+  }
+
+  /* ── Login ── */
+  .login-card { padding: 28px 20px; margin: 0 16px; }
+
+  /* ── Detalle de producto: filas que se adaptan ── */
+  .detail-row { flex-wrap: wrap; gap: 4px 16px; }
+  .detail-value { text-align: left; }
+
+  /* ── Salvaguarda: min-width en línea que romperían a 360px
+     (p.ej. importView). Solo dentro de este breakpoint. */
+  .page [style*="min-width:320px"],
+  .app-main [style*="min-width:320px"] { min-width: 0 !important; }
+}
+
+/* ── ≤480px: teléfonos pequeños ────────────────────────────────── */
+@media (max-width: 480px) {
+  .app-main { padding: 12px 10px; }
+  .page-header { margin-bottom: 12px; }
+  .page-header h1 { font-size: 1.05rem; }
+  .page-header p { font-size: .8rem; }
+
+  .stat-value { font-size: 1.15rem; }
+  .stat-icon { width: 36px; height: 36px; }
+  .card { padding: 14px 12px; }
+
+  .card-header { flex-wrap: wrap; gap: 8px; }
+
+  .publications-grid { grid-template-columns: 1fr; }
+
+  .empty-state { padding: 32px 16px; }
+
+  /* Botón "Tienda" del topbar más compacto */
+  .topbar-actions .btn { padding: 8px 10px; font-size: .78rem; }
+
+  /* Galería del detalle de producto a ancho completo */
+  .product-detail-gallery { max-width: 100%; }
+}

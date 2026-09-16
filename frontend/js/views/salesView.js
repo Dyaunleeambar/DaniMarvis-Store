@@ -1,6 +1,7 @@
 import { api } from '../db/api.js';
 import { openModal, closeModal, showToast, confirmDialog, refreshSidebarCounts } from '../core/app.js';
 import { formatUSD, formatMN, formatCommission, formatDate, generateId } from '../utils/utils.js';
+import { generateSalesPDF } from '../utils/salesPdfGenerator.js';
 
 let currentContainer = null;
 let currentSales = [];
@@ -40,10 +41,16 @@ function renderTable(container, sales) {
           <h1>Ventas</h1>
           <p>${sales.length} venta(s) · Total: ${formatUSD(totalRevenue)} · Comisiones pendientes: ${pendingCommissionsUSD > 0 ? formatUSD(pendingCommissionsUSD) : ''}${pendingCommissionsUSD > 0 && pendingCommissionsMN > 0 ? ' + ' : ''}${pendingCommissionsMN > 0 ? formatCommission(pendingCommissionsMN, 'MN') : ''}${pendingCommissions === 0 ? '$0.00' : ''}</p>
         </div>
-        <button class="btn btn--primary" onclick="window._openSaleForm(null)">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          Nueva venta
-        </button>
+        <div class="page-header-left" style="display:flex;align-items:center;gap:10px">
+          <button class="btn btn--primary" onclick="window._openSaleForm(null)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Nueva venta
+          </button>
+          <button class="btn btn--secondary" onclick="window._exportSalesPDF()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Exportar PDF
+          </button>
+        </div>
       </div>
 
       <!-- Mini stats -->
@@ -339,6 +346,175 @@ window._openSaleForm = function(sale) {
       closeModal();
       refreshSidebarCounts();
       render(currentContainer);
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+};
+
+window._exportSalesPDF = async function() {
+  let allSales;
+  try {
+    allSales = await api.getSales();
+  } catch (err) {
+    showToast('Error al cargar ventas', 'error');
+    return;
+  }
+  if (allSales.length === 0) {
+    showToast('No hay ventas para exportar', 'error');
+    return;
+  }
+
+  const today = new Date().toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' });
+
+  openModal(`
+    <div class="modal-header">
+      <h2>Exportar ventas a PDF</h2>
+      <button class="modal-close" onclick="closeModal()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <form id="sales-pdf-form">
+      <div style="font-size:.85rem;color:var(--text-secondary);margin-bottom:12px">
+        Se exportarán las <strong id="sales-pdf-count">—</strong> venta(s).
+      </div>
+      <div class="form-group">
+        <label>Título</label>
+        <input type="text" name="title" class="form-control" value="Ventas — ${today}" />
+      </div>
+      <div class="form-group">
+        <label>Proveedor</label>
+        <select name="provider_id" class="form-control" id="sales-pdf-provider">
+          <option value="">Todos los proveedores</option>
+          ${currentProviders.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Fecha desde</label>
+          <input type="date" name="start_date" class="form-control" id="sales-pdf-start" />
+        </div>
+        <div class="form-group">
+          <label>Fecha hasta</label>
+          <input type="date" name="end_date" class="form-control" id="sales-pdf-end" />
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Ventas a incluir</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:.82rem;margin-bottom:6px">
+          <input type="checkbox" id="sales-pdf-all" checked />
+          Exportar todas las ventas que coinciden (desmarcar para elegirlas manualmente)
+        </label>
+        <select id="sales-pdf-select" multiple size="7" style="width:100%" disabled><option>Seleccioná un proveedor y/o fechas para ver las ventas</option></select>
+        <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">La lista se actualiza con el proveedor, el rango de fechas y la exclusión de canceladas.</small>
+      </div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:6px">
+          <input type="checkbox" name="exclude_cancelled" value="1" checked />
+          Excluir ventas canceladas
+        </label>
+      </div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:6px">
+          <input type="checkbox" name="include_summary" value="1" checked />
+          Incluir resumen de totales
+        </label>
+      </div>
+      <div class="form-group">
+        <label>Pie de página (opcional)</label>
+        <textarea name="footer" class="form-control" rows="2" placeholder="Ej: Gracias por confiar en DaniMarvis Store"></textarea>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn--secondary" onclick="closeModal()">Cancelar</button>
+        <button type="submit" class="btn btn--primary">Generar PDF</button>
+      </div>
+    </form>
+  `);
+
+  const countEl = document.getElementById('sales-pdf-count');
+  const providerEl = document.getElementById('sales-pdf-provider');
+  const startEl = document.getElementById('sales-pdf-start');
+  const endEl = document.getElementById('sales-pdf-end');
+  const excludeEl = document.querySelector('input[name="exclude_cancelled"]');
+  const allEl = document.getElementById('sales-pdf-all');
+  const salesSelect = document.getElementById('sales-pdf-select');
+  const selectedIds = new Set();
+
+  function escHtml(str) {
+    return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function buildFiltered() {
+    const provider = providerEl.value;
+    const start = startEl.value;
+    const end = endEl.value;
+    const exclude = excludeEl.checked;
+    return allSales.filter(s => {
+      if (provider && s.provider_id !== provider) return false;
+      const day = (s.sale_date || '').slice(0, 10);
+      if (start && day < start) return false;
+      if (end && day > end) return false;
+      if (exclude && s.delivery_status === 'cancelled') return false;
+      return true;
+    });
+  }
+
+  function updateSalesList() {
+    const matching = buildFiltered();
+    for (const id of selectedIds) {
+      if (!matching.some(s => s.id === id)) selectedIds.delete(id);
+    }
+    salesSelect.innerHTML = matching.map(s => `
+      <option value="${escHtml(s.id)}" ${selectedIds.has(s.id) ? 'selected' : ''}>
+        ${escHtml(s.product_name || '—')} · ${escHtml(s.client_name || '—')} · ${escHtml((s.sale_date || '').slice(0, 10))} · ${escHtml(formatUSD(s.total_amount || 0))}
+      </option>
+    `).join('') || '<option>Sin ventas con estos filtros</option>';
+  }
+
+  function updateCount() {
+    const matching = buildFiltered();
+    const count = allEl.checked || selectedIds.size === 0 ? matching.length : selectedIds.size;
+    countEl.textContent = `${count}`;
+  }
+
+  allEl.addEventListener('change', () => {
+    salesSelect.disabled = allEl.checked;
+    updateCount();
+  });
+
+  salesSelect.addEventListener('change', () => {
+    selectedIds.clear();
+    for (const opt of salesSelect.selectedOptions) selectedIds.add(opt.value);
+    updateCount();
+  });
+
+  providerEl.addEventListener('change', updateSalesList);
+  startEl.addEventListener('change', updateSalesList);
+  endEl.addEventListener('change', updateSalesList);
+  excludeEl.addEventListener('change', updateSalesList);
+  updateSalesList();
+  updateCount();
+
+  document.getElementById('sales-pdf-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(e.target));
+    const matching = buildFiltered();
+    const filtered = allEl.checked || selectedIds.size === 0
+      ? matching
+      : matching.filter(s => selectedIds.has(s.id));
+    if (filtered.length === 0) {
+      showToast('No hay ventas para exportar', 'error');
+      return;
+    }
+    try {
+      await generateSalesPDF(filtered, {
+        title: data.title || 'Reporte de ventas',
+        excludeCancelled: data.exclude_cancelled === '1',
+        includeSummary: data.include_summary === '1',
+        footer: data.footer || '',
+      });
+      closeModal();
+      showToast('PDF generado', 'success');
     } catch (err) {
       showToast(err.message, 'error');
     }
