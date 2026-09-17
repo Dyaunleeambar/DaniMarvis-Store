@@ -632,7 +632,9 @@ El sistema genera un **catálogo web estático** con todos los productos activos
 
 ### Características
 
-- **Grid de productos** con imagen principal, nombre, precio en USD, descripción y botón "Consultar" vía WhatsApp.
+- **Grid de productos** con imagen principal, nombre, precio en USD, características esenciales y botón "Consultar" vía WhatsApp.
+- **Lista de características** — la descripción del producto se muestra como lista con viñetas: en la tarjeta solo las características esenciales (hasta 3 + "…"), y en el modal la lista completa.
+- **Vista aumentada (lightbox/zoom)** — botón de lupa y clic sobre la imagen del modal abren la imagen en pantalla completa; permite hacer zoom y arrastrar para inspeccionar detalles. Se cierra con `Esc`, clic fuera o el botón "×".
 - **Filtros por categoría** y **búsqueda** en vivo.
 - **Modal de previsualización** al hacer clic en un producto con todos los detalles y enlace directo a WhatsApp.
 - **Diseño responsive** con soporte modo oscuro automático.
@@ -647,6 +649,8 @@ El sistema genera un **catálogo web estático** con todos los productos activos
 4. Para publicarlo en GitHub Pages, haz commit y push de la carpeta `public-catalog/`.
 
 ### Desde la terminal
+
+Escribe `public-catalog/index.html` leyendo `backend/danimarvis.db` y exportando solo los productos `status = 'active'` y `catalog_visible = 1`:
 
 ```bash
 node scripts/generate-catalog.js
@@ -839,6 +843,8 @@ En **Configuración** del panel puedes definir una plantilla de texto con placeh
 - [x] Plantilla de publicaciones personalizable
 - [x] Sistema de respaldos (exportar/importar JSON)
 - [x] Control de visibilidad de productos en catálogo público
+- [x] Lista de características esenciales en tarjeta y modal del catálogo
+- [x] Vista aumentada (lightbox/zoom) con arrastre en el catálogo público
 - [x] Caché offline con IndexedDB
 - [x] Configuración de tipo de cambio USD → MN
 - [x] Exportación de reportes PDF (tabla y lista detallada)
