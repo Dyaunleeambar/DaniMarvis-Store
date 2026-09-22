@@ -15,4 +15,5 @@ export const ROUTE_TITLES = {
   '#/exports': 'Exportaciones',
   '#/import': 'Importar / Sincronizar',
   '#/pub-queue': 'Cola de Publicaciones',
+  '#/rankings': 'Ranking de grupos',
 };

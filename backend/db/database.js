@@ -84,6 +84,8 @@ export async function initDB() {
   migrateProviderStyles();
   migrateWarrantyRules();
   migrateFacebookGroups();
+  migrateRankingSnapshots();
+  migrateRankingHistory();
   saveDB();
 }
 
@@ -443,6 +445,33 @@ function migrateFacebookGroups() {
       sort_order INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
+    );
+  `);
+}
+
+function migrateRankingSnapshots() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS rank_snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      grupo TEXT NOT NULL,
+      vistas INTEGER DEFAULT 0,
+      impresiones INTEGER DEFAULT 0,
+      fecha TEXT DEFAULT (datetime('now', 'localtime'))
+    );
+  `);
+}
+
+function migrateRankingHistory() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ranking_history (
+      fecha TEXT NOT NULL,
+      grupo TEXT NOT NULL,
+      posts INTEGER DEFAULT 0,
+      vistas INTEGER DEFAULT 0,
+      impresiones INTEGER DEFAULT 0,
+      promedio INTEGER DEFAULT 0,
+      creado TEXT DEFAULT (datetime('now', 'localtime')),
+      PRIMARY KEY (fecha, grupo)
     );
   `);
 }

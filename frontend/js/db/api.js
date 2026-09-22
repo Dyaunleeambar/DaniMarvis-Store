@@ -143,6 +143,13 @@ export const api = {
   updateGroup: (id, data) => request('PUT', `/groups/${id}`, data),
   deleteGroup: (id) => request('DELETE', `/groups/${id}`),
 
+  // Rankings
+  getRankings: () => request('GET', '/rankings'),
+  refreshRankings: (data) => request('POST', '/rankings/refresh', data || {}),
+  getRankingHistory: () => request('GET', '/rankings/history'),
+  getRankingHistoryDate: (date) => request('GET', `/rankings/history/${date}`),
+  getRankingHistoryGroup: (name) => request('GET', `/rankings/history/group/${encodeURIComponent(name)}`),
+
   // Prompt Engine
   getPromptFamilies: () => request('GET', '/prompt-engine/families'),
   getPromptFormats: () => request('GET', '/prompt-engine/formats'),

@@ -23,6 +23,8 @@ const TARGET_DATE = (val(args, '--date') || (() => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 })());
+const DESDE = val(args, '--desde');
+const HASTA = val(args, '--hasta');
 const TOP = parseInt(val(args, '--top') || '50', 10) || 50;
 const RANGE = val(args, '--range') || '90';
 const ROUNDS = parseInt(val(args, '--rounds') || '300', 10) || 300;
@@ -88,7 +90,7 @@ async function clickText(page, includes, not = []) {
 async function setRange(page) {
   if (RANGE === '28') return true;
   try {
-    const opened = await clickText(page, ['últimos 28 días'], []);
+    let opened = await clickText(page, ['últimos 28 días'], []);
     if (!opened) {
       opened = await clickText(page, ['últimos'], []);
     }
@@ -116,13 +118,99 @@ async function setRange(page) {
   return false;
 }
 
+// ---------- seleccionar UN día exacto en la Biblioteca ----------
+// FB solo permite el día específico por "Personalizado"; abro el menú, elijo
+// Personalizado y relleno ambos extremos con TARGET_DATE (fecha ∈ único día).
+// Los fallos no bloquean la corrida: se sigue con el rango actual.
+async function setTargetDate(page) {
+  const open = async () => {
+    let ok = await clickText(page, ['últimos'], ['exportar']);
+    if (!ok) ok = await clickText(page, ['rango'], []);
+    await sleep(1500);
+    let cust = await clickText(page, ['personalizado'], []);
+    if (!cust) {
+      cust = await page.evaluate(() => {
+        const norm = (s) => (s || '').toLowerCase();
+        for (const el of document.querySelectorAll('[role="menuitem"], [role="option"], div[role="button"]')) {
+          const t = norm(el.innerText) || norm(el.getAttribute('aria-label'));
+          if (t && t.indexOf('personalizado') === 0) { el.click(); return true; }
+        }
+        return false;
+      });
+    }
+    return cust;
+  };
+  try {
+    if (!(await open())) { console.log('  (aviso) no se pudo abrir Personalizado.'); return false; }
+    await sleep(2500);
+    const filled = await page.evaluate((dt) => {
+      const inputs = [];
+      for (const el of document.querySelectorAll('input')) {
+        const r = el.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) continue;
+        const t = (el.type || '').toLowerCase();
+        const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+        if (t === 'date' || aria.includes('fecha') || aria.includes('date')) inputs.push(el);
+      }
+      const setVal = (el, v) => {
+        let d = Object.getOwnPropertyDescriptor(window.HTMLInputElement && el.constructor && el.constructor.prototype, 'value') || Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+        if (d && d.set) d.set.call(el, v); else el.value = v;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+      let n = 0;
+      if (inputs.length >= 2) { setVal(inputs[0], dt); setVal(inputs[1], dt); n = 2; }
+      else if (inputs.length === 1) { setVal(inputs[0], dt); n = 1; }
+      return { count: n, found: inputs.length, types: inputs.map(i => i.type) };
+    }, TARGET_DATE);
+    console.log('  Fechas Personalizado rellenadas:', JSON.stringify(filled));
+    if (!filled.count) { console.log('  (aviso) no aparecieron inputs de fecha; seguimos con el rango actual.'); return false; }
+    await sleep(400);
+    await clickText(page, ['aplicar'], []);
+    await sleep(4000);
+    return true;
+  } catch (e) {
+    console.log('  (aviso) personalizado:', e.message);
+    return false;
+  }
+}
+
 // ---------- colección de filas ----------
 const C = { 2: 'text', 4: 'views', 8: 'impressions', 10: 'dist' };
 
-async function collectRows(page) {
+function wheelSafe(mouse, deltaY) {
+  // FB solo responde a eventos REALES de rueda sobre la tabla. El dispatch por
+  // CDP a veces se cuelga: cap de 6s para no estancar el proceso.
+  return Promise.race([
+    mouse.wheel({ deltaY }).then(() => true).catch(() => false),
+    sleep(6000).then(() => false),
+  ]);
+}
+
+async function findSpot(page) {
+  try {
+    return await page.evaluate(() => {
+      for (const el of document.querySelectorAll('[role="grid"], div[role="table"], div')) {
+        const r = el.getBoundingClientRect();
+        if (r.width > 500 && r.height > 250 && r.bottom < window.innerHeight + 50) {
+          return { x: r.left + r.width / 2, y: r.top + Math.min(r.height * 0.55, 380) };
+        }
+      }
+      return { x: window.innerWidth / 2, y: 260 };
+    });
+  } catch (_) {
+    return { x: 700, y: 300 };
+  }
+}
+
+async function collectRows(page, mouse) {
   const rows = [];
   const seen = new Set();
   let noNew = 0;
+  const recent = [];
+
+  let spot = await findSpot(page);
+  await mouse.move(spot.x, spot.y);
 
   for (let r = 0; r < ROUNDS; r++) {
     const batch = await page.evaluate(() => {
@@ -130,14 +218,25 @@ async function collectRows(page) {
       const out = [];
       for (const tr of document.querySelectorAll('tr[role="row"]')) {
         const cells = {};
+        let rawText = '';
         let link = '';
         const anchor = tr.querySelector('a[href*="/posts/"]');
         if (anchor) link = (anchor.getAttribute('href') || '').split('?')[0];
         for (const td of tr.querySelectorAll(':scope > td')) {
           const c = td.getAttribute('aria-colindex');
           if (c) cells[c] = clean(td.innerText);
+          if (c === '2') rawText = td.innerText;
         }
-        out.push({ link, text: cells['2'] || '', viewsRaw: cells['4'] || '', imprRaw: cells['8'] || '', dist: cells['10'] || '' });
+        // filas fantasma (placeholder del grid virtualizado) sin contenido ni enlace
+        if (!cells['2'] && !link) continue;
+        out.push({
+          link,
+          text: cells['2'] || '',
+          rawText,
+          viewsRaw: cells['4'] || '',
+          imprRaw: cells['8'] || '',
+          dist: cells['10'] || '',
+        });
       }
       return out;
     });
@@ -150,25 +249,35 @@ async function collectRows(page) {
       rows.push({ key, ...b, views: parseNumber(b.viewsRaw), impressions: parseNumber(b.imprRaw) });
       added++;
     }
-    if (added > 0) { noNew = 0; } else if (++noNew >= NO_NEW_BREAK) break;
 
-    if (r % 5 === 0) console.log(`  ...paso ${r}: ${rows.length} filas únicas`);
+    // un flick de rueda por pasada; si no produce filas nuevas, insistir con
+    // recentrado (el hover de FB puede perderse y la rueda cae en el fondo).
+    const t0 = Date.now();
+    const ok = await wheelSafe(mouse, 380 + Math.random() * 160);
+    recent.push(ok); if (recent.length > 8) recent.shift();
+    await sleep(550 + Math.random() * 250);
+    const rate = recent.filter(Boolean).length / recent.length;
 
-    // 3 barridos por pasada: grid + todos los contenedores con overflow + ventana
-    for (let sweep = 0; sweep < 3; sweep++) {
-      await page.evaluate(() => {
-        const grid = document.querySelector('[role="grid"]');
-        if (grid) grid.scrollTop += grid.clientHeight * 0.9;
-        let n = 0;
-        for (const el of document.querySelectorAll('div')) {
-          if (el.scrollHeight > el.clientHeight + 30) { el.scrollTop += el.clientHeight * 0.9; n++; }
-          if (n > 100) break;
-        }
-        window.scrollBy(0, window.innerHeight * 0.9);
-      });
-      await sleep(350 + Math.random() * 250);
+    if (added > 0) { noNew = 0; }
+    else if (ok) { if (++noNew >= NO_NEW_BREAK) break; }
+    // sin filas nuevas PERO la rueda falló seguido: probable hover perdido
+    else if (recent.length >= 4 && rate < 0.35) {
+      spot = await findSpot(page);
+      await mouse.move(spot.x, spot.y);
+      await sleep(500);
     }
-    await sleep(700 + Math.random() * 300);
+
+    // re-centrado periódico por seguridad
+    if (r > 0 && r % 12 === 0 && rate < 0.8) {
+      spot = await findSpot(page);
+      await mouse.move(spot.x, spot.y);
+    }
+
+    // ruedas muertas (8 fallos seguidos) o tiempo total agotado: terminar
+    if (recent.length === 8 && rate === 0) break;
+    if (Date.now() - t0 > 260000) break;
+
+    if (r % 5 === 0) console.log(`  ...paso ${r}: ${rows.length} filas únicas (wheelOk=${recent.reduce((a, b) => a + (b ? 1 : 0), 0)}/${recent.length})`);
   }
   return rows;
 }
@@ -177,22 +286,45 @@ async function collectRows(page) {
 const clean = (s) => (s || '').replace(/\s+/g, ' ').trim().replace(/\u00a0/g, ' ');
 const MONTHS = { ene: 0, 'jan': 0, feb: 1, mar: 2, 'abr': 3, apr: 3, may: 4, jun: 5, jul: 6, ago: 7, 'sep': 8, oct: 9, nov: 10, dic: 11, dec: 11 };
 
+function isDateTail(tail) {
+  const s = clean(tail).toLowerCase();
+  // "hoy", "hoy a las 8:24", "ayer", "ayer a las 20:00"
+  if (/^(hoy|ayer)( a las \d{1,2}:\d{2})?$/.test(s)) return true;
+  // "hace 5 d"
+  if (/^hace \d+ d$/.test(s)) return true;
+  // "15 sep", "15 sep a las 8:24", "el 15 de septiembre a las ...", "15/9"
+  if (/^(el\s+)?\d{1,2}(\/\d{1,2})?(\s+de\s+|\s+)?[a-zñáéíóúñ]+\.?(\s+\d{4})?(\s+a las \d{1,2}:\d{2})?$/.test(s)) return true;
+  return false;
+}
+
 function extractGroupDate(text) {
   const t = (text || "");
-  // footer REAL (verificado con dump hoy): "{Grupo} • Hoy a las 11:46"
-  // UN solo separador. El grupo es lo que precede al ULTIMO "•"; la fecha lo que sigue.
-  const idx = [];
-  for (let i = 0; i < t.length; i++) if (t[i] === "•") idx.push(i);
-  for (let k = idx.length - 1; k >= 0; k--) {
-    const tail = clean(t.slice(idx[k] + 1));
-    if (/^(hoy|ayer|hace d+|(?:els+)?d{1,2}(?:s(?:des+)?[a-zñáéíóúñ]+.?(?:sd{4})?)?s*(?:as+las)?s*d{1,2}:d{2}.*)$/i.test(tail)) {
-      return { group: clean(t.slice(0, idx[k])).split(/s{2,}/).pop(), tail };
+  // Estructura real del footer (verificado en vivo): el grupo viene en una LÍNEA
+  // previa terminada en "•", y la fecha en la línea siguiente:
+  //   "... #EnvíoGratis"
+  //   "VARADERO Vende •"
+  //   "Hoy a las 20:33"
+  const lines = t.split(/\r?\n/).map(l => clean(l)).filter(Boolean);
+  for (let i = lines.length - 1; i >= 1; i--) {
+    const prev = lines[i - 1];
+    if (/\u2022\s*$/.test(prev) && isDateTail(lines[i])) {
+      return { group: prev.replace(/\u2022\s*$/, '').trim().split(/\s{2,}/).pop() || prev.replace(/\u2022\s*$/, '').trim(), tail: lines[i] };
+    }
+  }
+  // fallback: "•" dentro de una línea única (último "•"); la fecha lo que sigue
+  for (let k = lines.length - 1; k >= 0; k--) {
+    const line = lines[k];
+    const m = line.match(/^(.*)\s*\u2022\s*([^•\n]+)$/);
+    if (m && isDateTail(m[2])) {
+      const g = m[1].trim();
+      return { group: g.split(/\s{2,}/).pop() || g, tail: clean(m[2]) };
     }
   }
   // sin grupo: solo fecha al final
-  const m2 = t.match(/(hoy|ayer|hace d+|(?:els+)?d{1,2}(?:s(?:des+)?[a-zñáéíóúñ]+.?)?s*(?:as+las)?s*d{1,2}:d{2}.*?)$/i);
-  if (m2) return { group: "", tail: m2[1].trim() };
-  return { group: "", tail: "" };
+  for (let k = lines.length - 1; k >= 0; k--) {
+    if (isDateTail(lines[k])) return { group: '', tail: lines[k] };
+  }
+  return { group: '', tail: '' };
 }
 
 function parseDateEs(tail) {
@@ -213,7 +345,12 @@ function parseDateEs(tail) {
   return { iso, day: date.getDate(), month: date.getMonth(), ts: date.getTime() };
 }
 
-function dateMatches(iso) { return iso === TARGET_DATE; }
+function dateMatches(iso) {
+  if (DESDE && HASTA) return iso >= DESDE && iso <= HASTA;
+  if (DESDE) return iso >= DESDE;
+  if (HASTA) return iso <= HASTA;
+  return iso === TARGET_DATE;
+}
 
 // ---------- main ----------
 (async () => {
@@ -223,36 +360,45 @@ function dateMatches(iso) { return iso === TARGET_DATE; }
   console.log(`  Fecha objetivo: ${TARGET_DATE}`);
   console.log(`  Top: ${TOP} | Rango: ${RANGE} | Rounds: ${ROUNDS}`);
 
-  const browser = await puppeteer.connect({ browserURL: `http://localhost:${DEBUG_PORT}`, defaultViewport: null });
-  const pages = await browser.pages();
-  const page = pages[pages.length - 1];
+  const browser = await puppeteer.connect({ browserURL: `http://localhost:${DEBUG_PORT}`, defaultViewport: null, protocolTimeout: 240000 });
+  // pestaña nueva dedicada: renderer limpio (el DOM pesado de otras pestañas
+  // degrada el dispatch de rueda por CDP) y no molesto la que tiene el usuario.
+  const page = await browser.newPage();
+  await page.setViewport({ width: 1680, height: 1000 });
+  const mouse = page.mouse;
   await page.bringToFront();
   await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
   await sleep(6000);
 
   if (/login|checkpoint/i.test(page.url())) {
     console.log('!! SESIÓN REQUERIDA: abrí el perfil y logueáte en Facebook.');
-    await browser.close();
+    await page.close().catch(() => {});
+    await browser.disconnect();
     process.exit(1);
   }
 
   console.log('Ajustando rango de fechas...');
   await setRange(page);
   await sleep(2000);
+  if (TARGET_DATE && !DESDE && !HASTA) {
+    console.log('Intentando enfocar el día objetivo (Personalizado)...');
+    await setTargetDate(page);
+  }
 
-  console.log('Recolectando filas (scroll adaptativo)...');
-  const rows = await collectRows(page);
+  console.log('Recolectando filas (wheel sobre el grid)...');
+  const rows = await collectRows(page, mouse);
   console.log(`Filas únicas recolectadas: ${rows.length}`);
 
   if (rows.length === 0) {
     console.log('No se encontraron filas. Revisá la página manualmente.');
-    await browser.close();
+    await page.close().catch(() => {});
+    await browser.disconnect();
     return;
   }
 
   // enriquecer filas con grupo + fecha
   for (const row of rows) {
-    const { group, tail } = extractGroupDate(row.text);
+    const { group, tail } = extractGroupDate(row.rawText || row.text);
     row.group = group || row.dist.replace(/-{1,2}/g, '').trim() || '(sin distribución)';
     row.dateRaw = tail;
     const p = parseDateEs(tail);
@@ -270,32 +416,38 @@ function dateMatches(iso) { return iso === TARGET_DATE; }
 
   if (targetRows.length === 0) {
     console.log('No hay posts de esa fecha: seguro que el rango cubre el día? Revisá el rango o aumentá --rounds.');
-    fs.writeFileSync(path.join(__dirname, 'reporte_1509.json'), JSON.stringify({ error: 'no_rows', collected_posts: rows.length, byDate: Object.fromEntries(byDate) }, null, 2));
-    await browser.close();
+    fs.writeFileSync(path.join(__dirname, 'reporte_POC_fechas.json'), JSON.stringify({ error: 'no_rows', collected_posts: rows.length, byDate: Object.fromEntries(byDate) }, null, 2));
+    await page.close().catch(() => {});
+    await browser.disconnect();
     return;
   }
 
   // agregación por grupo
   const agg = new Map();
   for (const r of targetRows) {
-    const g = agg.get(r.group) || { group: r.group, posts: 0, views: 0, impressions: 0, max: 0, maxPost: null };
+    const g = agg.get(r.group) || { group: r.group, posts: 0, views: 0, impressions: 0, max: 0, maxPost: null, fechas: [] };
     g.posts++;
     g.views += r.views;
     g.impressions += r.impressions;
     if (r.views > g.max) { g.max = r.views; g.maxPost = r; }
+    if (r.iso) g.fechas.push(r.iso);
     agg.set(r.group, g);
   }
-  const groups = [...agg.values()].sort((a, b) => b.views - a.views);
+  const groups = [...agg.values()].sort((a, b) => b.views - a.views).map(g => ({
+    ...g,
+    promedio: g.posts ? Math.round(g.views / g.posts) : 0,
+    ultima_fecha: g.fechas.sort().pop() || '',
+  }));
 
   const report = {
     fecha: TARGET_DATE,
     generado: new Date().toISOString(),
     total_posts_fecha: targetRows.length,
-    grupos: groups,
-    top: groups.slice(0, TOP),
-    posts: targetRows.map(r => ({ grupo: r.group, fecha: r.dateRaw, vistas: r.views, impresiones: r.impressions, texto: r.text.slice(0, 120), url: r.link })),
+    grupos: groups.map(({ fechas, maxPost, ...g }) => g),
+    top: groups.slice(0, TOP).map(({ fechas, maxPost, ...g }) => g),
+    posts: targetRows.map(r => ({ grupo: r.group, fecha_iso: r.iso, fecha: r.dateRaw, vistas: r.views, impresiones: r.impressions, texto: r.text.slice(0, 120), url: r.link })),
   };
-  fs.writeFileSync(path.join(__dirname, 'reporte_1509.json'), JSON.stringify(report, null, 2));
+  fs.writeFileSync(path.join(__dirname, 'reporte_POC_fechas.json'), JSON.stringify(report, null, 2));
 
   const totalViews = groups.reduce((a, g) => a + g.views, 0);
   console.log(`\n=== TOP ${Math.min(TOP, groups.length)} GRUPOS POR VISUALIZACIONES (${TARGET_DATE}) ===`);
@@ -307,6 +459,7 @@ function dateMatches(iso) { return iso === TARGET_DATE; }
     console.log(`${String(i + 1).padStart(3)} ${g.group.slice(0, 44).padEnd(46)} ${String(g.posts).padStart(5)} ${g.views.toLocaleString('es-ES').padStart(9)} ${g.impressions.toLocaleString('es-ES').padStart(9)} ${String(avg).padStart(9)} ${maxTxt.padStart(8)}`);
   });
 
-  console.log(`\nReporte completo guardado en: reporte_1509.json`);
-  await browser.close();
+  console.log(`\nReporte completo guardado en: reporte_POC_fechas.json`);
+  await page.close().catch(() => {});
+  await browser.disconnect();
 })().catch(e => { console.error('FATAL:', e.message); process.exit(1); });

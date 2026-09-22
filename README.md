@@ -19,6 +19,7 @@ Panel de gestión para gestores de ventas que trabajan con importadores de elect
 - [Anuncios generados con IA](#anuncios-generados-con-ia)
 - [Catálogo Público (GitHub Pages)](#catálogo-público-github-pages)
 - [Publicaciones en Redes Sociales](#publicaciones-en-redes-sociales)
+- [Ranking de grupos (Biblioteca de Contenido)](#ranking-de-grupos-biblioteca-de-contenido)
 - [Sistema de Respaldos](#sistema-de-respaldos)
 - [Flujo de Trabajo](#flujo-de-trabajo)
 - [Personalización](#personalización)
@@ -43,6 +44,7 @@ Este sistema permite a un **gestor de ventas**:
 11. **Dar seguimiento** a entregas y comisiones pendientes.
 12. **Configurar el tipo de cambio** USD → MN para mostrar precios en moneda nacional.
 13. **Respaldar y restaurar** todos los datos del sistema como archivos JSON.
+14. **Ranking de grupos por desempeño** — medir con la Biblioteca de Contenido de Facebook qué grupos devuelven más y menos visualizaciones por publicación, con historial consultable por fecha y evolución por grupo.
 
 El negocio funciona así:
 
@@ -171,6 +173,10 @@ DaniMarvisStore/
 ├── public-catalog/
 │   ├── index.html             # Catálogo web estático generado (GitHub Pages)
 │   └── images/                # Imágenes de productos copiadas para el catálogo
+├── utilidades/
+│   └── fb-ranking/
+│       ├── content_library_views.js    # Scraper: filas de la Biblioteca de Contenido
+│       └── analyze_views.js            # Análisis alternativo por métricas del grid
 ├── electron/
 │   └── main.js                # Placeholder para aplicación Electron (próximamente)
 ├── backend/
@@ -196,6 +202,7 @@ DaniMarvisStore/
 │   │   ├── import.js          # Análisis OCR + aplicación de precios
 │   │   ├── images.js           # Importación de imágenes generadas con IA
 │   │   └── backup.js          # Exportar/restaurar datos como JSON
+│   │   └── rankingsRouter.js  # Ranking de grupos + historial (Biblioteca de Contenido)
 │   └── scripts/
 │       └── generate-icon.js   # Generador de ícono PNG con canvas
 │
@@ -238,6 +245,7 @@ DaniMarvisStore/
 │           ├── exportsConfigView.js  # Configuración de exportaciones
 │           ├── exportsImagesView.js  # Generador de imágenes promocionales
 │           └── importView.js         # Importar/sincronizar precios con OCR
+│           └── rankingsView.js       # Ranking del día + historial por fecha
 │
 └── README.md
 ```
@@ -443,6 +451,18 @@ Response: { "user": {...}, "token": "..." }
 | `GET` | `/api/backup` | Exportar todos los datos como archivo JSON |
 | `POST` | `/api/backup/restore` | Restaurar todos los datos desde un archivo JSON (elimina datos existentes) |
 
+### Ranking de grupos (Biblioteca de Contenido)
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/rankings` | Ranking actual desde `reporte_POC_fechas.json` (Top 20 + fondo 10) |
+| `POST` | `/api/rankings/refresh` | Ejecuta el scraper (`body: { date, range, desde, hasta }`) y guarda el snapshot del día en `ranking_history` |
+| `GET` | `/api/rankings/history` | Fechas con historial disponible (grupos/vistas/posts por fecha) |
+| `GET` | `/api/rankings/history/:date` | Top 20 / Bottom 20 de una fecha (`YYYY-MM-DD`) |
+| `GET` | `/api/rankings/history/group/:name` | Evolución día a día de un grupo |
+
+> El snapshot se almacena en la tabla `ranking_history` con clave `(fecha, grupo)` — un único snapshot por día (re-ejecutar el mismo día lo reemplaza).
+
 ---
 
 ## Panel de Gestión (Frontend)
@@ -463,6 +483,7 @@ El frontend es una **SPA** (Single Page Application) construida con JavaScript v
 | `#/settings` | Configuración | Tipo de cambio, plantilla de publicación, configuración de IA, configuración de Facebook/Instagram, gestión de categorías |
 | `#/backup` | Respaldos | Exportar e importar todos los datos del sistema como JSON |
 | `#/exports` | Exportaciones | Generación de PDF, imágenes promocionales, historial de exportaciones |
+| `#/rankings` | Ranking grupos | Top y menos grupos por visualizaciones + historial por fecha |
 
 ### Funcionalidades
 
@@ -687,6 +708,29 @@ En **Configuración** del panel, configura:
 
 ---
 
+## Ranking de grupos (Biblioteca de Contenido)
+
+La vista `#/rankings` mide qué grupos de Facebook devuelven **más** (y **menos**) visualizaciones por publicación, usando la **Biblioteca de Contenido** del Panel Profesional (no usa la Graph API).
+
+### Cómo funciona
+
+1. El scraper (`utilidades/fb-ranking/content_library_views.js`) se conecta a un Chrome local con `--remote-debugging-port=9222` (perfil con sesión de Facebook) y abre la Biblioteca de Contenido en una **pestaña nueva**.
+2. Recolecta todas las filas del grid con **rueda de mouse real** (Facebook virtualiza el listado y no responde a `scrollTop` programático), filtra las publicaciones del día elegido y extrae grupo de distribución + métricas (visualizaciones, impresiones) del pie del preview.
+3. Escribe `reporte_POC_fechas.json` en `C:\Users\Dani\fb-leave\`, que el backend lee como fuente del ranking.
+4. El backend agrega por grupo (`posts`, `vistas`, `impresiones`, `promedio`) y guarda un **snapshot diario** en `ranking_history` (clave `(fecha, grupo)`).
+
+### La vista
+
+- **Ranking del día** — elegís fecha objetivo (por defecto ayer) y rango de la Biblioteca (28/90 días/Total), y botón **Actualizar ranking** (tarda ~4–7 min mientras recorre todo el listado con scroll).
+- **Historial** — selector de fechas (1 entrada por día): resumen + **Top 20** y **Bottom 20** de esa fecha, y **evolución de un grupo** (vistas/posts/promedio día a día).
+
+### Requisitos
+
+- Chrome con el perfil logueado en Facebook y el flag `--remote-debugging-port=9222` (se puede abrir con `ranking_grupos.bat` de la carpeta `fb-leave`).
+- Sesión de Facebook activa; si no la hay, el refresco responde con error 401.
+
+---
+
 ## Sistema de Respaldos
 
 Permite exportar e importar todos los datos del sistema.
@@ -854,6 +898,7 @@ En **Configuración** del panel puedes definir una plantilla de texto con placeh
 - [x] Generación de imágenes con IA (Pollinations)
 - [x] Descarga masiva de imágenes en ZIP (JSZip)
 - [x] Selector de moneda de comisión (USD/MN) por proveedor con override个别 por producto
+- [x] Ranking de grupos por visualizaciones desde la Biblioteca de Contenido, con historial por fecha y evolución por grupo
 
 ### Por implementar
 
