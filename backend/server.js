@@ -18,14 +18,9 @@ import importRouter from './routes/import.js';
 import pubQueueRouter from './routes/pubQueue.js';
 import groupsRouter from './routes/groups.js';
 import rankingsRouter from './routes/rankingsRouter.js';
-import { runDailyRanking, isDailyRankingDue, dailyRankingStatus } from './jobs/dailyRanking.js';
 import promptEngineRouter from './routes/promptEngine.js';
 import providerStylesRouter from './routes/providerStyles.js';
 import warrantyRulesRouter from './routes/warrantyRules.js';
-import pageRoutinesRouter from './routes/pageRoutines.js';
-import groupPublishRouter from './routes/groupPublish.js';
-import { runPageRoutineCycle } from './lib/pageRoutineWorker.js';
-import { runGroupPublish } from './lib/groupPublisher.js';
 import { generateCatalogFile } from './lib/catalogGenerator.js';
 import { ensureWebp } from './lib/imageUtils.js';
 import { createBackup } from './scripts/backup.js';
@@ -95,8 +90,6 @@ app.use('/api/rankings', rankingsRouter);
 app.use('/api/prompt-engine', promptEngineRouter);
 app.use('/api/provider-styles', providerStylesRouter);
 app.use('/api/warranty-rules', warrantyRulesRouter);
-app.use('/api/page-routines', pageRoutinesRouter);
-app.use('/api/group-publish', groupPublishRouter);
 
 app.post('/api/upload', (req, res) => {
   upload.single('image')(req, res, async (err) => {
@@ -158,7 +151,6 @@ app.put('/api/settings', (req, res) => {
         ...publish_config,
         ai: { ...(existing.ai || {}), ...(publish_config.ai || {}) },
         facebook: { ...(existing.facebook || {}), ...(publish_config.facebook || {}) },
-        autopublish: { ...(existing.autopublish || {}), ...(publish_config.autopublish || {}) },
       };
       // Protección: no perder la key/token si se guarda con el campo vacío SIN
       // haber cambiado el resto de la sección. Si cambió algo (otro proveedor,
@@ -209,32 +201,30 @@ app.post('/api/generate-description', async (req, res) => {
     existingDesc ? `Descripción actual: ${existingDesc}` : ''
   ].filter(Boolean).join('\n');
 
-  const apiBase = ai.api_url?.replace(/\/+$/, '') || 'https://openrouter.ai/api/v1';
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 90000);
-
   try {
-    const response = await fetch(`${apiBase}/chat/completions`, {
+    const apiUrl = ai.api_url.replace(/\/+$/, '');
+    const isOpenRouter = apiUrl.includes('openrouter.ai');
+
+    const response = await fetch(`${apiUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${ai.api_key}`,
-        // OpenRouter exige identificar la app para los modelos :free
-        'HTTP-Referer': 'http://localhost:3456',
-        'X-Title': 'DaniMarvis Store'
+        'Authorization': `Bearer ${ai.api_key}`
       },
       body: JSON.stringify({
-        model: ai.model || 'nex-agi/nex-n2.5-mini:free',
+        model: ai.model || 'gpt-4o-mini',
         messages: [
           { role: 'system', content: ai.system_prompt || 'Genera una descripción atractiva y profesional para un producto de catálogo de ventas.' },
           { role: 'user', content: userPrompt }
         ],
         temperature: 0.7,
-        max_tokens: 800
-      }),
-      signal: controller.signal
+        max_tokens: 2000,
+        // Algunos modelos ":free" de OpenRouter son modelos de razonamiento:
+        // si no se desactiva, pueden agotar max_tokens "pensando" y devolver
+        // message.content vacío aunque la respuesta sea 200 OK.
+        ...(isOpenRouter ? { reasoning: { enabled: false } } : {})
+      })
     });
-    clearTimeout(timer);
 
     if (!response.ok) {
       const errBody = await response.text().catch(() => '');
@@ -248,15 +238,17 @@ app.post('/api/generate-description', async (req, res) => {
     } catch {
       throw new Error('El proveedor no devolvió JSON válido. Revisá la URL del API en Ajustes > Generación con IA.');
     }
-    const generated = data.choices?.[0]?.message?.content?.trim();
-    if (!generated) throw new Error('La IA no generó contenido');
+    const choice = data.choices?.[0];
+    // Fallback por si el proveedor ignora reasoning:enabled:false y de
+    // todos modos manda la respuesta al canal de razonamiento.
+    const generated = (choice?.message?.content || choice?.message?.reasoning || '').trim();
+    if (!generated) {
+      const reason = choice?.finish_reason ? ` (finish_reason: ${choice.finish_reason})` : '';
+      throw new Error(`La IA no generó contenido${reason}. Probá con otro modelo en Ajustes > Generación con IA.`);
+    }
 
     res.json({ description: generated });
   } catch (err) {
-    clearTimeout(timer);
-    if (err?.name === 'AbortError') {
-      return res.status(504).json({ error: 'El proveedor de IA tardó demasiado en responder. Probá con otro modelo en Ajustes > Generación con IA.' });
-    }
     console.error('[AI] Error:', err);
     res.status(500).json({ error: 'Error al generar descripción: ' + err.message });
   }
@@ -416,46 +408,6 @@ async function start() {
   app.listen(PORT, () => {
     console.log(`[Server] Panel DaniMarvis corriendo en http://localhost:${PORT}`);
   });
-
-  const routineTick = () => {
-    runPageRoutineCycle().then((summary) => {
-      const planned = summary?.planned ?? 0;
-      if (planned > 0) console.log(`[RoutineWorker] Slots agendados en Meta: ${planned}`);
-    }).catch((e) => {
-      console.error('[RoutineWorker] Error:', e.message);
-    });
-  };
-  routineTick();
-  setInterval(routineTick, 15 * 60 * 1000);
-
-  // Worker del auto-publicado en grupos: corre solo si está habilitado en
-  // Ajustes (publish_config.autopublish.enabled) y respeta el flujo natural
-  // (franja horaria, cap diario y cooldowns).
-  const groupPubTick = () => {
-    runGroupPublish({ auto: true }).then((r) => {
-      if (r.error) { console.error('[GroupPub]', r.error); return; }
-      if (r.grabbed) console.log(`[GroupPub] ${r.mode === 'prepare' ? 'Preparados' : 'Publicados'} ${r.grabbed} en grupos (${r.published} ok, ${r.errors} err)`);
-    }).catch((e) => {
-      console.error('[GroupPub] Error:', e.message);
-    });
-  };
-  setInterval(groupPubTick, 5 * 60 * 1000);
-
-  // Ranking diario automático: corre una vez por día, dentro de la ventana
-  // configurada (publish_config.ranking.time, por defecto 10:00-10:30), para
-  // capturar el desglose por grupo del día anterior MIENTRAS sigue expandido en
-  // la Biblioteca de Contenido (más tarde FB lo colapsa y se pierden los grupos).
-  const rankingTick = () => {
-    if (!isDailyRankingDue()) return;
-    runDailyRanking({}).then((o) => {
-      console.log("[RankingDiario] " + (o.ok
-        ? `ok ${o.grupos} grupos para ${o.fecha}`
-        : (o.skipped ? `descarte (${o.grupos} < ${o.min_groups ?? 'min'})` : 'fallo: ' + (o.error || '?'))));
-    }).catch((e) => {
-      console.error('[RankingDiario] Error de tick:', e.message);
-    });
-  };
-  setInterval(rankingTick, 60 * 1000);
 }
 
 start();
