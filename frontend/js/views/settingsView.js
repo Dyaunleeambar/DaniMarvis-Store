@@ -26,6 +26,7 @@ function renderPage(container, settings, categories, providerStyles) {
   const template = pc.template || '';
   const ai = pc.ai || {};
   const fb = pc.facebook || {};
+  const ap = pc.autopublish || {};
 
   container.innerHTML = `
     <div class="page">
@@ -95,7 +96,7 @@ function renderPage(container, settings, categories, providerStyles) {
                 </div>
                 <div class="form-group">
                   <label>Modelo</label>
-                  <input type="text" name="ai_model" class="form-control" value="${escAttr(ai.model || 'nex-agi/nex-n2.5-pro:free')}" placeholder="nex-agi/nex-n2.5-pro:free" />
+                  <input type="text" name="ai_model" class="form-control" value="${escAttr(ai.model || 'nex-agi/nex-n2.5-mini:free')}" placeholder="nex-agi/nex-n2.5-mini:free" />
                 </div>
               </div>
               <div class="form-group">
@@ -103,7 +104,7 @@ function renderPage(container, settings, categories, providerStyles) {
                 <input type="password" name="ai_api_key" class="form-control" value="${escAttr(ai.api_key || '')}" placeholder="sk-or-v1-... / AIza..." />
                 <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">
                   Probá gratis con <a href="https://openrouter.ai" target="_blank" rel="noopener">OpenRouter</a>
-                  (URL: <code>https://openrouter.ai/api/v1</code>, modelo: <code>nex-agi/nex-n2.5-pro:free</code>)
+                  (URL: <code>https://openrouter.ai/api/v1</code>, modelo: <code>nex-agi/nex-n2.5-mini:free</code>)
                   o con <a href="https://console.groq.com" target="_blank" rel="noopener">Groq</a>
                   (URL: <code>https://api.groq.com/openai/v1</code>, modelo: <code>llama-3.3-70b-versatile</code>).
                   Los modelos <code>:free</code> de OpenRouter cambian; si fallan, elegí otro de la lista <a href="https://openrouter.ai/models?fmt=cards&order=top-weekly&q=free" target="_blank" rel="noopener">free</a>.
@@ -136,6 +137,64 @@ function renderPage(container, settings, categories, providerStyles) {
                 <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">
                   Token de larga duración. Se genera desde Facebook Developers. Requiere permisos: <code>pages_manage_posts</code>, <code>pages_read_engagement</code>.
                 </small>
+              </div>
+              <div class="form-group">
+                <label>Expiración del token (fecha)</label>
+                <input type="date" name="fb_token_expires_at" class="form-control" value="${escAttr(fb.token_expires_at || '')}" />
+                <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">
+                  Los tokens de página duran 60 días. Guardá la fecha de vencimiento para que el panel te avise en Rutinas de Página.
+                </small>
+              </div>
+            </div>
+          </details>
+
+          <details style="margin-top:12px" ${ap.enabled ? 'open' : ''}>
+            <summary style="cursor:pointer;font-weight:600;font-size:.9rem;color:var(--rose)">🤖 Auto-publicar en grupos (opcional)</summary>
+            <p style="margin:8px 0 12px;font-size:.8rem;color:var(--text-secondary)">
+              El panel deja los posts listos (texto + imagen) en la Cola de Publicaciones y un worker
+              los dispara en los grupos usando tu Chrome (requiere <code>--remote-debugging-port=9222</code>
+              logueado en Facebook), imitando un flujo natural: cap diario, franja horaria, separación
+              entre posts y cooldown por grupo.
+            </p>
+            <div class="form-group">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0">
+                <input type="checkbox" name="ap_enabled" value="1" ${ap.enabled ? 'checked' : ''} style="width:16px;height:16px" />
+                Habilitar el worker automático cada 5 minutos
+              </label>
+            </div>
+            <div class="form-group">
+              <label>Modo por defecto</label>
+              <select name="ap_mode" class="form-control">
+                <option value="publish" ${ap.mode !== 'prepare' ? 'selected' : ''}>Publicar directo</option>
+                <option value="prepare" ${ap.mode === 'prepare' ? 'selected' : ''}>Preparar en pestaña (borrador, publicás vos)</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Cap diario (posts)</label>
+                <input type="number" name="ap_daily_cap" class="form-control" min="1" max="200" value="${ap.daily_cap ?? 6}" />
+              </div>
+              <div class="form-group">
+                <label>Franja desde (hora)</label>
+                <input type="number" name="ap_hours_from" class="form-control" min="0" max="23" value="${ap.hours_from ?? 8}" />
+              </div>
+              <div class="form-group">
+                <label>Franja hasta (hora)</label>
+                <input type="number" name="ap_hours_to" class="form-control" min="1" max="24" value="${ap.hours_to ?? 21}" />
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Separación entre posts (min)</label>
+                <input type="number" name="ap_min_gap" class="form-control" min="5" max="600" value="${ap.min_gap_min ?? 45}" />
+              </div>
+              <div class="form-group">
+                <label>Cooldown por grupo (min)</label>
+                <input type="number" name="ap_cooldown" class="form-control" min="30" max="4320" value="${ap.cooldown_min ?? 240}" />
+              </div>
+              <div class="form-group">
+                <label>Posts por tick del worker</label>
+                <input type="number" name="ap_batch" class="form-control" min="1" max="20" value="${ap.worker_batch ?? 3}" />
               </div>
             </div>
           </details>
@@ -283,7 +342,18 @@ function renderPage(container, settings, categories, providerStyles) {
       facebook: {
         page_id: fd.get('fb_page_id') || '',
         instagram_id: fd.get('fb_instagram_id') || '',
-        access_token: fd.get('fb_access_token') || ''
+        access_token: fd.get('fb_access_token') || '',
+        token_expires_at: fd.get('fb_token_expires_at') || ''
+      },
+      autopublish: {
+        enabled: fd.get('ap_enabled') === '1',
+        mode: fd.get('ap_mode') || 'publish',
+        daily_cap: parseInt(fd.get('ap_daily_cap'), 10) || 6,
+        hours_from: parseInt(fd.get('ap_hours_from'), 10) || 8,
+        hours_to: parseInt(fd.get('ap_hours_to'), 10) || 21,
+        min_gap_min: parseInt(fd.get('ap_min_gap'), 10) || 45,
+        cooldown_min: parseInt(fd.get('ap_cooldown'), 10) || 240,
+        worker_batch: parseInt(fd.get('ap_batch'), 10) || 3
       }
     };
 

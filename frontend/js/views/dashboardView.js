@@ -1,20 +1,32 @@
 import { api } from '../db/api.js';
-import { formatUSD, formatMN, formatCommission, formatDate } from '../utils/utils.js';
+import { formatUSD, formatMN, formatCommission, formatDate, formatDateTime } from '../utils/utils.js';
 import { showToast } from '../core/app.js';
 
 export async function render(container) {
   container.innerHTML = '<div class="loading-screen" style="position:static;padding:40px"><div class="loading-spinner"></div></div>';
 
   try {
-    const data = await api.getDashboard();
-    renderDashboard(container, data);
+    const [data, logs] = await Promise.all([
+      api.getDashboard(),
+      api.getPageRoutineLogs({ status: 'scheduled', limit: 3 }).catch(() => []),
+    ]);
+    renderDashboard(container, data, logs);
   } catch (err) {
     container.innerHTML = `<div class="empty-state"><h3>Error al cargar</h3><p>${err.message}</p></div>`;
     showToast('Error al cargar dashboard', 'error');
   }
 }
 
-function renderDashboard(container, data) {
+function countdown(target) {
+  const ms = new Date(target).getTime() - Date.now();
+  if (ms <= 0) return 'Ahora';
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m} min`;
+}
+
+function renderDashboard(container, data, scheduledLogs = []) {
   const { stats, monthlySales, topProducts, recentSales, exchange_rate } = data;
   const rate = exchange_rate || 61000;
 
@@ -123,6 +135,33 @@ function renderDashboard(container, data) {
               </div>`
           }
         </div>
+      </div>
+
+      <!-- Próximas publicaciones en Página -->
+      <div class="card" style="margin-top:24px">
+        <div class="card-header">
+          <h3>Próximas publicaciones en tu Página</h3>
+          <a href="#/page-routines?tab=logs" class="btn btn--sm btn--ghost">Ver todas</a>
+        </div>
+        ${scheduledLogs.length === 0
+          ? '<div class="empty-state" style="padding:24px"><p>No hay publicaciones agendadas. Creá una <a href="#/page-routines" style="color:var(--rose)">rutina de página</a> para que Meta publique automáticamente.</p></div>'
+          : `<div class="table-wrap">
+              <table>
+                <thead><tr><th>Producto</th><th>Programada</th><th>En</th><th>Imágenes</th><th>Meta ID</th></tr></thead>
+                <tbody>
+                  ${scheduledLogs.map(l => `
+                    <tr>
+                      <td>${l.product_name || '—'}</td>
+                      <td>${formatDateTime(l.scheduled_for)}</td>
+                      <td><span style="font-weight:600;color:var(--rose)">${countdown(l.scheduled_for)}</span></td>
+                      <td>${l.images_count ?? 0}</td>
+                      <td style="font-size:.72rem;color:var(--text-muted)">${l.meta_post_id ? l.meta_post_id : '—'}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>`
+        }
       </div>
 
       <!-- Monthly Sales Chart -->

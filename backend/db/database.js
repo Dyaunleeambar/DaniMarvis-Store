@@ -86,12 +86,21 @@ export async function initDB() {
   migrateFacebookGroups();
   migrateRankingSnapshots();
   migrateRankingHistory();
+  migratePageRoutines();
   saveDB();
 }
 
 export function getDB() {
   if (!db) throw new Error('Base de datos no inicializada. Llama a initDB() primero.');
   return db;
+}
+
+// Lista dinámica de tablas de la app (excluye las internas de SQLite), para que
+// los respaldos incluyan automáticamente las tablas nuevas (ranking_history,
+// facebook_groups, etc.) sin mantener listas manuales.
+export function listTables() {
+  const rows = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all();
+  return rows.map(r => r.name);
 }
 
 function createSchema() {
@@ -270,8 +279,18 @@ function migratePublishConfig() {
         enabled: false,
         api_url: 'https://openrouter.ai/api/v1',
         api_key: '',
-        model: 'nex-agi/nex-n2.5-pro:free',
+        model: 'nex-agi/nex-n2.5-mini:free',
         system_prompt: 'Genera una descripción atractiva y profesional para un producto de catálogo de ventas. Responde ÚNICAMENTE con el texto de la descripción, sin explicaciones adicionales. Incluye:\n1) Una línea con el nombre del producto y un eslogan corto separado por "–".\n2) Un párrafo descriptivo destacando características y beneficios.\n3) Una sección "Características esenciales" con bullets puntos clave.\nUsa un tono persuasivo pero profesional. Máximo 250 palabras.'
+      },
+      autopublish: {
+        enabled: false,
+        mode: 'publish',
+        daily_cap: 6,
+        hours_from: 8,
+        hours_to: 21,
+        min_gap_min: 45,
+        cooldown_min: 240,
+        worker_batch: 3
       }
     });
     db.prepare("UPDATE settings SET publish_config = ? WHERE id = 1").run(defaults);
@@ -307,6 +326,9 @@ function migratePubQueue() {
   } catch (_) {}
   try {
     db.exec("ALTER TABLE publication_queue ADD COLUMN updated_at TEXT DEFAULT (datetime('now'))");
+  } catch (_) {}
+  try {
+    db.exec("ALTER TABLE publication_queue ADD COLUMN images TEXT DEFAULT '[]'");
   } catch (_) {}
 }
 
@@ -472,6 +494,38 @@ function migrateRankingHistory() {
       promedio INTEGER DEFAULT 0,
       creado TEXT DEFAULT (datetime('now', 'localtime')),
       PRIMARY KEY (fecha, grupo)
+    );
+  `);
+}
+
+function migratePageRoutines() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS page_routines (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      active INTEGER DEFAULT 1,
+      products TEXT DEFAULT '[]',
+      times TEXT DEFAULT '09:00,13:30,18:00',
+      default_text TEXT DEFAULT '',
+      format TEXT DEFAULT '4:5',
+      lead_minutes INTEGER DEFAULT 20,
+      last_product_index INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS page_schedule_log (
+      id TEXT PRIMARY KEY,
+      routine_id TEXT NOT NULL,
+      product_id TEXT,
+      product_name TEXT DEFAULT '',
+      scheduled_for TEXT NOT NULL,
+      status TEXT DEFAULT 'scheduled',
+      meta_post_id TEXT DEFAULT '',
+      message TEXT DEFAULT '',
+      images_count INTEGER DEFAULT 0,
+      error TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
     );
   `);
 }

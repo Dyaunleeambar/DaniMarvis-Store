@@ -18,7 +18,12 @@ const URL = 'https://www.facebook.com/professional_dashboard/content/content_lib
 const DEBUG_PORT = 9222;
 
 const args = process.argv.slice(2);
-function val(list, flag) { const i = list.indexOf(flag); return i >= 0 ? list[i + 1] : null; }
+function val(list, flag) {
+  const exact = list.indexOf(flag);
+  if (exact >= 0) return list[exact + 1] ?? null;
+  const inline = list.find(a => a.startsWith(flag + '='));
+  return inline ? inline.slice(flag.length + 1) : null;
+}
 const TARGET_DATE = (val(args, '--date') || (() => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -28,7 +33,8 @@ const HASTA = val(args, '--hasta');
 const TOP = parseInt(val(args, '--top') || '50', 10) || 50;
 const RANGE = val(args, '--range') || '90';
 const ROUNDS = parseInt(val(args, '--rounds') || '300', 10) || 300;
-const NO_NEW_BREAK = 10;
+const NO_NEW_BREAK = 16;
+const PIN_DATE = !!val(args, '--pin-date');
 
 const NOW = new Date();
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -114,6 +120,25 @@ async function setRange(page) {
     console.log('  No se pudo ampliar el rango; seguimos con el actual.');
   } catch (e) {
     console.log('  (aviso) rango:', e.message);
+  }
+  return false;
+}
+
+// Amplía el rango a 90 días ASEGURÁNDOSE de que realmente se aplicó: FB a veces
+// responde "Rango cambiado" sin cambiar nada y la tabla queda con 1-2 días
+// (scrolpeak cortísimo) → los posts viejos JAMÁS cargan. Con la altura real
+// scrolleable de la tabla detectamos si el rango amplio tomó efecto y reintentamos.
+async function ensureRange(page, attempts = 3) {
+  for (let i = 0; i < attempts; i++) {
+    await setRange(page);
+    const depth = await page.evaluate(() => {
+      const t = document.querySelector('table[role="grid"], [role="grid"]');
+      if (!t) return 0;
+      return (t.scrollHeight || 0) - (t.clientHeight || 0);
+    }).catch(() => 0);
+    if (depth >= 2000) { console.log(`  Rango verificado: ${depth}px scrolleables.`); return true; }
+    console.log(`  (aviso) rango no aplicado aún: ${depth}px scrolleables (intento ${i + 1}/${attempts}), reintento...`);
+    await sleep(2500);
   }
   return false;
 }
@@ -258,6 +283,25 @@ async function collectRows(page, mouse) {
     await sleep(550 + Math.random() * 250);
     const rate = recent.filter(Boolean).length / recent.length;
 
+    if (added === 0) {
+      // empujón DOM como respaldo: el grid virtualizado avanza aunque la rueda
+      // haya aterrizado en el fondo de la página. El contenedor real se detecta
+      // ascendiendo desde las filas (el [role=grid] no suele ser el que scrollea).
+      await page.evaluate(() => {
+        let el = document.querySelector('tr[role="row"]');
+        while (el) {
+          const cs = getComputedStyle(el);
+          if (el.scrollHeight > el.clientHeight + 50 && /(auto|scroll)/.test(cs.overflowY)) break;
+          el = el.parentElement;
+        }
+        const sc = el || document.scrollingElement;
+        sc.scrollTop = Math.min(sc.scrollTop + Math.max(sc.clientHeight * 0.85, 700), sc.scrollHeight);
+      }).catch(() => {});
+      await sleep(450);
+      spot = await findSpot(page);
+      await mouse.move(spot.x, spot.y).catch(() => {});
+    }
+
     if (added > 0) { noNew = 0; }
     else if (ok) { if (++noNew >= NO_NEW_BREAK) break; }
     // sin filas nuevas PERO la rueda falló seguido: probable hover perdido
@@ -334,13 +378,18 @@ function parseDateEs(tail) {
   if (/^hoy/.test(s)) { if (m = s.match(/a las (\d{1,2}):(\d{2})/)) date.setHours(+m[1], +m[2]); }
   else if (/^ayer/.test(s)) { date.setDate(date.getDate() - 1); if (m = s.match(/a las (\d{1,2}):(\d{2})/)) date.setHours(+m[1], +m[2]); }
   else if (m = s.match(/^hace (\d+) d/i)) { date.setDate(date.getDate() - (+m[1])); if (m2 = s.match(/a las (\d{1,2}):(\d{2})/)) date.setHours(+m2[1], +m2[2]); }
-  else if (m = s.match(/(\d{1,2})\s+(?:de\s+)?([a-zñáéíóú]+)\.?(?:\s+(\d{4}))?\s+a las (\d{1,2}):(\d{2})/)) {
+  else if (m = s.match(/(\d{1,2})\s+(?:de\s+)?([a-zñáéíóú]+)\.?(?:\s+(\d{4}))?(?:\s*a las\s+(\d{1,2}):(\d{2}))?/)) {
     const mon = MONTHS[m[2].slice(0, 3)];
     if (mon !== undefined) {
       const yr = m[3] ? +m[3] : NOW.getFullYear();
-      date.setFullYear(yr, mon, +m[1]); date.setHours(+m[4], +m[5]);
+      date.setFullYear(yr, mon, +m[1]);
+      if (m[4] && m[5]) date.setHours(+m[4], +m[5]);
     }
   }
+  // Fechas de mes sin hora ("22 sep", "12 ago.") y años corriente: si la fecha
+  // calculada queda en el futuro (caso "15 dic" con hoy = septiembre) es del
+  // año anterior.
+  if (date.getTime() > NOW.getTime() + 86400000) date.setFullYear(date.getFullYear() - 1);
   const iso = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   return { iso, day: date.getDate(), month: date.getMonth(), ts: date.getTime() };
 }
@@ -377,13 +426,19 @@ function dateMatches(iso) {
     process.exit(1);
   }
 
-  console.log('Ajustando rango de fechas...');
-  await setRange(page);
-  await sleep(2000);
-  if (TARGET_DATE && !DESDE && !HASTA) {
-    console.log('Intentando enfocar el día objetivo (Personalizado)...');
-    await setTargetDate(page);
-  }
+console.log('Ajustando rango de fechas...');
+    await ensureRange(page);
+    await sleep(2000);
+    // IMPORTANTE: fijar el día con "Personalizado" colapsa las filas de
+    // DESTINO (una por grupo, "Grupo • fecha") a UNA fila por post con pie de
+    // formato ("Publicación cruzada • / Publicada •") → el ranking degenera a
+    // 2 grupos. Por defecto NO tocamos el filtro en la UI: las filas de destino
+    // quedan completas y el día se filtra luego por el pie de cada fila
+    // (dateMatches). Solo se pincha en la UI si se pide explícito (--pin-date=1).
+    if (TARGET_DATE && !DESDE && !HASTA && PIN_DATE) {
+      console.log('Intentando enfocar el día objetivo (Personalizado)...');
+      await setTargetDate(page);
+    }
 
   console.log('Recolectando filas (wheel sobre el grid)...');
   const rows = await collectRows(page, mouse);
@@ -439,8 +494,10 @@ function dateMatches(iso) {
     ultima_fecha: g.fechas.sort().pop() || '',
   }));
 
+  const snapshotFecha = (TARGET_DATE && !DESDE && !HASTA) ? TARGET_DATE : '';
+
   const report = {
-    fecha: TARGET_DATE,
+    fecha: snapshotFecha,
     generado: new Date().toISOString(),
     total_posts_fecha: targetRows.length,
     grupos: groups.map(({ fechas, maxPost, ...g }) => g),

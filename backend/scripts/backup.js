@@ -13,10 +13,10 @@ const BACKUPS_DIR = path.join(BACKEND_DIR, 'backups');
 const KEEP = parseInt(process.env.BACKUP_KEEP || '3', 10);
 const MAX_AGE_HOURS = parseInt(process.env.BACKUP_MAX_AGE_HOURS || '24', 10);
 
-const TABLES = [
-  'products', 'providers', 'sales', 'categories', 'settings',
-  'users', 'publications', 'publication_queue', 'exports',
-];
+function tableNames(db) {
+  const r = db.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'");
+  return r.length && r[0].values.length ? r[0].values.map(v => String(v[0])) : [];
+}
 
 function timestamp() {
   const d = new Date();
@@ -64,7 +64,7 @@ export async function createBackup({ force = false } = {}) {
   const SQL = await initSqlJs();
   const db = new SQL.Database(fs.readFileSync(DB_PATH));
   const data = { version: 2, exported_at: new Date().toISOString() };
-  for (const t of TABLES) {
+  for (const t of tableNames(db)) {
     const r = db.exec(`SELECT * FROM ${t}`);
     data[t] = r.length && r[0].values.length
       ? r[0].values.map(v => Object.fromEntries(r[0].columns.map((c, i) => [c, v[i]])))

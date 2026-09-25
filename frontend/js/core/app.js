@@ -17,6 +17,7 @@ import { render as renderExports } from '../views/exportsView.js';
 import { render as renderRankings } from '../views/rankingsView.js';
 import { renderImport } from '../views/importView.js';
 import { render as renderPubQueue } from '../views/pubQueueView.js';
+import { render as renderPageRoutines } from '../views/pageRoutinesView.js';
 
 const toastEl = document.getElementById('toast');
 let _toastTimer = null;
@@ -186,6 +187,7 @@ async function bootstrap() {
   route('#/exports', protect((_, c) => renderExports(c)));
   route('#/import', protect((_, c) => renderImport(c)));
   route('#/pub-queue', protect((_, c) => renderPubQueue(c)));
+  route('#/page-routines', protect((_, c) => renderPageRoutines(c)));
   route('#/rankings', protect((_, c) => renderRankings(c)));
 
   window.addEventListener('routeChanged', (e) => {

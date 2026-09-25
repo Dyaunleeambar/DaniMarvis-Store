@@ -1,19 +1,7 @@
 import { Router } from 'express';
-import { getDB, saveDB } from '../db/database.js';
+import { getDB, saveDB, listTables } from '../db/database.js';
 
 const router = Router();
-
-const ALL_TABLES = [
-  'products',
-  'providers',
-  'sales',
-  'categories',
-  'settings',
-  'users',
-  'publications',
-  'publication_queue',
-  'exports',
-];
 
 router.get('/', (req, res) => {
   const db = getDB();
@@ -21,7 +9,7 @@ router.get('/', (req, res) => {
     version: 2,
     exported_at: new Date().toISOString(),
   };
-  for (const t of ALL_TABLES) {
+  for (const t of listTables()) {
     data[t] = db.prepare(`SELECT * FROM ${t}`).all();
   }
   res.json(data);
@@ -40,9 +28,15 @@ router.post('/restore', (req, res) => {
   }
 
   const db = getDB();
+  const tables = new Set(listTables());
 
+  // Se restaura tabla por tabla (DELETE + INSERT). Con foreign_keys activos el
+  // orden de borrado/inserción podría violar integridad referencial, por lo que
+  // se desactiva durante la restauración y se vuelve a activar al final.
+  db.exec('PRAGMA foreign_keys = OFF;');
   try {
-    for (const t of ALL_TABLES) {
+    for (const t of Object.keys(data)) {
+      if (!tables.has(t)) continue;
       if (!Array.isArray(data[t])) continue;
       const rows = data[t];
       if (!rows.length) continue;
@@ -71,6 +65,8 @@ router.post('/restore', (req, res) => {
     const msg = e?.message || e?.toString() || 'Error desconocido';
     console.error('[Backup] Error al restaurar:', msg);
     res.status(500).json({ error: 'Error al restaurar los datos: ' + msg });
+  } finally {
+    db.exec('PRAGMA foreign_keys = ON;');
   }
 });
 

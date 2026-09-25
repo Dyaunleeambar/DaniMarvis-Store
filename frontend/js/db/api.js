@@ -137,6 +137,11 @@ export const api = {
   deletePubQueue: (id) => request('DELETE', `/pub-queue/${id}`),
   getPubQueueTimer: () => request('GET', '/pub-queue/timer'),
 
+  // Auto-publicado en grupos (worker con Chrome)
+  getGroupPublishStatus: () => request('GET', '/group-publish/status'),
+  runGroupPublish: (data) => request('POST', '/group-publish/run', data || {}),
+  runGroupPublishOne: (id, data) => request('POST', `/group-publish/run/${id}`, data || {}),
+
   // Facebook Groups
   getGroups: () => request('GET', '/groups'),
   createGroup: (data) => request('POST', '/groups', data),
@@ -146,9 +151,11 @@ export const api = {
   // Rankings
   getRankings: () => request('GET', '/rankings'),
   refreshRankings: (data) => request('POST', '/rankings/refresh', data || {}),
+  getDailyRanking: () => request('GET', '/rankings/daily'),
   getRankingHistory: () => request('GET', '/rankings/history'),
   getRankingHistoryDate: (date) => request('GET', `/rankings/history/${date}`),
   getRankingHistoryGroup: (name) => request('GET', `/rankings/history/group/${encodeURIComponent(name)}`),
+  deleteRankingHistory: (date) => request('DELETE', `/rankings/history/${date}`),
 
   // Prompt Engine
   getPromptFamilies: () => request('GET', '/prompt-engine/families'),
@@ -168,6 +175,20 @@ export const api = {
   bulkWarrantyRules: (data) => request('POST', '/warranty-rules/bulk', data),
   matchWarranty: (data) => request('POST', '/warranty-rules/match', data),
   deleteWarrantyRule: (id) => request('DELETE', `/warranty-rules/${id}`),
+
+  // Page Routines
+  getPageRoutines: () => request('GET', '/page-routines'),
+  createPageRoutine: (data) => request('POST', '/page-routines', data),
+  updatePageRoutine: (id, data) => request('PUT', `/page-routines/${id}`, data),
+  deletePageRoutine: (id) => request('DELETE', `/page-routines/${id}`),
+  setPageRoutineActive: (id, active) => request('PATCH', `/page-routines/${id}/active`, { active }),
+  getPageRoutineLogs: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request('GET', `/page-routines/logs${qs ? '?' + qs : ''}`);
+  },
+  testPageRoutine: (routineId) => request('GET', `/page-routines/test${routineId ? '?routine_id=' + routineId : ''}`),
+  runPageRoutineNow: () => request('POST', '/page-routines/run-now'),
+  cancelPageRoutineLog: (logId) => request('DELETE', `/page-routines/logs/${logId}`),
 
   // Auth
   login: (username, password) => request('POST', '/login', { username, password }),

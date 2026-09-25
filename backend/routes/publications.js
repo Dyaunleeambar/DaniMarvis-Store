@@ -7,9 +7,18 @@ const router = Router();
 
 router.get('/', (req, res) => {
   const db = getDB();
-  const publications = db.prepare(
-    'SELECT * FROM publications ORDER BY publication_date DESC, sort_order ASC'
-  ).all();
+  const publications = db.prepare(`
+    SELECT p.*,
+           COALESCE(pd.provider_id, '') AS provider_id,
+           COALESCE(pr.name, '') AS provider_name,
+           COALESCE(pd.category, '') AS category,
+           COALESCE(pd.catalog_visible, 1) AS catalog_visible,
+           COALESCE(pd.price, 0) AS price
+    FROM publications p
+    LEFT JOIN products pd ON pd.id = p.product_id
+    LEFT JOIN providers pr ON pr.id = pd.provider_id
+    ORDER BY p.publication_date DESC, p.sort_order ASC
+  `).all();
   for (const p of publications) {
     try { p.images = JSON.parse(p.images || '[]'); } catch { p.images = []; }
   }

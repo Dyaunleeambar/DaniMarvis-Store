@@ -4,13 +4,15 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getDB } from '../db/database.js';
+import { runDailyRanking, dailyRankingStatus } from '../jobs/dailyRanking.js';
+import { ensureRankingChrome } from '../jobs/chromeLauncher.js';
 
 const router = Router();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const REPORT_PATH = path.join(__dirname, '..', '..', 'reporte_POC_fechas.json');
+const REPORT_PATH = path.join(__dirname, '..', '..', 'utilidades', 'fb-ranking', 'reporte_POC_fechas.json');
 const FBLEAVE_PATH = path.join('C:', 'Users', 'Dani', 'fb-leave', 'reporte_POC_fechas.json');
-const SCRAPER_JS = path.join('C:', 'Users', 'Dani', 'fb-leave', 'content_library_views.js');
+const SCRAPER_JS = path.join(__dirname, '..', '..', 'utilidades', 'fb-ranking', 'content_library_views.js');
 
 function loadReport() {
   for (const p of [REPORT_PATH, FBLEAVE_PATH]) {
@@ -103,17 +105,19 @@ function rankBy(rows) {
 
 router.get('/', (req, res) => {
   try {
-    const groups = loadReport();
-    groups.sort((a, b) => b.views - a.views);
-    const top = groups.slice(0, 20);
-    const bottom = [...groups].sort((a, b) => a.views - b.views).slice(0, 10);
+    const { fecha, generado, grupos } = loadReportFull();
+    grupos.sort((a, b) => b.views - a.views);
+    const top = grupos.slice(0, 20);
+    const bottom = [...grupos].sort((a, b) => a.views - b.views).slice(0, 10);
     res.json({
-      total_groups: groups.length,
-      total_posts: groups.reduce((a, g) => a + g.posts, 0),
-      total_vistas: groups.reduce((a, g) => a + g.views, 0),
+      total_groups: grupos.length,
+      total_posts: grupos.reduce((a, g) => a + g.posts, 0),
+      total_vistas: grupos.reduce((a, g) => a + g.views, 0),
       top: top.map(toResp),
       bottom: bottom.map(toResp),
       fuente: 'Biblioteca de Contenido',
+      fecha,
+      generado,
       actualizado: new Date().toISOString()
     });
   } catch (err) {
@@ -217,12 +221,87 @@ router.get('/history/:date', (req, res) => {
   }
 });
 
-router.post('/refresh', (req, res) => {
+function todayLocal() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// El "Ranking del día" y la reparación del /history se alimentan del reporte.
+// Al borrar una fecha del historial, si el reporte corresponde a esa fecha lo
+// limpiamos para que la fecha eliminada no reaparezca ni en la vista ni al
+// re-sembrar el historial.
+function clearReportIfMatches(date) {
+  for (const p of [REPORT_PATH, FBLEAVE_PATH]) {
+    try {
+      if (!fs.existsSync(p)) continue;
+      const raw = JSON.parse(fs.readFileSync(p, 'utf8'));
+      if (String(raw.fecha || '').slice(0, 10) === date) {
+        raw.grupos = [];
+        raw.top = [];
+        raw.posts = [];
+        fs.writeFileSync(p, JSON.stringify(raw, null, 2));
+        console.log(`[Ranking] Reporte limpio para fecha eliminada: ${date} (${p})`);
+      }
+    } catch (_) {}
+  }
+}
+
+router.delete('/history/:date', (req, res) => {
+  try {
+    const date = req.params.date;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({ error: 'Formato de fecha inválido (esperado YYYY-MM-DD)' });
+    }
+    const db = getDB();
+    const eliminados = db.prepare('DELETE FROM ranking_history WHERE fecha = ?').run(date);
+    clearReportIfMatches(date);
+    res.json({ ok: true, fecha: date, eliminados });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/daily', (req, res) => {
+  res.json(dailyRankingStatus());
+});
+
+// Disparo manual de la corrida diaria (para el día objetivo = ayer, o --date).
+router.post('/daily/run', async (req, res) => {
+  try {
+    const date = (req.body?.date || '').trim();
+    if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({ error: 'Formato de fecha inválido (esperado YYYY-MM-DD)' });
+    }
+    const outcome = await runDailyRanking({ force: true, target: date || null });
+    res.json(outcome);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/refresh', async (req, res) => {
   const date = (req.body?.date || '').trim();
   const desde = (req.body?.desde || '').trim();
   const hasta = (req.body?.hasta || '').trim();
   const range = (req.body?.range || '').trim();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayLocal();
+
+  if (!fs.existsSync(SCRAPER_JS)) return res.status(500).json({ error: `No se encuentra el scraper en ${SCRAPER_JS}` });
+
+  // Precondición de las corridas (diarias y manuales): Chrome con debug 9222 y
+  // sesión FB. Si el puerto no responde, se lanza Chrome automáticamente.
+  try {
+    const chrome = await ensureRankingChrome({ launch: true });
+    if (!chrome.ok) {
+      console.log(`[Ranking/refresh] Chrome no disponible: ${chrome.error || chrome.status}`);
+      return res.status(502).json({
+        error: 'Chrome con sesión de Facebook no disponible',
+        detalle: (chrome.error || chrome.status).slice(0, 300),
+      });
+    }
+  } catch (e) {
+    return res.status(502).json({ error: 'No se pudo preparar Chrome', detalle: e.message });
+  }
 
   const run = () => {
     const args = ['--no-sandbox'];
@@ -267,7 +346,6 @@ router.post('/refresh', (req, res) => {
     });
   };
 
-  if (!fs.existsSync(SCRAPER_JS)) return res.status(500).json({ error: `No se encuentra el scraper en ${SCRAPER_JS}` });
   run();
 });
 
