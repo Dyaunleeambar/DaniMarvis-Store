@@ -1,0 +1,158 @@
+[23/9/2026, 23:17:28] [RankingDiario] objetivo=2026-09-22 fuerza=true min_groups=30
+[23/9/2026, 23:19:13] [RankingDiario] SIN filas para 2026-09-22
+[23/9/2026, 23:20:11] [RankingDiario] objetivo=2026-09-22 fuerza=true min_groups=30
+[23/9/2026, 23:22:31] [RankingDiario] SIN filas para 2026-09-22
+[23/9/2026, 23:24:31] [RankingDiario] objetivo=2026-09-22 fuerza=true min_groups=30
+[23/9/2026, 23:29:05] [RankingDiario] objetivo=2026-09-22 fuerza=true min_groups=30
+[23/9/2026, 23:30:13] [RankingDiario] SIN filas para 2026-09-22
+[23/9/2026, 23:34:03] [RankingDiario] objetivo=2026-09-23 fuerza=true min_groups=30
+[23/9/2026, 23:40:49] [RankingDiario] objetivo=2026-09-23 fuerza=true min_groups=30
+[23/9/2026, 23:44:11] [RankingDiario] OK: 75 grupos para 2026-09-23 (525 vistas) → ranking_history reemplazado
+[24/9/2026, 10:00:01] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:01:01] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:02:01] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:02:47] [RankingDiario] SIN filas para 2026-09-23
+[24/9/2026, 10:03:01] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:04:00] [RankingDiario] SIN filas para 2026-09-23
+[24/9/2026, 10:04:01] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:04:47] [RankingDiario] DESCARTADO (se vio 1 < 30) — no se tocó ranking_history de 2026-09-23
+[24/9/2026, 10:05:01] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:05:56] [RankingDiario] DESCARTADO (se vio 1 < 30) — no se tocó ranking_history de 2026-09-23
+[24/9/2026, 10:06:01] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:06:39] [RankingDiario] SIN filas para 2026-09-23
+[24/9/2026, 10:07:01] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:08:01] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:09:01] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:10:01] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:10:15] [RankingDiario] SIN filas para 2026-09-23
+[24/9/2026, 10:10:20] [RankingDiario] DESCARTADO (se vio 1 < 30) — no se tocó ranking_history de 2026-09-23
+[24/9/2026, 10:10:42] [RankingDiario] SIN filas para 2026-09-23
+[24/9/2026, 10:11:01] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:12:01] [RankingDiario] FALLO: Command failed: C:\Program Files\nodejs\node.exe D:\Proyectos\DaniMarvisStore\utilidades\fb-ranking\content_library_views.js --date=2026-09-23 --range=90 --rounds=260
+
+[24/9/2026, 10:12:01] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:13:01] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:13:16] [RankingDiario] SIN filas para 2026-09-23
+[24/9/2026, 10:13:24] [RankingDiario] SIN filas para 2026-09-23
+[24/9/2026, 10:13:41] [RankingDiario] SIN filas para 2026-09-23
+[24/9/2026, 10:14:01] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:14:41] [RankingDiario] SIN filas para 2026-09-23
+[24/9/2026, 10:15:01] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:15:41] [RankingDiario] SIN filas para 2026-09-23
+[24/9/2026, 10:16:01] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:16:46] [RankingDiario] SIN filas para 2026-09-23
+[24/9/2026, 10:17:01] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:18:01] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:19:01] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:19:09] [RankingDiario] SIN filas para 2026-09-23
+[24/9/2026, 10:19:10] [RankingDiario] SIN filas para 2026-09-23
+[24/9/2026, 10:19:40] [RankingDiario] SIN filas para 2026-09-23
+[24/9/2026, 10:20:01] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:20:46] [RankingDiario] SIN filas para 2026-09-23
+[24/9/2026, 10:21:01] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:22:01] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:23:02] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:24:02] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:25:02] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:26:04] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:26:07] [RankingDiario] FALLO: Command failed: C:\Program Files\nodejs\node.exe D:\Proyectos\DaniMarvisStore\utilidades\fb-ranking\content_library_views.js --date=2026-09-23 --range=90 --rounds=260
+
+[24/9/2026, 10:27:03] [RankingDiario] FALLO: Command failed: C:\Program Files\nodejs\node.exe D:\Proyectos\DaniMarvisStore\utilidades\fb-ranking\content_library_views.js --date=2026-09-23 --range=90 --rounds=260
+
+[24/9/2026, 10:27:03] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:28:02] [RankingDiario] FALLO: Command failed: C:\Program Files\nodejs\node.exe D:\Proyectos\DaniMarvisStore\utilidades\fb-ranking\content_library_views.js --date=2026-09-23 --range=90 --rounds=260
+
+[24/9/2026, 10:28:03] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:28:42] [RankingDiario] DESCARTADO (se vio 1 < 30) — no se tocó ranking_history de 2026-09-23
+[24/9/2026, 10:29:03] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:30:03] [RankingDiario] FALLO: Command failed: C:\Program Files\nodejs\node.exe D:\Proyectos\DaniMarvisStore\utilidades\fb-ranking\content_library_views.js --date=2026-09-23 --range=90 --rounds=260
+
+[24/9/2026, 10:30:03] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:30:51] [RankingDiario] FALLO: FATAL: Attempted to use detached Frame 'D87238889E958AFC022B06727ACC16E3'.
+
+[24/9/2026, 10:30:51] [RankingDiario] FALLO: FATAL: Attempted to use detached Frame '0FBBC59B549A31D0083DDE299C0ABC88'.
+
+[24/9/2026, 10:30:51] [RankingDiario] FALLO: FATAL: Attempted to use detached Frame 'D8F6A46891632608102F5F780A225DB6'.
+
+[24/9/2026, 10:30:52] [RankingDiario] FALLO: FATAL: Attempted to use detached Frame '205CE06F5B8A20DF43630B0D143039EC'.
+
+[24/9/2026, 10:30:52] [RankingDiario] FALLO: FATAL: Execution context was destroyed
+
+[24/9/2026, 10:30:54] [RankingDiario] FALLO: FATAL: Attempted to use detached Frame '8BDD0D10F0CF627182C00B8F326C7F0E'.
+
+[24/9/2026, 10:31:03] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:42:40] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:42:40] [RankingDiario] FALLO: FATAL: Failed to fetch browser webSocket URL from http://localhost:9222/json/version: fetch failed
+
+[24/9/2026, 10:43:40] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:43:40] [RankingDiario] FALLO: FATAL: Failed to fetch browser webSocket URL from http://localhost:9222/json/version: fetch failed
+
+[24/9/2026, 10:44:40] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:44:40] [RankingDiario] FALLO: FATAL: Failed to fetch browser webSocket URL from http://localhost:9222/json/version: fetch failed
+
+[24/9/2026, 10:45:40] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:45:40] [RankingDiario] FALLO: FATAL: Failed to fetch browser webSocket URL from http://localhost:9222/json/version: fetch failed
+
+[24/9/2026, 10:46:40] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:46:40] [RankingDiario] FALLO: FATAL: Failed to fetch browser webSocket URL from http://localhost:9222/json/version: fetch failed
+
+[24/9/2026, 10:47:40] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:47:40] [RankingDiario] FALLO: FATAL: Failed to fetch browser webSocket URL from http://localhost:9222/json/version: fetch failed
+
+[24/9/2026, 10:48:40] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:48:40] [RankingDiario] FALLO: FATAL: Failed to fetch browser webSocket URL from http://localhost:9222/json/version: fetch failed
+
+[24/9/2026, 10:49:40] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:49:40] [RankingDiario] FALLO: FATAL: Failed to fetch browser webSocket URL from http://localhost:9222/json/version: fetch failed
+
+[24/9/2026, 10:50:40] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:50:40] [RankingDiario] FALLO: FATAL: Failed to fetch browser webSocket URL from http://localhost:9222/json/version: fetch failed
+
+[24/9/2026, 10:51:40] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:51:40] [RankingDiario] FALLO: FATAL: Failed to fetch browser webSocket URL from http://localhost:9222/json/version: fetch failed
+
+[24/9/2026, 10:52:40] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:52:40] [RankingDiario] FALLO: FATAL: Failed to fetch browser webSocket URL from http://localhost:9222/json/version: fetch failed
+
+[24/9/2026, 10:53:40] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:53:40] [RankingDiario] FALLO: FATAL: Failed to fetch browser webSocket URL from http://localhost:9222/json/version: fetch failed
+
+[24/9/2026, 10:54:40] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:54:40] [RankingDiario] FALLO: FATAL: Failed to fetch browser webSocket URL from http://localhost:9222/json/version: fetch failed
+
+[24/9/2026, 10:55:40] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:55:40] [RankingDiario] FALLO: FATAL: Failed to fetch browser webSocket URL from http://localhost:9222/json/version: fetch failed
+
+[24/9/2026, 10:56:40] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:56:40] [RankingDiario] FALLO: FATAL: Failed to fetch browser webSocket URL from http://localhost:9222/json/version: fetch failed
+
+[24/9/2026, 10:57:40] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:57:40] [RankingDiario] FALLO: FATAL: Failed to fetch browser webSocket URL from http://localhost:9222/json/version: fetch failed
+
+[24/9/2026, 10:58:40] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:58:40] [RankingDiario] FALLO: FATAL: Failed to fetch browser webSocket URL from http://localhost:9222/json/version: fetch failed
+
+[24/9/2026, 10:59:40] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 10:59:40] [RankingDiario] FALLO: FATAL: Failed to fetch browser webSocket URL from http://localhost:9222/json/version: fetch failed
+
+[24/9/2026, 11:00:40] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 11:00:40] [RankingDiario] FALLO: FATAL: Failed to fetch browser webSocket URL from http://localhost:9222/json/version: fetch failed
+
+[24/9/2026, 11:01:40] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 11:01:40] [RankingDiario] FALLO: FATAL: Failed to fetch browser webSocket URL from http://localhost:9222/json/version: fetch failed
+
+[24/9/2026, 11:02:40] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 11:02:40] [RankingDiario] FALLO: FATAL: Failed to fetch browser webSocket URL from http://localhost:9222/json/version: fetch failed
+
+[24/9/2026, 11:03:40] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 11:03:40] [RankingDiario] FALLO: FATAL: Failed to fetch browser webSocket URL from http://localhost:9222/json/version: fetch failed
+
+[24/9/2026, 11:04:40] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 11:04:40] [RankingDiario] FALLO: FATAL: Failed to fetch browser webSocket URL from http://localhost:9222/json/version: fetch failed
+
+[24/9/2026, 11:05:40] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 11:05:40] [RankingDiario] FALLO: FATAL: Failed to fetch browser webSocket URL from http://localhost:9222/json/version: fetch failed
+
+[24/9/2026, 11:06:40] [RankingDiario] objetivo=2026-09-23 fuerza=false min_groups=30
+[24/9/2026, 11:06:40] [RankingDiario] FALLO: FATAL: Failed to fetch browser webSocket URL from http://localhost:9222/json/version: fetch failed
+

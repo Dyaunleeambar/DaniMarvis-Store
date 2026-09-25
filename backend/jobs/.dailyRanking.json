@@ -1,0 +1,11 @@
+{
+  "lastRunDay": "2026-09-24",
+  "target": "2026-09-23",
+  "runAt": "2026-09-24T15:06:40.843Z",
+  "outcome": {
+    "ok": false,
+    "error": "FATAL: Failed to fetch browser webSocket URL from http://localhost:9222/json/version: fetch failed\n",
+    "sesion": false
+  },
+  "source": "auto"
+}
