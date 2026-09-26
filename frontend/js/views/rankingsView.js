@@ -2,6 +2,12 @@ import { api } from '../db/api.js';
 import { showToast, confirmDialog } from '../core/app.js';
 import { exportRankingsPdf } from '../utils/rankingPdfGenerator.js';
 
+async function exportRankings(blocks) {
+  const { ensurePdfLibs } = await import('../utils/libLoader.js');
+  await ensurePdfLibs();
+  exportRankingsPdf(blocks);
+}
+
 function escHtml(str) {
   return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -332,7 +338,7 @@ function bindHistoryExtra(container, fechas) {
       try {
         showToast('Generando PDF…');
         const data = await api.getRankingHistoryDate(fecha);
-        exportRankingsPdf([rankingBlock(fecha, data)]);
+        await exportRankings([rankingBlock(fecha, data)]);
       } catch (err) {
         console.error(err);
         showToast(err.message || 'No se pudo exportar', 'error');
@@ -382,7 +388,7 @@ function bindHistoryExtra(container, fechas) {
           const data = await api.getRankingHistoryDate(d);
           blocks.push(rankingBlock(d, data));
         }
-        exportRankingsPdf(blocks);
+await exportRankings(blocks);
       } catch (err) {
         console.error(err);
         showToast(err.message || 'No se pudo exportar', 'error');
@@ -507,7 +513,7 @@ function bindActions(container) {
         showToast('Generando PDF…');
         const data = await api.getRankings();
         const fecha = (container.querySelector('#rank-date')?.value || '').trim() || data.fecha || '';
-        exportRankingsPdf([rankingBlock(fecha, data)]);
+        await exportRankings([rankingBlock(fecha, data)]);
       } catch (err) {
         console.error(err);
         showToast(err.message || 'No se pudo exportar', 'error');

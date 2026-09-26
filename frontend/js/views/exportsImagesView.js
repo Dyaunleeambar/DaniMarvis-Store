@@ -638,14 +638,12 @@ function renderForm(container, products, providers, onDone) {
   document.getElementById('img-download-zip').addEventListener('click', async () => {
     const selected = getSelected();
     if (selected.length === 0) return;
-    if (!window.JSZip) {
-      showToast('La librería JSZip no está cargada', 'error');
-      return;
-    }
     const progress = document.getElementById('img-progress');
     const btn = document.getElementById('img-download-zip');
     btn.disabled = true;
     try {
+      const { ensureZipLibs } = await import('../utils/libLoader.js');
+      await ensureZipLibs();
       const zip = new JSZip();
       for (let i = 0; i < selected.length; i++) {
         progress.textContent = `Generando ${i + 1}/${selected.length}...`;

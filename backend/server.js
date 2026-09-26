@@ -1,11 +1,12 @@
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
+import compression from 'compression';
 import { fileURLToPath } from 'url';
 import { basename, dirname, join, extname } from 'path';
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, unlinkSync } from 'fs';
 import { v4 as uuid } from 'uuid';
-import { initDB, getDB } from './db/database.js';
+import { initDB, getDB, verifyPassword, isLegacyPlaintext, hashPassword, signToken, verifyToken } from './db/database.js';
 import productsRouter from './routes/products.js';
 import providersRouter from './routes/providers.js';
 import salesRouter from './routes/sales.js';
@@ -52,6 +53,7 @@ const upload = multer({
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
+app.use(compression());
 app.use(express.static(join(__dirname, '..', 'frontend')));
 app.use('/uploads', express.static(uploadsDir));
 
@@ -61,17 +63,33 @@ function authMiddleware(req, res, next) {
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Token requerido' });
   }
-  try {
-    const payload = JSON.parse(Buffer.from(authHeader.slice(7), 'base64').toString());
-    if (Date.now() > payload.exp) {
-      return res.status(401).json({ error: 'Token expirado' });
-    }
-    req.userId = payload.id;
-    next();
-  } catch {
-    return res.status(401).json({ error: 'Token inválido' });
+  const payload = verifyToken(authHeader.slice(7));
+  if (!payload || Date.now() > payload.exp) {
+    return res.status(401).json({ error: Date.now() > payload?.exp ? 'Token expirado' : 'Token inválido' });
   }
+  req.userId = payload.id;
+  next();
 }
+
+// Rate limit simple en memoria (ventana deslizante por IP).
+function rateLimit({ windowMs, max }) {
+  const hits = new Map();
+  return (req, res, next) => {
+    const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+    const now = Date.now();
+    const arr = (hits.get(ip) || []).filter((t) => now - t < windowMs);
+    if (arr.length >= max) {
+      const retrySec = Math.ceil((windowMs - (now - (arr.at(-1) || now))) / 1000);
+      return res.status(429).json({ error: `Demasiados intentos. Esperá ${retrySec}s.` });
+    }
+    arr.push(now);
+    hits.set(ip, arr);
+    next();
+  };
+}
+
+const loginLimiter = rateLimit({ windowMs: 60 * 1000, max: 5 });
+const imageLimiter = rateLimit({ windowMs: 60 * 1000, max: 10 });
 
 app.use('/api', authMiddleware);
 
@@ -102,6 +120,7 @@ app.post('/api/upload', (req, res) => {
     try {
       const webpPath = await ensureWebp(req.file.path);
       if (webpPath && webpPath !== req.file.path) {
+        try { unlinkSync(req.file.path); } catch {}
         return res.json({ url: `/uploads/${basename(webpPath)}` });
       }
     } catch { /* fallback: return original */ }
@@ -121,11 +140,17 @@ app.get('/api/counts', (req, res) => {
 app.get('/api/settings', (req, res) => {
   const db = getDB();
   const settings = db.prepare('SELECT exchange_rate, publish_config FROM settings WHERE id = 1').get();
+  let pc = {};
   if (settings.publish_config) {
-    try { settings.publish_config = JSON.parse(settings.publish_config); } catch { settings.publish_config = {}; }
-  } else {
-    settings.publish_config = {};
+    try { pc = JSON.parse(settings.publish_config); } catch { pc = {}; }
   }
+  let ai = pc.ai || {};
+  let facebook = pc.facebook || {};
+  ai = { ...ai, api_key: ai.api_key ? '••••••••' : '', _api_key_set: !!ai.api_key };
+  facebook = { ...facebook, access_token: facebook.access_token ? '••••••••' : '', _access_token_set: !!facebook.access_token };
+  pc.ai = ai;
+  pc.facebook = facebook;
+  settings.publish_config = pc;
   res.json(settings);
 });
 
@@ -146,35 +171,35 @@ app.put('/api/settings', (req, res) => {
     if (typeof publish_config === 'object' && publish_config !== null) {
       let existing = {};
       try { existing = JSON.parse(db.prepare('SELECT publish_config FROM settings WHERE id = 1').get().publish_config || '{}'); } catch {}
-      merged = {
-        ...existing,
-        ...publish_config,
-        ai: { ...(existing.ai || {}), ...(publish_config.ai || {}) },
-        facebook: { ...(existing.facebook || {}), ...(publish_config.facebook || {}) },
-      };
-      // Protección: no perder la key/token si se guarda con el campo vacío SIN
-      // haber cambiado el resto de la sección. Si cambió algo (otro proveedor,
-      // modelo, etc.), el vacío se respeta para poder limpiar a propósito.
-      for (const [section, field] of [['ai', 'api_key'], ['facebook', 'access_token']]) {
-        const oldSec = existing[section] || {};
-        const newSec = merged[section] || {};
-        if (!newSec[field] && oldSec[field]) {
-          const { [field]: _a, ...oldRest } = oldSec;
-          const { [field]: _b, ...newRest } = newSec;
-          if (JSON.stringify(oldRest) === JSON.stringify(newRest)) newSec[field] = oldSec[field];
-        }
-      }
+      // El frontend nunca envía la key real (llega enmascarada). Vacío = conservar
+      // el valor vigente; solo se borra con los flags explícitos remove_ai_key /
+      // remove_fb_token.
+      const ai = { ...(existing.ai || {}), ...(publish_config.ai || {}) };
+      const fb = { ...(existing.facebook || {}), ...(publish_config.facebook || {}) };
+      if (publish_config.ai && publish_config.ai.remove_ai_key) delete ai.api_key;
+      else if (!ai.api_key) ai.api_key = (existing.ai || {}).api_key;
+      if (publish_config.facebook && publish_config.facebook.remove_fb_token) delete fb.access_token;
+      else if (!fb.access_token) fb.access_token = (existing.facebook || {}).access_token;
+      delete ai.remove_ai_key;
+      delete fb.remove_fb_token;
+      merged = { ...existing, ...publish_config, ai, facebook: fb };
     }
     db.prepare("UPDATE settings SET publish_config = ?, updated_at = datetime('now') WHERE id = 1")
       .run(JSON.stringify(merged));
   }
 
   const settings = db.prepare('SELECT exchange_rate, publish_config FROM settings WHERE id = 1').get();
+  let pc = {};
   if (settings.publish_config) {
-    try { settings.publish_config = JSON.parse(settings.publish_config); } catch { settings.publish_config = {}; }
-  } else {
-    settings.publish_config = {};
+    try { pc = JSON.parse(settings.publish_config); } catch { pc = {}; }
   }
+  let ai = pc.ai || {};
+  let facebook = pc.facebook || {};
+  ai = { ...ai, api_key: ai.api_key ? '••••••••' : '', _api_key_set: !!ai.api_key };
+  facebook = { ...facebook, access_token: facebook.access_token ? '••••••••' : '', _access_token_set: !!facebook.access_token };
+  pc.ai = ai;
+  pc.facebook = facebook;
+  settings.publish_config = pc;
   res.json(settings);
 });
 
@@ -254,7 +279,7 @@ app.post('/api/generate-description', async (req, res) => {
   }
 });
 
-app.post('/api/generate-image', async (req, res) => {
+app.post('/api/generate-image', imageLimiter, async (req, res) => {
   const { prompt } = req.body;
   if (!prompt || !prompt.trim()) {
     return res.status(400).json({ error: 'El prompt es obligatorio' });
@@ -336,7 +361,7 @@ app.get('/api/dashboard', (req, res) => {
   res.json({ stats, monthlySales, topProducts, recentSales, exchange_rate: settings.exchange_rate });
 });
 
-app.post('/api/login', (req, res) => {
+app.post('/api/login', loginLimiter, (req, res) => {
   const db = getDB();
   const { username, password } = req.body;
 
@@ -344,13 +369,22 @@ app.post('/api/login', (req, res) => {
     return res.status(400).json({ error: 'Usuario y contraseña requeridos' });
   }
 
-  const user = db.prepare('SELECT id, username, name, role FROM users WHERE username = ? AND password = ?')
-    .get(username, password);
+  const user = db.prepare('SELECT id, username, name, role, password FROM users WHERE username = ?')
+    .get(username);
   if (!user) {
     return res.status(401).json({ error: 'Credenciales inválidas' });
   }
 
-  const token = Buffer.from(JSON.stringify({ id: user.id, exp: Date.now() + 86400000 })).toString('base64');
+  const okLikeStored = verifyPassword(password, user.password);
+  // Upgrade transparente de contraseñas legadas en texto plano a hash scrypt.
+  if (!okLikeStored && isLegacyPlaintext(user.password) && user.password === password) {
+    db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashPassword(password), user.id);
+  } else if (!okLikeStored) {
+    return res.status(401).json({ error: 'Credenciales inválidas' });
+  }
+
+  delete user.password;
+  const token = signToken({ id: user.id, exp: Date.now() + 86400000 });
   res.json({ user, token });
 });
 

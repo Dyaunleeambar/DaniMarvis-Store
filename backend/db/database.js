@@ -3,6 +3,7 @@ import fs from 'fs';
 import { v4 as uuid } from 'uuid';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -43,7 +44,10 @@ class Statement {
 export function saveDB() {
   try {
     const data = db.export();
-    fs.writeFileSync(DB_PATH, Buffer.from(data));
+    const tmpPath = DB_PATH + '.tmp';
+    fs.writeFileSync(tmpPath, Buffer.from(data));
+    // rename es atómico en la mayoría de filesystems (Windows usa MOVEFILE_REPLACE_EXISTING)
+    fs.renameSync(tmpPath, DB_PATH);
   } catch (err) {
     console.error('[DB] Error al guardar:', err.message);
   }
@@ -87,12 +91,76 @@ export async function initDB() {
   migrateRankingSnapshots();
   migrateRankingHistory();
   migratePageRoutines();
+  migrateAuthSecret();
+  migrateIndexes();
   saveDB();
 }
 
 export function getDB() {
   if (!db) throw new Error('Base de datos no inicializada. Llama a initDB() primero.');
   return db;
+}
+
+// ── Contraseñas (scrypt) ────────────────────────────────────────
+const SCRYPT_PREFIX = 'scrypt$';
+const SCRYPT_OPTS = { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
+
+export function hashPassword(plain) {
+  const salt = randomBytes(16).toString('hex');
+  const hash = scryptSync(plain, salt, 64, SCRYPT_OPTS).toString('hex');
+  return `${SCRYPT_PREFIX}${salt}$${hash}`;
+}
+
+export function verifyPassword(plain, stored) {
+  if (!stored) return false;
+  if (stored.startsWith(SCRYPT_PREFIX)) {
+    const [salt, hash] = stored.slice(SCRYPT_PREFIX.length).split('$');
+    if (!salt || !hash) return false;
+    const candidate = scryptSync(plain, salt, 64, SCRYPT_OPTS);
+    const expected = Buffer.from(hash, 'hex');
+    return candidate.length === expected.length && timingSafeEqual(candidate, expected);
+  }
+  // Legado: hash en texto plano (migración fuera de banda; no debe usarse nuevo)
+  return false;
+}
+
+export function isLegacyPlaintext(stored) {
+  return !!stored && !stored.startsWith(SCRYPT_PREFIX);
+}
+
+// ── Secreto de firma de tokens ─────────────────────────────────
+export function getAuthSecret() {
+  if (!db) return null;
+  const row = db.prepare('SELECT auth_secret FROM settings WHERE id = 1').get();
+  return row?.auth_secret || null;
+}
+
+export function signToken(payload) {
+  const secret = getAuthSecret();
+  if (!secret) throw new Error('Auth secret no configurado');
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const sig = createHash('sha256').update(`${body}.${secret}`).digest('base64url');
+  return `${body}.${sig}`;
+}
+
+export function verifyToken(token) {
+  if (!token) return null;
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const [body, sig] = parts;
+  const secret = getAuthSecret();
+  if (!secret) return null;
+  const expected = createHash('sha256').update(`${body}.${secret}`).digest('base64url');
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString());
+    if (!payload || typeof payload.exp !== 'number') return null;
+    return payload;
+  } catch {
+    return null;
+  }
 }
 
 // Lista dinámica de tablas de la app (excluye las internas de SQLite), para que
@@ -543,12 +611,38 @@ function migrateWarrantyRules() {
   `);
 }
 
+// Secreto de servidor para firmar tokens de sesión. Se genera una vez y se
+// persiste (sobrevive reinicios y respaldos). No se expone por /api/settings.
+function migrateAuthSecret() {
+  try {
+    db.exec("ALTER TABLE settings ADD COLUMN auth_secret TEXT");
+  } catch (_) {}
+  const row = db.prepare('SELECT auth_secret FROM settings WHERE id = 1').get();
+  if (!row?.auth_secret) {
+    const secret = randomUUID() + randomBytes(16).toString('hex');
+    db.prepare("UPDATE settings SET auth_secret = ? WHERE id = 1").run(secret);
+  }
+}
+
+// Índices para los JOIN/GROUP BY del dashboard y reportes. Idempotentes.
+function migrateIndexes() {
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_products_provider_id ON products(provider_id);
+    CREATE INDEX IF NOT EXISTS idx_sales_product_id ON sales(product_id);
+    CREATE INDEX IF NOT EXISTS idx_sales_provider_id ON sales(provider_id);
+    CREATE INDEX IF NOT EXISTS idx_sales_sale_date ON sales(sale_date);
+    CREATE INDEX IF NOT EXISTS idx_sales_commission_paid ON sales(commission_paid);
+    CREATE INDEX IF NOT EXISTS idx_publication_queue_publication_id ON publication_queue(publication_id);
+    CREATE INDEX IF NOT EXISTS idx_page_schedule_log_routine ON page_schedule_log(routine_id);
+  `);
+}
+
 function seedIfEmpty() {
   let result = db.exec('SELECT COUNT(*) as c FROM users');
   let count = result?.[0]?.values?.[0]?.[0] || 0;
   if (count === 0) {
     db.run('INSERT INTO users (id, username, name, password, role) VALUES (?, ?, ?, ?, ?)',
-      ['usr-admin', 'admin', 'Administrador', 'admin123', 'admin']);
+      ['usr-admin', 'admin', 'Administrador', hashPassword('admin123'), 'admin']);
     console.log('[DB] Usuario admin creado: admin / admin123');
   }
 

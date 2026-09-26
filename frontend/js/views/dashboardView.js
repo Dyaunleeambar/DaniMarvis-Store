@@ -2,6 +2,10 @@ import { api } from '../db/api.js';
 import { formatUSD, formatMN, formatCommission, formatDate, formatDateTime } from '../utils/utils.js';
 import { showToast } from '../core/app.js';
 
+function escHtml(str) {
+  return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 export async function render(container) {
   container.innerHTML = '<div class="loading-screen" style="position:static;padding:40px"><div class="loading-spinner"></div></div>';
 
@@ -12,7 +16,7 @@ export async function render(container) {
     ]);
     renderDashboard(container, data, logs);
   } catch (err) {
-    container.innerHTML = `<div class="empty-state"><h3>Error al cargar</h3><p>${err.message}</p></div>`;
+    container.innerHTML = `<div class="empty-state"><h3>Error al cargar</h3><p>${escHtml(err.message)}</p></div>`;
     showToast('Error al cargar dashboard', 'error');
   }
 }
@@ -96,8 +100,8 @@ function renderDashboard(container, data, scheduledLogs = []) {
                   <tbody>
                     ${recentSales.map(s => `
                       <tr>
-                        <td>${s.product_name || '—'}</td>
-                        <td>${s.client_name || '—'}</td>
+                        <td>${escHtml(s.product_name || '—')}</td>
+                        <td>${escHtml(s.client_name || '—')}</td>
                         <td class="amount">${formatUSD(s.total_amount)}</td>
                         <td>${formatDate(s.sale_date)}</td>
                       </tr>
@@ -122,7 +126,7 @@ function renderDashboard(container, data, scheduledLogs = []) {
                   return `
                     <div>
                       <div style="display:flex;justify-content:space-between;font-size:.82rem;margin-bottom:4px">
-                        <span style="font-weight:500">${p.name}</span>
+                        <span style="font-weight:500">${escHtml(p.name)}</span>
                         <span class="amount">${formatUSD(p.revenue)}</span>
                       </div>
                       <div style="height:6px;background:var(--bg);border-radius:3px;overflow:hidden">
@@ -151,7 +155,7 @@ function renderDashboard(container, data, scheduledLogs = []) {
                 <tbody>
                   ${scheduledLogs.map(l => `
                     <tr>
-                      <td>${l.product_name || '—'}</td>
+                      <td>${escHtml(l.product_name || '—')}</td>
                       <td>${formatDateTime(l.scheduled_for)}</td>
                       <td><span style="font-weight:600;color:var(--rose)">${countdown(l.scheduled_for)}</span></td>
                       <td>${l.images_count ?? 0}</td>

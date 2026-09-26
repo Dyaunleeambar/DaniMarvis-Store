@@ -101,7 +101,8 @@ function renderPage(container, settings, categories, providerStyles) {
               </div>
               <div class="form-group">
                 <label>API Key</label>
-                <input type="password" name="ai_api_key" class="form-control" value="${escAttr(ai.api_key || '')}" placeholder="sk-or-v1-... / AIza..." />
+                <input type="password" name="ai_api_key" class="form-control" value="${ai._api_key_set ? '' : escAttr(ai.api_key || '')}" placeholder="${ai._api_key_set ? 'Configurada — dejá vacío para conservar' : 'sk-or-v1-... / AIza...'}" style="${ai._api_key_set ? 'border-color:var(--success)' : ''}" />
+                ${ai._api_key_set ? `<label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:.78rem;color:var(--text-secondary)"><input type="checkbox" name="ai_remove_key" value="1" /> Eliminar API Key guardada</label>` : ''}
                 <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">
                   Probá gratis con <a href="https://openrouter.ai" target="_blank" rel="noopener">OpenRouter</a>
                   (URL: <code>https://openrouter.ai/api/v1</code>, modelo: <code>nex-agi/nex-n2.5-mini:free</code>)
@@ -133,7 +134,8 @@ function renderPage(container, settings, categories, providerStyles) {
               </div>
               <div class="form-group">
                 <label>Facebook Page Access Token</label>
-                <input type="password" name="fb_access_token" class="form-control" value="${escAttr(fb.access_token || '')}" placeholder="EAAC..." />
+                <input type="password" name="fb_access_token" class="form-control" value="${fb._access_token_set ? '' : escAttr(fb.access_token || '')}" placeholder="${fb._access_token_set ? 'Token configurado — dejá vacío para conservar' : 'EAAC...'}" style="${fb._access_token_set ? 'border-color:var(--success)' : ''}" />
+                ${fb._access_token_set ? `<label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:.78rem;color:var(--text-secondary)"><input type="checkbox" name="fb_remove_token" value="1" /> Eliminar token guardado</label>` : ''}
                 <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">
                   Token de larga duración. Se genera desde Facebook Developers. Requiere permisos: <code>pages_manage_posts</code>, <code>pages_read_engagement</code>.
                 </small>
@@ -337,13 +339,15 @@ function renderPage(container, settings, categories, providerStyles) {
         api_url: fd.get('ai_api_url') || '',
         api_key: fd.get('ai_api_key') || '',
         model: fd.get('ai_model') || '',
-        system_prompt: fd.get('ai_system_prompt') || ''
+        system_prompt: fd.get('ai_system_prompt') || '',
+        remove_ai_key: fd.get('ai_remove_key') === '1'
       },
       facebook: {
         page_id: fd.get('fb_page_id') || '',
         instagram_id: fd.get('fb_instagram_id') || '',
         access_token: fd.get('fb_access_token') || '',
-        token_expires_at: fd.get('fb_token_expires_at') || ''
+        token_expires_at: fd.get('fb_token_expires_at') || '',
+        remove_fb_token: fd.get('fb_remove_token') === '1'
       },
       autopublish: {
         enabled: fd.get('ap_enabled') === '1',

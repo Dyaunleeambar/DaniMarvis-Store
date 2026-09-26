@@ -219,6 +219,8 @@ function renderForm(container, products, providers, config, onDone) {
     const title = filterCat ? `Productos - ${filterCat}` : 'Productos';
 
     try {
+      const { ensurePdfLibs } = await import('../utils/libLoader.js');
+      await ensurePdfLibs();
       await generatePDF(selected, {
         style: config.style,
         fields,

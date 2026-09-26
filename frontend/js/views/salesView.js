@@ -8,6 +8,10 @@ let currentSales = [];
 let currentProducts = [];
 let currentProviders = [];
 
+function escHtml(str) {
+  return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 export async function render(container) {
   currentContainer = container;
   container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-secondary)">Cargando ventas...</div>';
@@ -122,10 +126,10 @@ function renderTable(container, sales) {
                 ? `<tr><td colspan="8"><div class="empty-state" style="padding:32px"><h3>No hay ventas</h3><p>Registra tu primera venta</p></div></td></tr>`
                 : sales.map(s => `
                   <tr>
-                    <td><span style="font-weight:500;font-size:.85rem">${s.product_name || '—'}</span></td>
+                    <td><span style="font-weight:500;font-size:.85rem">${escHtml(s.product_name || '—')}</span></td>
                     <td>
-                      <div style="font-size:.85rem">${s.client_name || '—'}</div>
-                      ${s.client_phone ? `<div style="font-size:.75rem;color:var(--text-muted)">${s.client_phone}</div>` : ''}
+                      <div style="font-size:.85rem">${escHtml(s.client_name || '—')}</div>
+                      ${s.client_phone ? `<div style="font-size:.75rem;color:var(--text-muted)">${escHtml(s.client_phone)}</div>` : ''}
                     </td>
                     <td class="amount">${formatUSD(s.total_amount)}<br><span style="font-size:.7rem;color:var(--text-muted)">${formatMN(s.total_amount, s.exchange_rate || exchangeRate)}</span></td>
                     <td class="amount">${formatCommission(s.commission_amount, s.commission_currency || 'USD')}</td>
@@ -195,7 +199,7 @@ window._openSaleForm = function(sale) {
           <select name="product_id" class="form-control" id="sale-product" required>
             <option value="">Seleccionar producto</option>
             ${currentProducts.map(p =>
-              `<option value="${p.id}" data-price="${p.price}" data-commission="${p.commission_value}" data-currency="${p.commission_currency || 'USD'}" data-provider="${p.provider_id || ''}" ${sale?.product_id === p.id ? 'selected' : ''}>${p.name} — ${formatUSD(p.price)}</option>`
+              `<option value="${escHtml(p.id)}" data-price="${p.price}" data-commission="${p.commission_value}" data-currency="${p.commission_currency || 'USD'}" data-provider="${p.provider_id || ''}" ${sale?.product_id === p.id ? 'selected' : ''}>${escHtml(p.name)} — ${formatUSD(p.price)}</option>`
             ).join('')}
           </select>
         </div>
@@ -204,7 +208,7 @@ window._openSaleForm = function(sale) {
           <select name="provider_id" class="form-control" id="sale-provider">
             <option value="">Automático</option>
             ${currentProviders.map(p =>
-              `<option value="${p.id}" ${sale?.provider_id === p.id ? 'selected' : ''}>${p.name}</option>`
+              `<option value="${escHtml(p.id)}" ${sale?.provider_id === p.id ? 'selected' : ''}>${escHtml(p.name)}</option>`
             ).join('')}
           </select>
         </div>
@@ -212,11 +216,11 @@ window._openSaleForm = function(sale) {
       <div class="form-row">
         <div class="form-group">
           <label>Cliente</label>
-          <input type="text" name="client_name" class="form-control" value="${sale?.client_name || ''}" />
+          <input type="text" name="client_name" class="form-control" value="${escHtml(sale?.client_name || '')}" />
         </div>
         <div class="form-group">
           <label>Teléfono</label>
-          <input type="text" name="client_phone" class="form-control" value="${sale?.client_phone || ''}" />
+          <input type="text" name="client_phone" class="form-control" value="${escHtml(sale?.client_phone || '')}" />
         </div>
       </div>
       <div class="form-group">
@@ -507,6 +511,8 @@ window._exportSalesPDF = async function() {
       return;
     }
     try {
+      const { ensurePdfLibs } = await import('../utils/libLoader.js');
+      await ensurePdfLibs();
       await generateSalesPDF(filtered, {
         title: data.title || 'Reporte de ventas',
         excludeCancelled: data.exclude_cancelled === '1',
