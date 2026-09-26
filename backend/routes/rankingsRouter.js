@@ -226,6 +226,190 @@ function todayLocal() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// ── Análisis semanal (agrupa ranking_history por semana ISO, lunes a domingo) ──
+function isoDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Lunes de la semana a la que pertenece la fecha (lun=0).
+function startOfWeek(iso) {
+  const d = new Date(iso + 'T00:00:00');
+  const offset = (d.getDay() + 6) % 7;
+  d.setDate(d.getDate() - offset);
+  return isoDate(d);
+}
+
+function endOfWeek(iso) {
+  const d = new Date(iso + 'T00:00:00');
+  const offset = 6 - ((d.getDay() + 6) % 7);
+  d.setDate(d.getDate() + offset);
+  return isoDate(d);
+}
+
+function weeklyAgg(rows) {
+  // rows = [{fecha, grupo, posts, vistas, impresiones, promedio}]
+  const by = new Map();
+  for (const r of rows) {
+    if (!by.has(r.grupo)) by.set(r.grupo, { grupo: r.grupo, dias: 0, posts: 0, vistas: 0, impresiones: 0, promedios: [] });
+    const g = by.get(r.grupo);
+    g.dias += 1;
+    g.posts += Number(r.posts) || 0;
+    g.vistas += Number(r.vistas) || 0;
+    g.impresiones += Number(r.impresiones) || 0;
+    if (Number(r.promedio)) g.promedios.push(Number(r.promedio));
+  }
+  return [...by.values()].map(g => ({
+    ...g,
+    promedio: g.promedios.length ? Math.round(g.promedios.reduce((a, v) => a + v, 0) / g.promedios.length) : 0,
+  })).sort((a, b) => b.vistas - a.vistas);
+}
+
+// Índice de semanas disponibles a partir del histórico.
+router.get('/weekly', (req, res) => {
+  try {
+    const db = getDB();
+    const rows = db.prepare('SELECT DISTINCT fecha FROM ranking_history ORDER BY fecha ASC').all();
+    const seen = new Map();
+    for (const r of rows) {
+      const inicio = startOfWeek(r.fecha);
+      if (!seen.has(inicio)) seen.set(inicio, { dias: 0, grupos: new Set(), posts: 0, vistas: 0 });
+      const w = seen.get(inicio);
+      w.dias += 1;
+      w.grupos.add(r.fecha); // marcador precario — se sobreescribe abajo con la agrupación real
+    }
+    // agrupar con datos reales (por si hay varios días por semana)
+    const agg = db.prepare(`
+      SELECT fecha, grupo, posts, vistas, impresiones, promedio
+      FROM ranking_history
+      ORDER BY fecha ASC
+    `).all();
+    const weeks = new Map();
+    for (const w of agg) {
+      const inicio = startOfWeek(w.fecha);
+      if (!weeks.has(inicio)) weeks.set(inicio, { inicio, fin: '', dias: new Set(), grupos: new Set(), posts: 0, vistas: 0, prom: [] });
+      const wk = weeks.get(inicio);
+      wk.fin = endOfWeek(inicio);
+      wk.dias.add(w.fecha);
+      wk.grupos.add(w.grupo);
+      wk.posts += Number(w.posts) || 0;
+      wk.vistas += Number(w.vistas) || 0;
+    }
+    const semanas = [...weeks.values()].map(w => ({
+      id: w.inicio,
+      inicio: w.inicio,
+      fin: w.fin,
+      dias: w.dias.size,
+      grupos: w.grupos.size,
+      posts: w.posts,
+      vistas: w.vistas,
+    })).sort((a, b) => b.inicio.localeCompare(a.inicio));
+    res.json({ semanas });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Detalle de una semana (id = inicio en formato YYYY-MM-DD) con delta vs la anterior.
+router.get('/weekly/:inicio', (req, res) => {
+  try {
+    const inicio = req.params.inicio;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(inicio)) {
+      return res.status(400).json({ error: 'Formato de fecha inválido (esperado YYYY-MM-DD)' });
+    }
+    const db = getDB();
+    const fin = endOfWeek(inicio);
+    const rows = db.prepare(`
+      SELECT fecha, grupo, posts, vistas, impresiones, promedio
+      FROM ranking_history
+      WHERE fecha >= ? AND fecha <= ?
+      ORDER BY fecha ASC
+    `).all(inicio, fin);
+    if (!rows.length) {
+      return res.status(404).json({ error: 'No hay datos para esa semana' });
+    }
+
+    const prevInicio = startOfWeek(shiftWeek(inicio, -7));
+    const prevRows = db.prepare(`
+      SELECT fecha, grupo, posts, vistas, impresiones, promedio
+      FROM ranking_history
+      WHERE fecha >= ? AND fecha <= ?
+      ORDER BY fecha ASC
+    `).all(prevInicio, endOfWeek(prevInicio));
+    const prevBy = new Map(weeklyAgg(prevRows).map(g => [g.grupo, g]));
+
+    const grupos = weeklyAgg(rows).map(g => {
+      const prev = prevBy.get(g.grupo);
+      const deltaVistas = prev && prev.vistas
+        ? Math.round(((g.vistas - prev.vistas) / prev.vistas) * 100)
+        : (prev ? (g.vistas - prev.vistas) : null);
+      const deltaPosts = prev && prev.posts
+        ? Math.round(((g.posts - prev.posts) / prev.posts) * 100)
+        : (prev ? (g.posts - prev.posts) : null);
+      return {
+        ...g,
+        prev_vistas: prev?.vistas ?? null,
+        prev_posts: prev?.posts ?? null,
+        delta_vistas: deltaVistas,
+        delta_posts: deltaPosts,
+      };
+    });
+
+    res.json({
+      semana: { inicio, fin, dias: rows.reduce((s, r) => s.add(r.fecha), new Set()).size, id: inicio },
+      total_groups: grupos.length,
+      total_posts: grupos.reduce((s, g) => s + g.posts, 0),
+      total_vistas: grupos.reduce((s, g) => s + g.vistas, 0),
+      top: grupos.slice(0, 20),
+      bottom: [...grupos].sort((a, b) => a.vistas - b.vistas).slice(0, 20),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+function shiftWeek(iso, days) {
+  const d = new Date(iso + 'T00:00:00');
+  d.setDate(d.getDate() + days);
+  return isoDate(d);
+}
+
+// Evolución semana a semana de un grupo.
+router.get('/weekly/group/:name', (req, res) => {
+  try {
+    const db = getDB();
+    const name = decodeURIComponent(req.params.name);
+    const rows = db.prepare(`
+      SELECT fecha, posts, vistas, impresiones, promedio
+      FROM ranking_history
+      WHERE grupo = ?
+      ORDER BY fecha ASC
+    `).all(name);
+    const by = new Map();
+    for (const r of rows) {
+      const inicio = startOfWeek(r.fecha);
+      if (!by.has(inicio)) by.set(inicio, { inicio, fin: endOfWeek(inicio), dias: new Set(), posts: 0, vistas: 0, impresiones: 0, promedios: [] });
+      const wk = by.get(inicio);
+      wk.dias.add(r.fecha);
+      wk.posts += Number(r.posts) || 0;
+      wk.vistas += Number(r.vistas) || 0;
+      wk.impresiones += Number(r.impresiones) || 0;
+      if (Number(r.promedio)) wk.promedios.push(Number(r.promedio));
+    }
+    const puntos = [...by.values()].map(w => ({
+      inicio: w.inicio,
+      fin: w.fin,
+      dias: w.dias.size,
+      posts: w.posts,
+      vistas: w.vistas,
+      impresiones: w.impresiones,
+      promedio: w.promedios.length ? Math.round(w.promedios.reduce((a, v) => a + v, 0) / w.promedios.length) : 0,
+    })).sort((a, b) => a.inicio.localeCompare(b.inicio));
+    res.json({ grupo: name, puntos });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // El "Ranking del día" y la reparación del /history se alimentan del reporte.
 // Al borrar una fecha del historial, si el reporte corresponde a esa fecha lo
 // limpiamos para que la fecha eliminada no reaparezca ni en la vista ni al

@@ -50,6 +50,7 @@ function tabsHtml() {
     <div style="display:flex;gap:8px;margin-bottom:24px">
       <button class="btn ${currentTab === 'ranking' ? 'btn--primary' : ''}" id="tab-ranking">Ranking del día</button>
       <button class="btn ${currentTab === 'historial' ? 'btn--primary' : ''}" id="tab-historial">Historial</button>
+      <button class="btn ${currentTab === 'semanal' ? 'btn--primary' : ''}" id="tab-semanal">Semanal</button>
     </div>`;
 }
 
@@ -485,6 +486,232 @@ function renderEvolution(ev) {
     </div>`;
 }
 
+// ---------------- Semanal ----------------
+function deltaBadge(delta, opts = {}) {
+  const { labelSuffix = '', sentidoTextoSimple = false } = opts;
+  if (delta == null) return '<span class="badge badge--pending">s/previa</span>';
+  const abs = Math.abs(delta);
+  if (delta > 0) return `<span class="badge" style="background:rgba(34,197,94,.12);color:#22c549">▲ ${abs}% ${labelSuffix}</span>`;
+  if (delta < 0) return `<span class="badge" style="background:rgba(244,63,94,.12);color:#f43f5e">▼ ${abs}% ${labelSuffix}</span>`;
+  return `<span class="badge badge--pending">= ${abs}%</span>`;
+}
+
+function semanalSummaryCards({ grupos, posts, vistas, semanas, dias }) {
+  return `
+    <div class="pub-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:16px;margin-bottom:28px">
+      <div class="card" style="padding:18px">
+        <div style="font-size:12px;color:var(--text-secondary)">Grupos en la semana</div>
+        <div style="font-size:28px;font-weight:700;margin-top:4px">${grupos}</div>
+      </div>
+      <div class="card" style="padding:18px">
+        <div style="font-size:12px;color:var(--text-secondary)">Publicaciones</div>
+        <div style="font-size:28px;font-weight:700;margin-top:4px">${posts}</div>
+      </div>
+      <div class="card" style="padding:18px">
+        <div style="font-size:12px;color:var(--text-secondary)">Visualizaciones</div>
+        <div style="font-size:28px;font-weight:700;margin-top:4px;color:var(--primary)">${formatNum(vistas)}</div>
+      </div>
+      <div class="card" style="padding:18px">
+        <div style="font-size:12px;color:var(--text-secondary)">Días con datos</div>
+        <div style="font-size:28px;font-weight:700;margin-top:4px">${dias}</div>
+      </div>
+    </div>`;
+}
+
+function renderSemanalHub(semanas, semana = null) {
+  return `
+    <div class="page">
+      <div class="page-header">
+        <div>
+          <h1>Ranking de grupos</h1>
+          <p>Comparativa semana a semana desde el historial guardado</p>
+        </div>
+      </div>
+
+      ${tabsHtml()}
+
+      <div class="card" style="padding:16px;margin-bottom:24px">
+        <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end">
+          <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--text-secondary)">
+            Semana (lunes a domingo)
+            <select id="sem-week" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg-card);color:inherit;font:inherit">
+              ${semanas.map(s => `<option value="${s.id}">${formatDate(s.inicio)} al ${formatDate(s.fin)}</option>`).join('')}
+            </select>
+          </label>
+          <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--text-secondary)">
+            Grupo para evolución
+            <select id="sem-group" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg-card);color:inherit;font:inherit">
+              <option value="">— Seleccioná un grupo —</option>
+            </select>
+          </label>
+          <button class="btn" id="sem-export">Exportar PDF</button>
+        </div>
+      </div>
+
+      <div id="sem-detail">
+        <div style="padding:40px;text-align:center;color:var(--text-secondary)">Cargando semana...</div>
+      </div>
+
+      <div id="sem-evolution" style="margin-top:16px"></div>
+    </div>`;
+}
+
+async function loadSemanal(container) {
+  try {
+    container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-secondary)">Cargando análisis semanal...</div>';
+    const { semanas } = await api.getRankingWeekly();
+    currentContainer = container;
+    if (!semanas.length) {
+      container.innerHTML = `
+        <div class="page">
+          ${tabsHtml()}
+          <div class="empty-state" style="padding:48px;text-align:center">
+            <h3>Sin semanas todavía</h3>
+            <p style="color:var(--text-secondary)">Cuando el historial tenga al menos una corrida, aquí verás el agregado por semana.</p>
+          </div>
+        </div>`;
+      bindActions(container);
+      return;
+    }
+    container.innerHTML = renderSemanalHub(semanas);
+    bindActions(container);
+    bindSemanal(container, semanas);
+  } catch (err) {
+    container.innerHTML = `<div class="empty-state" style="padding:48px"><h3>Error</h3><p>${escHtml(err.message || 'No se pudo cargar el análisis semanal')}</p></div>`;
+  }
+}
+
+async function loadSemanalDetail(container, inicio) {
+  const detailEl = container.querySelector('#sem-detail');
+  if (!detailEl) return;
+  detailEl.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-secondary)">Cargando semana...</div>';
+  try {
+    const data = await api.getRankingWeeklyDetail(inicio);
+    detailEl.innerHTML = renderSemanalDetail(data);
+  } catch (err) {
+    detailEl.innerHTML = `<div class="empty-state" style="padding:48px"><h3>Error</h3><p>${escHtml(err.message || 'No se pudo cargar la semana')}</p></div>`;
+  }
+}
+
+function semanalRows(groups, startIndex = 0) {
+  return groups.map((g, i) => `
+    <tr>
+      <td class="cell-num">${startIndex + i + 1}</td>
+      <td>${escHtml(g.grupo)}</td>
+      <td class="cell-num">${Number(g.dias) || 0}</td>
+      <td class="cell-num">${Number(g.posts) || 0} ${deltaBadge(g.delta_posts)}</td>
+      <td class="cell-num cell-num--strong">${formatNum(g.vistas)} ${deltaBadge(g.delta_vistas)}</td>
+      <td class="cell-num">${formatNum(g.impresiones)}</td>
+      <td class="cell-num">${formatNum(g.promedio)}</td>
+    </tr>`).join('') || '<tr><td colspan="7" class="empty-cell">Sin datos</td></tr>';
+}
+
+const semanalHead = `
+  <thead><tr><th>#</th><th>Grupo</th><th>Días</th><th>Posts (Δ)</th><th>Vistas (Δ vs previa)</th><th>Impresiones</th><th>Promedio</th></tr></thead>`;
+
+function renderSemanalDetail(data) {
+  const { semana, total_groups = 0, total_posts = 0, total_vistas = 0, top = [], bottom = [] } = data;
+  return `
+    ${semanalSummaryCards({ grupos: total_groups, posts: total_posts, vistas: total_vistas, dias: semana?.dias || 0 })}
+
+    <div class="section-block">
+      <div class="section-heading"><h2>Comparativa de grupos</h2></div>
+      <div class="card table-wrap">
+        <table class="data-table">${semanalHead}<tbody>${semanalRows(top)}</tbody></table>
+      </div>
+    </div>
+    <div class="section-block">
+      <div class="section-heading"><h2>Menos visualizaciones</h2></div>
+      <div class="card table-wrap">
+        <table class="data-table">${semanalHead}<tbody>${semanalRows(bottom)}</tbody></table>
+      </div>
+    </div>`;
+}
+
+async function loadSemanalEvolution(container, name) {
+  const evoEl = container.querySelector('#sem-evolution');
+  if (!evoEl) return;
+  evoEl.innerHTML = '';
+  if (!name) return;
+  evoEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-secondary)">Cargando evolución...</div>';
+  try {
+    const ev = await api.getRankingWeeklyGroup(name);
+    evoEl.innerHTML = renderSemanalEvolution(ev);
+  } catch (err) {
+    evoEl.innerHTML = `<p style="color:var(--danger);padding:16px">${escHtml(err.message || 'Error')}</p>`;
+  }
+}
+
+function renderSemanalEvolution(ev) {
+  const rows = (ev.puntos || []).map((p, i) => `
+    <tr>
+      <td class="cell-num">${i + 1}</td>
+      <td>${escHtml(formatDate(p.inicio))} → ${escHtml(formatDate(p.fin))}</td>
+      <td class="cell-num">${Number(p.dias) || 0}</td>
+      <td class="cell-num">${Number(p.posts) || 0}</td>
+      <td class="cell-num cell-num--strong">${formatNum(p.vistas)}</td>
+      <td class="cell-num">${formatNum(p.impresiones)}</td>
+      <td class="cell-num">${formatNum(p.promedio)}</td>
+    </tr>`).join('') || '<tr><td colspan="7" class="empty-cell">Sin datos de este grupo</td></tr>';
+  return `
+    <div class="section-block">
+      <div class="section-heading"><h2>Evolución semana a semana — ${escHtml(ev.grupo)}</h2></div>
+      <div class="card table-wrap">
+        <table class="data-table">
+          <thead><tr><th>#</th><th>Semana</th><th>Días</th><th>Posts</th><th>Vistas</th><th>Impresiones</th><th>Promedio</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+async function bindSemanal(container, semanas) {
+  const weekSel = container.querySelector('#sem-week');
+  const groupSel = container.querySelector('#sem-group');
+  const exportBtn = container.querySelector('#sem-export');
+  if (weekSel) {
+    weekSel.value = semanas[0]?.id || '';
+    weekSel.onchange = () => loadSemanalDetail(container, weekSel.value);
+  }
+  if (groupSel) {
+    const weeks = semanas.map(s => s.id);
+    // población: cargar grupos de la semana más reciente para el selector
+    try {
+      const grupoSet = new Set();
+      for (const inicio of weeks.slice(0, 2)) {
+        const d = await api.getRankingWeeklyDetail(inicio);
+        (d.top || []).forEach(g => grupoSet.add(g.grupo));
+        (d.bottom || []).forEach(g => grupoSet.add(g.grupo));
+      }
+      groupSel.innerHTML = '<option value="">— Seleccioná un grupo —</option>' +
+        [...grupoSet].map(g => `<option value="${escHtml(g)}">${escHtml(g)}</option>`).join('');
+    } catch { /* el selector queda vacío */ }
+    groupSel.onchange = () => loadSemanalEvolution(container, groupSel.value);
+  }
+  if (exportBtn) {
+    exportBtn.onclick = async () => {
+      const inicio = weekSel?.value || semanas[0]?.id;
+      if (!inicio) return;
+      try {
+        showToast('Generando PDF…');
+        const data = await api.getRankingWeeklyDetail(inicio);
+        await exportRankings([{
+          fecha: `${formatDate(data.semana.inicio)} al ${formatDate(data.semana.fin)}`,
+          total_groups: data.total_groups,
+          total_posts: data.total_posts,
+          total_vistas: data.total_vistas,
+          top: (data.top || []).map(g => ({ grupo: g.grupo, posts: g.posts, vistas: g.vistas, impresiones: g.impresiones, promedio: g.promedio, ultima_fecha: '' })),
+          bottom: (data.bottom || []).map(g => ({ grupo: g.grupo, posts: g.posts, vistas: g.vistas, impresiones: g.impresiones, promedio: g.promedio, ultima_fecha: '' })),
+        }]);
+      } catch (err) {
+        console.error(err);
+        showToast(err.message || 'No se pudo exportar', 'error');
+      }
+    };
+  }
+  await loadSemanalDetail(container, semanas[0]?.id || '');
+}
+
 // ---------------- acciones ----------------
 function bindRankMode(container) {
   const modeSel = container.querySelector('#rank-mode');
@@ -556,6 +783,7 @@ function bindActions(container) {
 
   const tabRanking = container.querySelector('#tab-ranking');
   const tabHistorial = container.querySelector('#tab-historial');
+  const tabSemanal = container.querySelector('#tab-semanal');
   if (tabRanking) {
     tabRanking.onclick = () => {
       currentTab = 'ranking';
@@ -568,12 +796,20 @@ function bindActions(container) {
       loadHistory(container);
     };
   }
+  if (tabSemanal) {
+    tabSemanal.onclick = () => {
+      currentTab = 'semanal';
+      loadSemanal(container);
+    };
+  }
 }
 
 export function render(container) {
   currentContainer = container;
   if (currentTab === 'historial') {
     loadHistory(container);
+  } else if (currentTab === 'semanal') {
+    loadSemanal(container);
   } else {
     loadRanking(container, false);
   }

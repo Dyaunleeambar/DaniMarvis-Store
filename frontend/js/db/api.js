@@ -156,6 +156,9 @@ export const api = {
   getRankingHistoryDate: (date) => request('GET', `/rankings/history/${date}`),
   getRankingHistoryGroup: (name) => request('GET', `/rankings/history/group/${encodeURIComponent(name)}`),
   deleteRankingHistory: (date) => request('DELETE', `/rankings/history/${date}`),
+  getRankingWeekly: () => request('GET', '/rankings/weekly'),
+  getRankingWeeklyDetail: (inicio) => request('GET', `/rankings/weekly/${inicio}`),
+  getRankingWeeklyGroup: (name) => request('GET', `/rankings/weekly/group/${encodeURIComponent(name)}`),
 
   // Prompt Engine
   getPromptFamilies: () => request('GET', '/prompt-engine/families'),
