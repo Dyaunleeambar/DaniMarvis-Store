@@ -136,14 +136,32 @@ async function resolveImages(imagesArr) {
     if (!img) continue;
     if (/^https?:\/\//i.test(img)) {
       const local = await downloadToUploads(img);
-      if (local && fs.existsSync(local)) out.push(local);
+      if (local && fs.existsSync(local)) out.push(await toFacebookFriendly(local));
     } else {
       const local = resolveLocalUpload(img);
-      if (local) out.push(local);
+      if (local) out.push(await toFacebookFriendly(local));
     }
     if (out.length >= 10) break;
   }
   return out;
+}
+
+// Facebook NO acepta .webp en las publicaciones: el input del compositor
+// rechaza el archivo y el post se publica sin foto. Se convierte a JPG antes de
+// subirlo. El archivo temporal se limpia al terminar (deleteTempFiles).
+const FB_UNSUPPORTED = new Set(['.webp']);
+async function toFacebookFriendly(file) {
+  const ext = path.extname(file).toLowerCase();
+  if (!FB_UNSUPPORTED.has(ext)) return file;
+  try {
+    const { default: sharp } = await import('sharp');
+    const out = path.join(UPLOADS_DIR, `pgp_conv_${uuid().slice(0, 8)}.jpg`);
+    await sharp(file).flatten({ background: '#ffffff' }).jpeg({ quality: 90 }).toFile(out);
+    return out;
+  } catch (e) {
+    console.error('[publish] no se pudo convertir', path.basename(file), 'a jpg:', e.message);
+    return file;
+  }
 }
 
 function fillTemplateText(text, pub) {
@@ -226,10 +244,12 @@ function spawnPoster({ groupUrl, messageFile, imageFiles, mode, label, debug = f
       const allText = `${stdout || ''}\n${stderr || ''}`;
       const line = String(stdout || '').split('\n').map(l => l.trim()).filter(Boolean)
         .map(l => { try { return JSON.parse(l); } catch { return null; } })
-        .find(x => x && 'ok' in x);
+        .find(x => x && typeof x === 'object' && 'ok' in x);
       if (line) {
         const imgA = typeof line.imagen_adjunta === 'number' ? line.imagen_adjunta : null;
         if (imgA !== null) line.img_adjunta = imgA;
+        const imgP = typeof line.imagenes_pedidas === 'number' ? line.imagenes_pedidas : null;
+        if (imgP !== null) line.img_pedidas = imgP;
         return resolve(line);
       }
       resolve({ ok: false, status: 'error', message: (err?.message || allText || 'Sin salida del poster').slice(0, 300) });
@@ -263,7 +283,7 @@ function updateQueue(item, result, mode) {
 async function deleteTempFiles(files) {
   for (const f of files) {
     try {
-      if (fs.existsSync(f) && /pgp_(msg|dl)_/.test(path.basename(f))) fs.unlinkSync(f);
+      if (fs.existsSync(f) && /pgp_(msg|dl|conv)_/.test(path.basename(f))) fs.unlinkSync(f);
     } catch (_) {}
   }
 }
@@ -320,7 +340,7 @@ export async function runGroupPublish({ auto = false, force = false, ids = [], m
         mode: effectiveMode,
         ok: result.ok,
         status: result.status,
-        message: ((result.message || '') + (result.img_adjunta !== undefined ? ` | img_adjunta:${result.img_adjunta}` : '')).slice(0, 220),
+        message: ((result.message || '') + (result.img_adjunta !== undefined ? ` | img_adjunta:${result.img_adjunta}` : '') + (result.img_pedidas !== undefined ? ` de ${result.img_pedidas}` : '')).slice(0, 220),
         post_url: result.post_url || '',
       });
       // separación natural entre posts consecutivos (simula flujo humano)

@@ -147,14 +147,84 @@ function composerLenOf(handle) {
   return handle.evaluate((el) => (el.innerText || '').trim().length).catch(() => 0);
 }
 
-async function findPhotoInputs(page) {
-  const ctx = await composerMediaContext(page);
-  return ctx.inputs;
+// Miniaturas realmente adjuntas al compositor. FB envuelve los adjuntos en un
+// contenedor role="group" aria-label="Contenido multimedia adjunto" (o el
+// equivalente en inglés). Es el único selector estable: contar <img> por rect del
+// panel arrastraba las fotos del feed de abajo (panel de 500x1500px) y daba falsos
+// positivos. Un blob: cuenta como adjunto (FB ya aceptó la foto: el POST a
+// upload.facebook.com responde 200 aunque la miniatura siga siendo local).
+async function attachedThumbs(page) {
+  return page.evaluate(() => {
+    const vis = (el) => {
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return false;
+      const cs = getComputedStyle(el);
+      return cs.visibility !== 'hidden' && cs.display !== 'none' && cs.opacity !== '0';
+    };
+    let holder = null;
+    for (const el of document.querySelectorAll('[role="group"]')) {
+      const l = (el.getAttribute('aria-label') || '').toLowerCase();
+      if (/contenido multimedia adjunto|attached media|adjunto de la publicaci/.test(l)) { holder = el; break; }
+    }
+    const n = [];
+    if (holder) {
+      for (const img of holder.querySelectorAll('img')) {
+        if (!vis(img)) continue;
+        const r = img.getBoundingClientRect();
+        if (r.width < 40) continue; // ignora iconos
+        const src = img.currentSrc || img.src || '';
+        if (/rsrc\.php|static\.xx\.fbcdn\.net/.test(src)) continue; // recursos de UI
+        n.push({ w: Math.round(r.width), k: src.startsWith('blob:') ? 'blob' : 'cd' });
+      }
+    }
+    const hasRemove = Array.from(document.querySelectorAll('[aria-label]'))
+      .some(e => /suprimir adjunto|quitar foto|remove attachment/i.test(e.getAttribute('aria-label') || ''));
+    return { thumbs: n, hasRemove };
+  }).catch(() => ({ thumbs: [], hasRemove: false }));
 }
 
-// Contexto multimedia DEL COMPOSITOR: sube por ancestros desde nuestro editor
-// (marcado con data-pgp-composer) hasta el panel que contiene un input file.
-// Devuelve { inputs, rect }. NUNCA toca inputs ajenos (foto de portada/perfil).
+// Localiza el input[type=file] del compositor y lo devuelve como ElementHandle
+// REAL. Importante: un nodo DOM NO puede volver desde page.evaluate() (se
+// serializa como {}), y sobre ese objeto input.evaluate() es undefined → el
+// upload se lanzaba y el catch lo silenciaba, sin adjuntar nunca la imagen.
+// Por eso el input se pide con page.evaluateHandle().
+async function composerFileInput(page) {
+  const handle = await page.evaluateHandle(() => {
+    const vis = (el) => {
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return false;
+      const cs = getComputedStyle(el);
+      return cs.visibility !== 'hidden' && cs.display !== 'none' && cs.opacity !== '0';
+    };
+    let editable = null;
+    for (const el of document.querySelectorAll('[data-pgp-composer="1"]')) { if (vis(el)) { editable = el; break; } }
+    if (!editable) return null;
+    let node = editable;
+    while (node && node !== document.body) {
+      node = node.parentElement;
+      // los inputs file del compositor suelen estar ocultos (display:none), así
+      // que NO se filtra por visibilidad — se garantiza por el ancestro (panel).
+      const inputs = Array.from(node.querySelectorAll('input[type="file"]'));
+      if (!inputs.length) continue;
+      const r = node.getBoundingClientRect();
+      // Solo se limita el ANCHO: el panel puede ser alto (500x1500 con texto +
+      // adjuntos) y descartarlo dejaba al poster sin input, luego sin imágenes.
+      if (r.width > 1300) continue;
+      return inputs.find(i => {
+        const a = (i.getAttribute('accept') || '').toLowerCase();
+        return !a || a.includes('image');
+      }) || inputs[0];
+    }
+    return null;
+  });
+  const el = handle.asElement();
+  if (!el) { await handle.dispose().catch(() => {}); return null; }
+  return el;
+}
+
+// Rect del panel multimedia DEL COMPOSITOR: sube por ancestros desde nuestro
+// editor (marcado con data-pgp-composer) hasta el panel que contiene un input
+// file. Solo se usa para confirmar que el panel existe; NUNCA toca inputs ajenos.
 async function composerMediaContext(page) {
   return page.evaluate(() => {
     const vis = (el) => {
@@ -165,24 +235,18 @@ async function composerMediaContext(page) {
     };
     let editable = null;
     for (const el of document.querySelectorAll('[data-pgp-composer="1"]')) { if (vis(el)) { editable = el; break; } }
-    if (!editable) return { inputs: [], rect: null };
+    if (!editable) return { rect: null };
     let node = editable;
     while (node && node !== document.body) {
       node = node.parentElement;
-      // los inputs file del compositor suelen estar ocultos (display:none), así
-      // que NO se filtra por visibilidad — se garantiza por el ancenstro (panel).
       const inputs = Array.from(node.querySelectorAll('input[type="file"]'));
       if (!inputs.length) continue;
       const r = node.getBoundingClientRect();
-      if (r.width > 1300 || r.height > 800) continue; // no trepar a contenedores de página
-      const detected = inputs.find(i => {
-        const a = (i.getAttribute('accept') || '').toLowerCase();
-        return !a || a.includes('image');
-      }) || inputs[0];
-      return { inputs: [detected], rect: { left: r.left, top: r.top, width: r.width, height: r.height } };
+      if (r.width > 1300) continue;
+      return { rect: { left: r.left, top: r.top, width: r.width, height: r.height } };
     }
-    return { inputs: [], rect: null };
-  }).catch(() => ({ inputs: [], rect: null }));
+    return { rect: null };
+  }).catch(() => ({ rect: null }));
 }
 
 // Cuenta los <img> visibles DENTRO del rect del panel del compositor (si se
@@ -240,31 +304,40 @@ async function attachImages(page) {
   // a que el panel del compositor gane <img> visibles antes del siguiente.
   for (const file of images) {
     const ctx = await composerMediaContext(page);
-    if (!ctx.inputs.length) break;
+    if (!ctx.rect) break;
     panel = ctx.rect;
-    indexBase = await countImageElements(page, panel);
+    indexBase = (await attachedThumbs(page)).thumbs.length;
+    const input = await composerFileInput(page);
+    if (!input) break;
     let done = false;
-    for (const input of ctx.inputs) {
-      try {
-        await input.evaluate(el => { if (el.hasAttribute('multiple')) el.removeAttribute('multiple'); });
-        await input.uploadFile(file);
-      } catch (_) { continue; }
-      for (let i = 0; i < 10; i++) {
-        await sleep(1200);
-        const now = await countImageElements(page, panel);
-        const markers = await countMarkers(page);
-        if (now > indexBase || markers > attached) {
-          attached = Math.max(attached + 1, markers);
-          indexBase = Math.max(now, indexBase);
-          done = true;
-          break;
-        }
+    try {
+      // FB/React con multiple procesa solo el primer archivo del evento change;
+      // se sube de a UNA imagen por input.
+      await input.evaluate(el => { if (el.hasAttribute('multiple')) el.removeAttribute('multiple'); });
+      await input.uploadFile(file);
+    } catch (e) {
+      console.error('[MEDIA] upload falló:', (e.message || '').slice(0, 120));
+    }
+    for (let i = 0; i < 10; i++) {
+      await sleep(1200);
+      const now = (await attachedThumbs(page)).thumbs.length;
+      if (now > indexBase) {
+        attached = now;
+        indexBase = now;
+        done = true;
+        break;
       }
-      if (done) break;
     }
     if (!done) break;
   }
-  return { images: images.length, preview: attached > 0, attached };
+  // Recuento final sobre el contenedor real de adjuntos de FB. No se usan los
+  // botones "Suprimir foto" (solo existen con hover) ni el conteo por rect (el
+  // panel incluye el feed). Un blob: ya está SUBIDO: el POST a
+  // upload.facebook.com/ajax/.../photo/upload devuelve 200 aunque la miniatura
+  // se siga sirviendo localmente, así que blob y CDN cuentan igual.
+  const st = await attachedThumbs(page);
+  const total = st.thumbs.length;
+  return { images: images.length, preview: total > 0, attached: total, hasRemove: st.hasRemove };
 }
 
 async function currentComposerLen(page) {
@@ -356,28 +429,18 @@ async function debugMediaDump(page, tag, rect) {
 // Devuelve el nº de adjuntos confirmados, o -1 si nunca llegó a estar listo.
 async function ensureMediaReady(page, composer, expected) {
   if (!expected) return 0;
-  let markers = 0;
-  for (let s = 1; s <= 12; s++) {
-    markers = await revealMarkers(page, composer);
-    if (markers >= expected) break;
-    await sleep(600);
-  }
-  if (markers < expected) return -1;
-  // La subida termina cuando la miniatura del PANEL del compositor se sirve desde
-  // la CDN real de FB (antes es blob:). Los spinners "Cargando…" del muro no
-  // cuentan (falsos).
-  const ctx = await composerMediaContext(page);
-  let ready = false;
+  // La señal de "listo" es el contenedor de adjuntos de FB con >= expected
+  // miniaturas. NO se exige que la miniatura pase de blob: a scontent: FB acepta
+  // la foto (POST upload.facebook.com = 200) pero sigue sirviendo la miniatura
+  // local, así que exigir CDN abortaba publicaciones que sí iban con imagen.
+  let n = 0;
   for (let s = 1; s <= 15; s++) {
-    const st = await composerMediaState(page, ctx.rect);
-    const bigCd = st.imgs.filter(i => i.k === 'cd' && i.w >= 100).length;
-    const bigBlob = st.imgs.filter(i => i.k === 'blob' && i.w >= 100).length + st.bgThumbs.length;
-    if (bigBlob === 0 && bigCd > 0) { ready = true; break; }
-    await sleep(600);
+    const st = await attachedThumbs(page);
+    n = st.thumbs.length;
+    if (n >= expected) return n;
+    await sleep(700);
   }
-  if (!ready) return -1;
-  markers = await revealMarkers(page, composer);
-  return markers >= expected ? markers : -1;
+  return n >= expected ? n : -1;
 }
 
 // Click en "Publicar" + manejo del tooltip "Publicando como..."
@@ -491,11 +554,9 @@ async function grabPostUrl(page) {
       const ctx = norm(container ? container.innerText : '');
       if (snippet && ctx.includes(norm(snippet))) return href;
     }
-    // fallback: primera historia con enlace válido
-    for (const a of anchors) {
-      const href = (a.getAttribute('href') || '').split('?')[0];
-      if (/\/groups\/\d+\/posts\/\d+/.test(href)) return href;
-    }
+    // SIN fallback: devolver "la primera historia con enlace" guardaba en la cola
+    // el post de OTRO miembro como si fuera el nuestro (el feed tampoco siempre
+    // renderiza en pestañas automatizadas). Mejor post_url vacío que URL ajena.
     return '';
   }, snippet);
 }
@@ -641,7 +702,12 @@ async function processGroup(browser, groupUrl, label) {
 
     if (MODE === 'prepare') {
       console.log(`[${label}] post listo en pestaña (modo preparar).`);
-      return out({ group_url: groupUrl, ok: true, status: 'prepared', message: 'Post preparado en pestaña (revisar y publicar manualmente).', imagen_adjunta: imgs.attached, texto_digits: lenBefore });
+      // Si se pidieron imágenes y no hay ninguna en el contenedor de adjuntos,
+      // avisar: el texto está pero la foto NO se adjuntó (FB la rechazó).
+      const aviso = imgs.images > 0 && imgs.attached === 0
+        ? ` ATENCIÓN: se pidieron ${imgs.images} imagen(es) y NO se adjuntó ninguna.`
+        : '';
+      return out({ group_url: groupUrl, ok: true, status: 'prepared', message: 'Post preparado en pestaña (revisar y publicar manualmente).' + aviso, imagen_adjunta: imgs.attached, imagenes_pedidas: imgs.images, texto_digits: lenBefore });
     }
     if (MODE === 'dry-run') {
       return out({ group_url: groupUrl, ok: true, status: 'dry-run', message: `Simulación ok: texto ${lenBefore} chars, ${imgs.images} imagen(es).`, texto_digits: lenBefore, imagen_adjunta: imgs.attached });
@@ -706,6 +772,7 @@ async function processGroup(browser, groupUrl, label) {
       message: 'Publicado en el grupo.' + (ready ? ` (${ready} foto(s) adjunta(s)).` : ''),
       post_url: postUrl,
       imagen_adjunta: imgs.attached,
+      imagenes_pedidas: imgs.images,
       texto_digits: lenBefore,
       toral_ms: Date.now() - t0,
     });
