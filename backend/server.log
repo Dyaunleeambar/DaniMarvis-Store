@@ -1,12 +1,3 @@
 [DB] Base de datos inicializada
-[Backup] BD exportada: 279 productos, 362 publicaciones
-[Backup] Imágenes copiadas: 1647
-[Backup] Eliminado respaldo antiguo: danimarvis-2026-09-21_18-44-47
-[Backup] Respaldo completo creado: D:\Proyectos\DaniMarvisStore\backend\backups\danimarvis-2026-09-24_22-21-13
+[Backup] Respaldo reciente (11.5h). Omitido. Usá force=true para forzar.
 [Server] Panel DaniMarvis corriendo en http://localhost:3456
-[AI] Error: Error: La IA no generó contenido
-    at file:///D:/Proyectos/DaniMarvisStore/backend/server.js:252:27
-    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
-[AI] Error: Error: La IA no generó contenido
-    at file:///D:/Proyectos/DaniMarvisStore/backend/server.js:252:27
-    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
