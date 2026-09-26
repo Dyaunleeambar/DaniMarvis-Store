@@ -733,6 +733,7 @@ async function renderHistory(container) {
     const items = await api.getPubQueue();
     const published = items.filter(i => i.status === 'published');
     const skipped = items.filter(i => i.status === 'skipped');
+    const pending = published.filter(i => Number(i.pending_approval) === 1);
 
     if (items.length === 0) {
       container.innerHTML = `
@@ -747,17 +748,22 @@ async function renderHistory(container) {
       <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
         <div style="display:flex;gap:16px;font-size:.82rem;color:var(--text-muted)">
           <span><b style="color:var(--success)">${published.length}</b> publicada(s)</span>
+          ${pending.length ? `<span title="El grupo exige aprobación del administrador para mostrar las publicaciones"><span class="pubq-dot-pend" style="vertical-align:-1px"></span> <b style="color:var(--warning)">${pending.length}</b> pendiente(s) de aprobación</span>` : ''}
           <span><b style="color:var(--text-muted)">${skipped.length}</b> omitida(s)</span>
         </div>
 
         ${published.map(item => `
-          <div class="card" style="padding:12px;border-left:3px solid var(--success)">
-            <div style="display:flex;justify-content:space-between;align-items:center">
+          <div class="card" style="padding:12px;border-left:3px solid ${Number(item.pending_approval) === 1 ? 'var(--warning)' : 'var(--success)'}">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
               <div>
                 <span style="font-weight:600;font-size:.85rem">${escHtml(item.group_name)}</span>
                 <span style="font-size:.72rem;color:var(--text-muted);margin-left:8px">${item.product_name || ''}</span>
+                ${Number(item.pending_approval) === 1 ? '<div style="font-size:.72rem;color:var(--warning);margin-top:3px">Pendiente de aprobación del administrador: aún no es visible en el grupo</div>' : ''}
               </div>
-              <span style="font-size:.72rem;color:var(--text-muted)">✓ ${formatDateTime(item.published_at)}</span>
+              <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+                ${Number(item.pending_approval) === 1 ? '<span class="pubq-dot-pend" title="Pendiente de aprobación del administrador"></span>' : ''}
+                <span style="font-size:.72rem;color:var(--text-muted)">✓ ${formatDateTime(item.published_at)}</span>
+              </div>
             </div>
           </div>
         `).join('')}

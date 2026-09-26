@@ -111,9 +111,40 @@ async function foundComposerHandle(page) {
   return page.$('[data-pgp-composer="1"]').catch(() => null);
 }
 
+// FB abre un typeahead de hashtags/menciones al escribir '#' o '@'. Si sigue
+// abierto cuando pulsamos Enter, ese Enter selecciona la sugerencia y el salto
+// de línea se PIERDE: el texto quedaba pegado ("#DaniMarvis_Storehttps://...").
+// Si hay un listbox visible, se cierra con Escape antes de cortar la línea.
+async function closeTypeahead(page) {
+  const open = await page.evaluate(() => {
+    for (const el of document.querySelectorAll('[role="listbox"]')) {
+      const r = el.getBoundingClientRect();
+      const cs = getComputedStyle(el);
+      if (r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none' && Number(cs.opacity) > 0.05) return true;
+    }
+    return false;
+  }).catch(() => false);
+  if (open) { await page.keyboard.press('Escape'); await sleep(150); }
+}
+
+// Cuenta los saltos de línea reales del compositor (divs de bloque en Lexical).
+async function composerLineCount(handle) {
+  if (!handle) return Promise.resolve(0);
+  return handle.evaluate((el) => {
+    const blocks = el.querySelectorAll('div');
+    let n = 0;
+    for (const d of blocks) {
+      const hasOwn = Array.from(d.childNodes).some(c => c.nodeType === 3 || c.nodeName === 'BR');
+      if (hasOwn) n++;
+    }
+    return n;
+  }).catch(() => 0);
+}
+
 // Escribe el texto en el compositor con teclado nativo (compatible con el
 // editor Lexical de FB — execCommand('insertText') genera artefactos como
-// "[object HTMLDivElement]"). Devuelve 'teclado' si el texto quedó, 'fail' si no.
+// "[object HTMLDivElement]"). Se escribe LÍNEA por LÍNEA para poder cerrar el
+// typeahead antes de cada Enter. Devuelve 'teclado' si el texto quedó, 'fail' si no.
 async function typeText(page, handle, coords) {
   const t = String(text || '');
   if (!t) return 'vacio';
@@ -122,10 +153,27 @@ async function typeText(page, handle, coords) {
   if (handle) await handle.focus().catch(() => {});
   await sleep(300);
   const before = await composerLenOf(handle);
-  await page.keyboard.type(t, { delay: 12 });
+  const lines = t.split(/\r\n|\r|\n/);
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i]) await page.keyboard.type(lines[i], { delay: 12 });
+    if (i < lines.length - 1) {
+      await closeTypeahead(page);
+      await page.keyboard.press('Enter');
+      await sleep(90);
+    }
+  }
   await sleep(500);
   const after = await composerLenOf(handle);
   if (after <= before) return 'fail';
+  // diagnóstico: los saltos de línea perdidos son el fallo silencioso más grave
+  const breaks = lines.length - 1;
+  const gotBreaks = await composerLineCount(handle);
+  if (breaks > 0 && gotBreaks > 0 && gotBreaks < breaks) {
+    console.log(JSON.stringify({
+      ok: true, status: 'warn', mode: MODE,
+      message: `saltos de linea: ${gotBreaks}/${breaks} — revisar texto pegado`,
+    }));
+  }
   return 'teclado';
 }
 
@@ -647,6 +695,19 @@ async function debugDump(page) {
 }
 
 // ---------------------------------------------------------------- grupos ---
+// El grupo exige aprobación del administrador para las publicaciones de los
+// miembros. No impide publicar, pero el post no es visible hasta que lo aprueben.
+async function hasApprovalNotice(page) {
+  return page.evaluate(() => {
+    const norm = s => (s || '').replace(/\s+/g, ' ').toLowerCase();
+    const body = norm(document.body ? document.body.innerText : '');
+    if (/pendiente de la aprobaci[oó]n del administrador/.test(body)) return true;
+    if (/tus publicaciones est[aá]n pendientes de aprobaci[oó]n/.test(body)) return true;
+    if (/se requiere aprobaci[oó]n del administrador para publicar/.test(body)) return true;
+    return false;
+  }).catch(() => false);
+}
+
 async function processGroup(browser, groupUrl, label) {
   const t0 = Date.now();
   const page = await browser.newPage();
@@ -659,6 +720,11 @@ async function processGroup(browser, groupUrl, label) {
     if (await isLoginRequired(page)) {
       return out({ group_url: groupUrl, ok: false, status: 'error', message: 'Sesión de Facebook requerida. Abrí el perfil logueado y reintentá.' });
     }
+
+    // Grupos con moderation: FB avisa "Pendiente de la aprobación del
+    // administrador". El post se publica igual, pero queda en revisión, así que
+    // lo marcamos para poder avisarlo en la lista y el historial.
+    const needsApproval = await hasApprovalNotice(page);
 
     let composer = await findComposer(page);
     for (let attempt = 0; attempt < 4 && !composer; attempt++) {
@@ -769,11 +835,12 @@ async function processGroup(browser, groupUrl, label) {
     await page.close().catch(() => {});
     return out({
       group_url: groupUrl, ok: true, status: 'published',
-      message: 'Publicado en el grupo.' + (ready ? ` (${ready} foto(s) adjunta(s)).` : ''),
+      message: 'Publicado en el grupo.' + (ready ? ` (${ready} foto(s) adjunta(s)).` : '') + (needsApproval ? ' Queda pendiente de aprobación del administrador.' : ''),
       post_url: postUrl,
       imagen_adjunta: imgs.attached,
       imagenes_pedidas: imgs.images,
       texto_digits: lenBefore,
+      requiere_aprobacion: needsApproval ? 1 : 0,
       toral_ms: Date.now() - t0,
     });
   } catch (err) {

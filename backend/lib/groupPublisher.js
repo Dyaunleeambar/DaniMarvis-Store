@@ -261,19 +261,22 @@ function updateQueue(item, result, mode) {
   const db = getDB();
   const now = toIsoUtc(new Date());
   const base = (item.notes || '').trim();
+  // grupo con moderation: el post sale pero espera al administrador
+  const pending = result.requiere_aprobacion ? 1 : 0;
   let notes;
   if (result.ok) {
     const tag = mode === 'prepare' ? 'preparado' : 'publicado';
     notes = [base, `auto:${tag} ${now.slice(0, 19)}`.trim()].filter(Boolean).join(' | ');
+    if (pending) notes += ' | pendiente de aprobación del administrador';
   } else {
     notes = [base, `auto:error ${result.message || ''}`.trim()].filter(Boolean).join(' | ').slice(0, 500);
   }
   if (result.ok && mode === 'publish') {
-    db.prepare("UPDATE publication_queue SET status = 'published', notes = ?, published_at = ?, updated_at = datetime('now') WHERE id = ?")
-      .run(notes, now, item.id);
+    db.prepare("UPDATE publication_queue SET status = 'published', notes = ?, published_at = ?, pending_approval = ?, updated_at = datetime('now') WHERE id = ?")
+      .run(notes, now, pending, item.id);
   } else if (result.ok && mode === 'prepare') {
-    db.prepare("UPDATE publication_queue SET status = 'prepared', notes = ?, updated_at = datetime('now') WHERE id = ?")
-      .run(notes, item.id);
+    db.prepare("UPDATE publication_queue SET status = 'prepared', notes = ?, pending_approval = ?, updated_at = datetime('now') WHERE id = ?")
+      .run(notes, pending, item.id);
   } else {
     db.prepare("UPDATE publication_queue SET notes = ?, updated_at = datetime('now') WHERE id = ?")
       .run(notes, item.id);

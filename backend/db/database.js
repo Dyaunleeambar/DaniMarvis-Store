@@ -398,6 +398,11 @@ function migratePubQueue() {
   try {
     db.exec("ALTER TABLE publication_queue ADD COLUMN images TEXT DEFAULT '[]'");
   } catch (_) {}
+  // grupos con moderation previa: el post se publica pero queda esperando al
+  // administrador. Se marca para avisarlo en la lista y el historial.
+  try {
+    db.exec("ALTER TABLE publication_queue ADD COLUMN pending_approval INTEGER DEFAULT 0");
+  } catch (_) {}
 }
 
 function migratePromptEngine() {

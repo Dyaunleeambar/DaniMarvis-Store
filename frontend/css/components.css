@@ -211,6 +211,18 @@ tr:hover td { background: rgba(201,132,122,.03); }
 .badge--paid { background: rgba(46,125,50,.1); color: var(--success); }
 .badge--unpaid { background: rgba(237,108,2,.1); color: var(--warning); }
 
+/* Publicación en grupo con moderation: el post sale pero espera al admin */
+.pubq-dot-pend {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #f2b01e;
+  border: 1px solid rgba(180,120,0,.35);
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
 /* ── Toast ─────────────────────────────────────────────────── */
 .toast {
   position: fixed;
