@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getDB } from '../db/database.js';
+import { resolveLocalUpload } from './imageUtils.js';
 import { v4 as uuid } from 'uuid';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -137,10 +138,8 @@ async function resolveImages(imagesArr) {
       const local = await downloadToUploads(img);
       if (local && fs.existsSync(local)) out.push(local);
     } else {
-      const clean = String(img).replace(/\\/g, '/').replace(/^\/+/, '');
-      const filename = clean.split('/').pop();
-      const file = path.join(UPLOADS_DIR, filename);
-      if (fs.existsSync(file)) out.push(file);
+      const local = resolveLocalUpload(img);
+      if (local) out.push(local);
     }
     if (out.length >= 10) break;
   }

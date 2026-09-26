@@ -1,6 +1,6 @@
 import { formatCurrency } from './currency.js';
-import { ensureWebp } from './imageUtils.js';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'fs';
+import { ensureWebp, resolveLocalUpload } from './imageUtils.js';
+import { copyFileSync, existsSync, mkdirSync, writeFileSync } from 'fs';
 import { basename, join } from 'path';
 
 const WHATSAPP_NUMBER = '5353760493';
@@ -71,7 +71,6 @@ export async function buildCatalogHtml(products, uploadsDir) {
   const categories = [...new Set(products.map(p => p.category).filter(Boolean))];
 
   if (uploadsDir && existsSync(uploadsDir)) {
-    const files = readdirSync(uploadsDir);
     const destDir = join(uploadsDir, '..', '..', 'public-catalog', 'images');
     mkdirSync(destDir, { recursive: true });
 
@@ -79,21 +78,18 @@ export async function buildCatalogHtml(products, uploadsDir) {
       const images = parseImages(p);
       for (const url of images) {
         if (isLocalImage(url)) {
-          const filename = url.replace('/uploads/', '');
-          if (files.includes(filename)) {
-            const src = join(uploadsDir, filename);
-            const dest = join(destDir, filename);
-            if (existsSync(src) && !existsSync(dest)) {
-              copyFileSync(src, dest);
-            }
-            if (!p._localImage) {
-              // Convert first image to WebP
-              const webpDest = await ensureWebp(dest);
-              if (webpDest && webpDest !== dest) {
-                p._localImage = `images/${basename(webpDest)}`;
-              } else {
-                p._localImage = `images/${filename}`;
-              }
+          // Resuelve contra backend/uploads/, respetando subcarpetas
+          // (import/, generated/, copilot/) donde también se guardan imágenes.
+          const src = resolveLocalUpload(url);
+          if (src && !p._localImage) {
+            const dest = join(destDir, basename(src));
+            if (!existsSync(dest)) copyFileSync(src, dest);
+            // Convert first image to WebP
+            const webpDest = await ensureWebp(dest);
+            if (webpDest && webpDest !== dest) {
+              p._localImage = `images/${basename(webpDest)}`;
+            } else {
+              p._localImage = `images/${basename(src)}`;
             }
           }
         }

@@ -1,12 +1,12 @@
 import fs from 'fs';
 import { basename, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { resolveLocalUpload } from './imageUtils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const GRAPH_API = 'https://graph.facebook.com/v22.0';
-const UPLOADS_DIR = join(__dirname, '..', 'uploads');
 
 export class FacebookError extends Error {
   constructor(message, { code = null, isTokenExpired = false } = {}) {
@@ -52,13 +52,7 @@ export async function validateFacebookToken(accessToken) {
 }
 
 function resolveLocalImage(relPath) {
-  if (!relPath) return null;
-  if (/^https?:\/\//i.test(relPath)) return null;
-  const clean = String(relPath).replace(/^\//, '').replace(/\\/g, '/');
-  const segments = clean.split('/');
-  const filename = segments[segments.length - 1];
-  const full = join(UPLOADS_DIR, filename);
-  return fs.existsSync(full) ? full : null;
+  return resolveLocalUpload(relPath);
 }
 
 function buildImageFields(productImages) {
