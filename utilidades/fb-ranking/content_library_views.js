@@ -268,10 +268,14 @@ async function collectRows(page, mouse) {
 
     let added = 0;
     for (const b of batch) {
-      const key = b.text + '@' + b.viewsRaw + '@' + b.dist;
+      // Firma real de grupo+fecha (parseada del pie de la celda) para deduplicar
+      // por identidad real de la fila, no solo por texto+vistas+dist — dos grupos
+      // distintos pueden compartir el mismo texto y "0" vistas recién publicado.
+      const sig = extractGroupDate(b.rawText || b.text);
+      const key = b.text + '@' + b.viewsRaw + '@' + (sig.group || b.dist) + '@' + sig.tail;
       if (seen.has(key)) continue;
       seen.add(key);
-      rows.push({ key, ...b, views: parseNumber(b.viewsRaw), impressions: parseNumber(b.imprRaw) });
+      rows.push({ key, ...b, views: parseNumber(b.viewsRaw), impressions: parseNumber(b.imprRaw), _pre: sig });
       added++;
     }
 
@@ -451,9 +455,10 @@ console.log('Ajustando rango de fechas...');
     return;
   }
 
-  // enriquecer filas con grupo + fecha
+  // enriquecer filas con grupo + fecha (ya parseados en collectRows; se
+  // recalcula solo si por algún motivo no quedó guardado)
   for (const row of rows) {
-    const { group, tail } = extractGroupDate(row.rawText || row.text);
+    const { group, tail } = row._pre || extractGroupDate(row.rawText || row.text);
     row.group = group || row.dist.replace(/-{1,2}/g, '').trim() || '(sin distribución)';
     row.dateRaw = tail;
     const p = parseDateEs(tail);

@@ -134,13 +134,19 @@ function dailyStatusLabel(st) {
   const { auto_enabled, time, lastRunDay, outcome } = st;
   const hora = time || '—';
   if (!auto_enabled) return `<span class="badge badge--pending">Job diario desactivado</span>`;
+  const faltantesTxt = (outcome?.faltantes && outcome.faltantes.length)
+    ? ` — sin datos: ${outcome.faltantes.slice(0, 5).map(escHtml).join(', ')}${outcome.faltantes.length > 5 ? ` +${outcome.faltantes.length - 5}` : ''}`
+    : '';
   let badge;
   if (outcome?.ok) {
-    badge = `<span class="badge badge--active">${formatDate(outcome.fecha || lastRunDay)}: ok (${Number(outcome.grupos) || 0} grupos)</span>`;
+    const esp = outcome.esperados ? ` de ${outcome.esperados} registrados` : '';
+    // min_groups es un AVISO, no un descarte: el día se guardó igual
+    const low = outcome.low_data
+      ? ` <span class="badge badge--pending" title="Se detectaron menos grupos que el mínimo configurado (${Number(outcome.min_groups) || 0}); el día se guardó igual pero puede estar incompleto">datos bajos</span>`
+      : '';
+    badge = `<span class="badge badge--active">${formatDate(outcome.fecha || lastRunDay)}: ok (${Number(outcome.grupos) || 0}${esp} grupos)${faltantesTxt}</span>${low}`;
   } else if (outcome?.noBrowser) {
     badge = `<span class="badge badge--pending">Chrome no conectado (puerto 9222) — revisá la Biblioteca</span>`;
-  } else if (outcome?.skipped === 'degenerate') {
-    badge = `<span class="badge badge--pending">${formatDate(outcome.fecha || lastRunDay)}: corrida incompleta (${Number(outcome.grupos) || 0} grupos) — reintentos agotados por hoy</span>`;
   } else if (outcome && !outcome.ok) {
     badge = `<span class="badge badge--pending">Última corrida falló: ${escHtml((outcome.error || '').slice(0, 90))}</span>`;
   } else {

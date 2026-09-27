@@ -27,6 +27,7 @@ function renderPage(container, settings, categories, providerStyles) {
   const ai = pc.ai || {};
   const fb = pc.facebook || {};
   const ap = pc.autopublish || {};
+  const rk = pc.ranking || {};
 
   container.innerHTML = `
     <div class="page">
@@ -201,6 +202,40 @@ function renderPage(container, settings, categories, providerStyles) {
             </div>
           </details>
 
+          <details style="margin-top:12px" ${rk.auto_enabled !== false ? 'open' : ''}>
+            <summary style="cursor:pointer;font-weight:600;font-size:.9rem;color:var(--rose)">📊 Ranking de grupos (automatización diaria)</summary>
+            <p style="margin:8px 0 12px;font-size:.8rem;color:var(--text-secondary)">
+              Todos los días a la hora indicada, la app lee la Biblioteca de Contenido de Facebook y
+              guarda cuántas vistas generó cada grupo. La corrida apunta al <strong>día en curso</strong>
+              (tarde, para que el día esté casi completo): la Biblioteca de Contenido ya no muestra los
+              posts de ayer, así que un día perdido no se recupera después.
+              El "mínimo de grupos" es solo una <strong>señal de aviso</strong>: si el día se detectan menos
+              grupos que ese número, la corrida se guarda igual marcada como "datos bajos", en vez de
+              descartarse. Subilo solo si querés descartar días flojos a mano.
+            </p>
+            <div class="form-group">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0">
+                <input type="checkbox" name="rk_auto_enabled" value="1" ${rk.auto_enabled !== false ? 'checked' : ''} style="width:16px;height:16px" />
+                Habilitar la corrida diaria automática
+              </label>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Hora de la corrida</label>
+                <input type="time" name="rk_time" class="form-control" value="${rk.time || '10:00'}" />
+              </div>
+              <div class="form-group">
+                <label>Mínimo de grupos (solo aviso)</label>
+                <input type="number" name="rk_min_groups" class="form-control" min="1" max="200" value="${rk.min_groups ?? 8}" />
+                <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:2px">Por debajo de este número el día se marca como "datos bajos" (no se descarta).</small>
+              </div>
+              <div class="form-group">
+                <label>Rondas de scroll (detalle vs. velocidad)</label>
+                <input type="number" name="rk_rounds" class="form-control" min="30" max="600" value="${rk.rounds ?? 260}" />
+              </div>
+            </div>
+          </details>
+
           <div class="form-actions" style="margin-top:16px">
             <button type="submit" class="btn btn--primary">Guardar plantilla</button>
           </div>
@@ -358,6 +393,12 @@ function renderPage(container, settings, categories, providerStyles) {
         min_gap_min: parseInt(fd.get('ap_min_gap'), 10) || 45,
         cooldown_min: parseInt(fd.get('ap_cooldown'), 10) || 240,
         worker_batch: parseInt(fd.get('ap_batch'), 10) || 3
+      },
+      ranking: {
+        auto_enabled: fd.get('rk_auto_enabled') === '1',
+        time: fd.get('rk_time') || '10:00',
+        min_groups: parseInt(fd.get('rk_min_groups'), 10) || 8,
+        rounds: parseInt(fd.get('rk_rounds'), 10) || 260
       }
     };
 

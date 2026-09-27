@@ -20,11 +20,11 @@ export function getRankingConfig() {
     return {
       auto_enabled: r.auto_enabled !== false,
       time: r.time || '10:00',
-      min_groups: Number(r.min_groups) || 30,
+      min_groups: Number(r.min_groups) || 8,
       rounds: Number(r.rounds) || 260,
     };
   } catch {
-    return { auto_enabled: true, time: '10:00', min_groups: 30, rounds: 260 };
+    return { auto_enabled: true, time: '23:00', min_groups: 8, rounds: 260 };
   }
 }
 
@@ -34,11 +34,13 @@ export function localDateStr(d = new Date()) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-export function yesterdayStr() {
-  const d = new Date();
-  d.setDate(d.getDate() - 1);
-  return localDateStr(d);
-}
+// La Biblioteca de Contenido de Facebook solo expone actividad reciente: lo que
+// se ve hoy desaparece a la día siguiente. Medido el 26/09 — el objetivo 25/09
+// devolvió 0 filas (139 posts leídos, todos fechados 26/09) mientras el objetivo
+// 26/09 devolvió 41 grupos, y la corrida del 25/09 a las 21:49 había visto 15.
+// O sea: mismo día funciona, al día siguiente el día ya no está. Por eso el
+// objetivo por defecto es HOY, y la corrida diaria va tarde (23:00) para que el
+// día esté casi completo. Un objetivo explícito por parámetro manda igual.
 
 function minutes(timeStr) {
   const m = /^(\d{1,2}):(\d{2})$/.exec(String(timeStr || ''));
@@ -137,13 +139,39 @@ function loadReport() {
   } catch { return { fecha: '', grupos: [] }; }
 }
 
-let running = false;
+function registeredGroupNames() {
+  try {
+    const db = getDB();
+    return db.prepare('SELECT name FROM facebook_groups').all().map(r => String(r.name || '').trim()).filter(Boolean);
+  } catch { return []; }
+}
+
+// Compara los grupos detectados por el scraper contra los registrados en la
+// app (facebook_groups). Match flexible (contiene / es contenido) porque el
+// nombre parseado del pie de FB puede venir truncado o con variaciones menores.
+function reconcileGroups(detected) {
+  const registered = registeredGroupNames();
+  if (!registered.length) return { esperados: 0, detectados: detected.length, faltantes: [] };
+  const norm = (s) => String(s || '').toLowerCase().trim();
+  const detectedNorm = detected.map(g => norm(g.group));
+  const faltantes = registered.filter(name => {
+    const n = norm(name);
+    return !detectedNorm.some(d => d === n || d.includes(n) || n.includes(d));
+  });
+  return { esperados: registered.length, detectados: detected.length, faltantes };
+}
+
+
 
 function stampState(today, targetDate, outcome, source) {
   const prev = readState();
   const attempts = (prev?.lastRunDay === today ? (Number(prev.attempts) || 0) : 0) + 1;
   return { lastRunDay: today, target: targetDate, runAt: new Date().toISOString(), lastAttemptAt: new Date().toISOString(), attempts, outcome, source };
 }
+
+// Guard de concurrencia: evita que se solapen dos corridas (una por minuto
+// cuando el job automatico fallaba era lo que bloqueaba la PC).
+let running = false;
 
 export async function runDailyRanking({ force = false, target = null } = {}) {
   // Guard de concurrencia: una corrida cada minuto era lo que bloqueó la PC.
@@ -161,12 +189,14 @@ export async function runDailyRanking({ force = false, target = null } = {}) {
 
 async function runDailyRankingInner({ force = false, target = null } = {}) {
   const cfg = getRankingConfig();
-  const targetDate = target || yesterdayStr();
   const today = localDateStr();
+  // Objetivo = HOY, no ayer: la Biblioteca de Contenido ya no expone los posts
+  // de ayer (ver nota en localDateStr). El parámetro target manda si se pasa.
+  const targetDate = target || today;
   log(`[RankingDiario] objetivo=${targetDate} fuerza=${force} min_groups=${cfg.min_groups}`);
 
-  // Respaldo del reporte vigente: una corrida degenerada no debe pisar el
-  // último snapshot bueno que muestra la vista.
+  // Respaldo del reporte vigente: una corrida que no llega a producir filas no
+  // debe pisar el último snapshot bueno que muestra la vista.
   let prevReport = null;
   try { if (fs.existsSync(REPORT_PATH)) prevReport = fs.readFileSync(REPORT_PATH, 'utf8'); } catch {}
   const restoreReport = () => {
@@ -212,12 +242,15 @@ async function runDailyRankingInner({ force = false, target = null } = {}) {
       .run(g.group, g.views, g.impressions);
   }
 
-  if (grupos.length < cfg.min_groups) {
-    const outcome = { ok: false, skipped: 'degenerate', fecha, grupos: grupos.length, vistas: grupos.reduce((a, g) => a + g.views, 0) };
-    saveState(stampState(today, targetDate, outcome, force ? 'manual' : 'auto'));
-    log(`[RankingDiario] DESCARTADO (se vio ${grupos.length} < ${cfg.min_groups}) — no se tocó ranking_history de ${targetDate}`);
-    restoreReport();
-    return outcome;
+  // min_groups ya NO descarta el día. Un día con pocos grupos son pocos grupos
+  // REALES (el 25/09 se vieron 15 y el 26/09 41, así que un umbral fijo
+  // borraba días válidos según qué tan movido estaba el día). Ahora es solo un
+  // aviso: se guarda igual y queda marcado como datos bajos para poder
+  // desconfiar de él. Lo que sí evita pisar el histórico es el caso de 0 filas,
+  // que se resuelve más arriba.
+  const lowData = grupos.length < cfg.min_groups;
+  if (lowData) {
+    log(`[RankingDiario] AVISO: solo ${grupos.length} grupos (< min_groups ${cfg.min_groups}) — se guarda igual, marcado como datos bajos`);
   }
 
   // La vista por grupo del día objetivo llegó completa: reemplazar el histórico.
@@ -235,9 +268,9 @@ async function runDailyRankingInner({ force = false, target = null } = {}) {
     fs.copyFileSync(REPORT_PATH, path.join(path.dirname(REPORT_PATH), `reporte_${fecha}_${stamp}.json`));
   } catch {}
 
-  const outcome = { ok: true, fecha, grupos: grupos.length, vistas: grupos.reduce((a, g) => a + g.views, 0) };
+  const outcome = { ok: true, fecha, grupos: grupos.length, low_data: lowData, min_groups: cfg.min_groups, vistas: grupos.reduce((a, g) => a + g.views, 0), ...reconcileGroups(grupos) };
   saveState(stampState(today, targetDate, outcome, force ? 'manual' : 'auto'));
-  log(`[RankingDiario] OK: ${grupos.length} grupos para ${fecha} (${outcome.vistas} vistas) → ranking_history reemplazado`);
+  log(`[RankingDiario] OK: ${grupos.length} grupos para ${fecha} (${outcome.vistas} vistas)${lowData ? ' [datos bajos]' : ''} → ranking_history reemplazado`);
   return outcome;
 }
 
