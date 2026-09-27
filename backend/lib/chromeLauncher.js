@@ -29,13 +29,22 @@ const CONTENT_LIBRARY_URL = 'https://www.facebook.com/professional_dashboard/con
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-async function portResponds(port) {
+async function portResponds(port, timeoutMs = 1500) {
   try {
-    const res = await fetch(`http://localhost:${port}/json/version`, { signal: AbortSignal.timeout(1500) });
+    const res = await fetch(`http://localhost:${port}/json/version`, { signal: AbortSignal.timeout(timeoutMs) });
     return res.ok;
   } catch {
     return false;
   }
+}
+
+/**
+ * Sondeo PASIVO: solo informa si hay un Chrome escuchando, no lanza nada.
+ * Para que la UI pueda mostrar el estado sin disparar un arranque.
+ * Timeout corto a propósito: se consulta en cada poll de /group-publish/status.
+ */
+export async function debugChromeReachable() {
+  return portResponds(DEBUG_PORT, 800);
 }
 
 async function waitForPort(port, timeoutMs) {

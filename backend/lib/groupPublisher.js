@@ -4,7 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { getDB } from '../db/database.js';
 import { resolveLocalUpload } from './imageUtils.js';
-import { ensureDebugChrome } from './chromeLauncher.js';
+import { ensureDebugChrome, debugChromeReachable } from './chromeLauncher.js';
 import { v4 as uuid } from 'uuid';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -24,6 +24,11 @@ export const DEFAULT_AUTO_PUBLISH = {
 
 let running = false;
 let lastResult = null;
+// Progreso en vivo de la corrida en curso. Las rutas ya no esperan al run (el
+// poster tiene --max-seconds=300 y entre posts hay 45-135s de separación), así
+// que el frontend hace polling a /group-publish/status y lee esto. Sin esto no
+// hay nada que mostrar hasta el final, que es justo lo que había que evitar.
+let currentRun = null;
 
 // ------------------------------------------------------------- utilidades ---
 const pad = (n) => String(n).padStart(2, '0');
@@ -286,41 +291,71 @@ async function deleteTempFiles(files) {
   }
 }
 
-export async function runGroupPublish({ auto = false, force = false, ids = [], mode = null, debug = false } = {}) {
-  if (running) return { skipped: true, reason: 'Ya hay una corrida de publicador en curso', lastResult };
-  running = true;
+/**
+ * Clasifica por qué falló un post, para que la UI no muestre un "error" pelado.
+ * Mismo criterio que usa dailyRanking.js para separar sesión de navegador:
+ *  - 'noBrowser': no hay Chrome escuchando en 9222
+ *  - 'sesion':    el perfil de Facebook venció y hay muro de login
+ */
+function classifyFailure(message) {
+  const m = String(message || '');
+  if (/no se pudo conectar a chrome|puerto 9222|localhost:9222|failed to fetch browser websocket|econnrefused|could not connect to chrome/i.test(m)) return 'noBrowser';
+  if (/sesi[oó]n de facebook requerida|sesi[oó]n (expirada|venci[oó]da)|\/login|checkpoint|cookie_consent/i.test(m)) return 'sesion';
+  return null;
+}
+
+/**
+ * Trabajo real de la corrida. NO await-ear desde una ruta: usar
+ * startGroupPublish(), que devuelve de inmediato. Va dejando el avance en
+ * currentRun para que groupPublishStatus() lo sirva por polling.
+ */
+async function runGroupPublish({ runId = null, auto = false, force = false, ids = [], mode = null, debug = false } = {}) {
   const cfg = getAutopublishConfig();
-  if (auto && !cfg.enabled) {
-    running = false;
-    return { skipped: true, reason: 'auto-publicado deshabilitado' };
-  }
   const effectiveMode = mode || cfg.mode;
+  const startedAt = toIsoUtc(new Date()).slice(0, 19);
+  currentRun = {
+    runId, started: startedAt, startedMs: Date.now(), finished: null,
+    phase: 'starting', total: 0, done: 0, ok: 0, errors: 0,
+    current_group: null, mode: effectiveMode, results: [],
+    sesion: false, noBrowser: false, error: null,
+  };
 
   try {
     // Garantiza Chrome con debugging remoto (puerto 9222) y el perfil con la
     // sesión de Facebook ANTES de publicar. Antes esto solo sondeaba el puerto
     // y abortaba: había que abrirlo a mano. Si el puerto ya responde no se toca
     // nada (no interfiere con el Chrome del usuario ni con el scraper).
+    currentRun.phase = 'starting_chrome';
     const chrome = await ensureDebugChrome({ launch: true });
     if (!chrome.ok) {
-      const r = { ok: false, error: `Chrome no disponible (${chrome.error || chrome.status}). Se necesita Chrome con --remote-debugging-port=9222 y la sesión de Facebook abierta en ese perfil.`, noBrowser: true, started: toIsoUtc(new Date()).slice(0, 19) };
+      const r = { ok: false, error: `Chrome no disponible (${chrome.error || chrome.status}). Se necesita Chrome con --remote-debugging-port=9222 y la sesión de Facebook abierta en ese perfil.`, noBrowser: true, started: startedAt };
       lastResult = r;
+      currentRun.phase = 'error';
+      currentRun.noBrowser = true;
+      currentRun.error = r.error;
+      currentRun.finished = toIsoUtc(new Date()).slice(0, 19);
       return r;
     }
 
+    currentRun.phase = 'picking';
     const items = (ids && ids.length)
       ? dueCandidates().filter(c => ids.includes(c.id))
       : pickForRun(cfg, { auto, force });
 
     if (items.length === 0) {
-      const r = { ok: true, processed: 0, message: 'No hay publicaciones vencidas para publicar ahora.', reason: !auto ? 'na' : (withinHoursWindow(cfg) ? 'fuera de franja o sin vencidas' : 'fuera de franja horaria'), started: toIsoUtc(new Date()).slice(0, 19) };
+      const r = { ok: true, processed: 0, message: 'No hay publicaciones vencidas para publicar ahora.', reason: !auto ? 'na' : (withinHoursWindow(cfg) ? 'fuera de franja o sin vencidas' : 'fuera de franja horaria'), started: startedAt };
       lastResult = r;
+      currentRun.phase = 'empty';
+      currentRun.finished = toIsoUtc(new Date()).slice(0, 19);
       return r;
     }
 
+    currentRun.total = items.length;
+    currentRun.phase = 'publishing';
     const results = [];
     const temps = [];
     for (const item of items) {
+      currentRun.current_group = item.group_name;
       const groupUrl = resolveGroupUrl(item);
       const imageFiles = await resolveImages(item.images);
       const messageFile = writeMessageFile(item);
@@ -335,7 +370,7 @@ export async function runGroupPublish({ auto = false, force = false, ids = [], m
         debug,
       });
       updateQueue(item, result, effectiveMode);
-      results.push({
+      const row = {
         item_id: item.id,
         group: item.group_name,
         url: groupUrl,
@@ -344,10 +379,23 @@ export async function runGroupPublish({ auto = false, force = false, ids = [], m
         status: result.status,
         message: ((result.message || '') + (result.img_adjunta !== undefined ? ` | img_adjunta:${result.img_adjunta}` : '') + (result.img_pedidas !== undefined ? ` de ${result.img_pedidas}` : '')).slice(0, 220),
         post_url: result.post_url || '',
-      });
+      };
+      // El aviso de sesión/Chrome puede aparecer en cualquier ítem: se marca
+      // para que la UI lo diga aunque el run siga y termine con otros errores.
+      if (!result.ok) {
+        const cause = classifyFailure(result.message);
+        if (cause) currentRun[cause] = true;
+      }
+      results.push(row);
+      currentRun.results.push(row);
+      currentRun.done += 1;
+      if (result.ok) currentRun.ok += 1; else currentRun.errors += 1;
+      currentRun.current_group = null;
       // separación natural entre posts consecutivos (simula flujo humano)
       if (results.length < items.length) {
+        currentRun.phase = 'waiting';
         await new Promise(r => setTimeout(r, (45000 + Math.random() * 90000)));
+        currentRun.phase = 'publishing';
       }
     }
 
@@ -359,26 +407,84 @@ export async function runGroupPublish({ auto = false, force = false, ids = [], m
       published: results.filter(x => x.ok && x.status === 'published').length,
       prepared: results.filter(x => x.ok && x.status === 'prepared').length,
       errors: results.filter(x => !x.ok).length,
+      sesion: currentRun.sesion,
+      noBrowser: currentRun.noBrowser,
       results,
-      started: toIsoUtc(new Date()).slice(0, 19),
+      started: startedAt,
     };
     lastResult = r;
+    currentRun.phase = 'done';
+    currentRun.finished = toIsoUtc(new Date()).slice(0, 19);
     return r;
   } catch (err) {
-    const r = { ok: false, error: err.message.slice(0, 300), started: toIsoUtc(new Date()).slice(0, 19) };
+    const r = { ok: false, error: err.message.slice(0, 300), started: startedAt };
     lastResult = r;
+    currentRun.phase = 'error';
+    currentRun.error = r.error;
+    currentRun.finished = toIsoUtc(new Date()).slice(0, 19);
     return r;
   } finally {
     running = false;
   }
 }
 
-export function groupPublishStatus() {
+/**
+ * Dispara una corrida y devuelve DE INMEDIATO con el runId (la ruta responde
+ * 202). El resultado se consulta por polling en GET /group-publish/status.
+ *
+ * Antes la ruta awaiteaba el run entero: con --max-seconds=300 del poster y 45-135s
+ * entre posts eso son minutos, y api.js no tiene timeout, así que el botón
+ * quedaba en "Corriendo..." sin que nadie supiera si colgó o estaba trabajando.
+ */
+export function startGroupPublish({ auto, force = false, ids = [], mode = null, debug = false } = {}) {
+  if (running) {
+    return { accepted: false, skipped: true, reason: 'Ya hay una corrida de publicador en curso', current: currentRun, lastResult };
+  }
+  const cfg = getAutopublishConfig();
+  const isAuto = auto ?? !(ids && ids.length);
+  if (isAuto && !cfg.enabled) {
+    return { accepted: false, skipped: true, reason: 'auto-publicado deshabilitado' };
+  }
+
+  running = true;
+  const runId = uuid();
+  const started = toIsoUtc(new Date()).slice(0, 19);
+  // se siembra acá para que el primer poll ya vea la corrida, aunque el Chrome
+  // todavía esté arrancando
+  currentRun = {
+    runId, started, startedMs: Date.now(), finished: null, phase: 'starting', total: 0, done: 0, ok: 0, errors: 0,
+    current_group: null, mode: mode || cfg.mode, results: [], sesion: false, noBrowser: false, error: null,
+  };
+
+  // fire-and-forget: los errores ya quedan en lastResult/currentRun
+  runGroupPublish({ auto: isAuto, force, ids, mode, debug, runId }).catch((err) => {
+    console.error('[publish] corrida falló:', err);
+    lastResult = { ok: false, error: err.message.slice(0, 300), started };
+    if (currentRun && currentRun.runId === runId) {
+      currentRun.phase = 'error';
+      currentRun.error = err.message.slice(0, 300);
+      currentRun.finished = toIsoUtc(new Date()).slice(0, 19);
+    }
+    running = false;
+  });
+
+  return { accepted: true, runId, started, total: ids.length || cfg.worker_batch };
+}
+
+export async function groupPublishStatus() {
   const cfg = getAutopublishConfig();
   return {
     running,
-    chrome: lastResult?.ok === false && /9222/.test(lastResult.error || '') ? false : null,
+    // antes esto era null salvo que el ÚLTIMO run hubiera fallado por 9222, así
+    // que la UI no podía anticipar "no hay navegador". Ahora es un sondeo real.
+    chrome: await debugChromeReachable(),
     config: cfg,
+    // elapsed_s se calcula acá y no en el browser: `started` viene recortado a
+    // 19 chars sin la Z, así que el JS del front lo parsearía como hora local
+    // (4h desfasado en Venezuela).
+    current: currentRun
+      ? { ...currentRun, elapsed_s: currentRun.startedMs ? Math.round((Date.now() - currentRun.startedMs) / 1000) : null }
+      : null,
     lastResult,
   };
 }

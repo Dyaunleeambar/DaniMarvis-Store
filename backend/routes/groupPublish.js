@@ -1,41 +1,44 @@
 import { Router } from 'express';
-import { runGroupPublish, groupPublishStatus } from '../lib/groupPublisher.js';
+import { startGroupPublish, groupPublishStatus } from '../lib/groupPublisher.js';
 
 const router = Router();
 
-router.get('/status', (req, res) => {
-  res.json(groupPublishStatus());
+router.get('/status', async (req, res) => {
+  res.json(await groupPublishStatus());
 });
 
 // Publica/prepara los ítems vencidos de la cola (modo automático respeta
 // franja horaria, cap diario y cooldowns). Con force=true ignora las
 // condiciones naturales (solo rutas manuales de la UI).
-router.post('/run', async (req, res) => {
+//
+// NO espera al run: devuelve 202 con el runId y el trabajo sigue en background.
+// El poster tiene --max-seconds=300 y entre posts hay 45-135s de separación, así
+// que una corrida completa son minutos. El resultado se lee por polling en
+// GET /status (campo `current`).
+router.post('/run', (req, res) => {
   const { mode, force: forceRaw, ids } = req.body || {};
   const force = !!forceRaw;
   const idsArr = Array.isArray(ids) ? ids.map(String).filter(Boolean) : [];
-  const r = await runGroupPublish({
+  const r = startGroupPublish({
     auto: !idsArr.length,
     force,
     ids: idsArr,
     mode: typeof mode === 'string' ? mode : null,
   });
   if (r.skipped) return res.status(409).json(r);
-  if (r.ok === false) return res.status(400).json(r);
-  res.json(r);
+  res.status(202).json(r);
 });
 
-router.post('/run/:id', async (req, res) => {
+router.post('/run/:id', (req, res) => {
   const { mode } = req.body || {};
-  const r = await runGroupPublish({
+  const r = startGroupPublish({
     auto: false,
     force: true,
     ids: [req.params.id],
     mode: typeof mode === 'string' ? mode : null,
   });
   if (r.skipped) return res.status(409).json(r);
-  if (r.ok === false) return res.status(400).json(r);
-  res.json(r);
+  res.status(202).json(r);
 });
 
 export default router;

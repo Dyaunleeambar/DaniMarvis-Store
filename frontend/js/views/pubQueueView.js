@@ -13,6 +13,12 @@ function escAttr(str) {
 let currentContainer = null;
 let currentTab = 'pending';
 let timerInterval = null;
+// Estado del polling de la corrida en curso. El backend ya no bloquea el
+// request (responde 202 + runId), así que el avance se sigue por acá.
+let publishPoll = null;
+let activeRun = null;   // { runId, watchId, kind }
+
+const POLL_MS = 2000;
 
 function formatTimer(ms) {
   if (ms <= 0) return '<span style="color:var(--success);font-weight:600">Listo para publicar</span>';
@@ -20,6 +26,111 @@ function formatTimer(ms) {
   const minutes = Math.floor((ms % 3600000) / 60000);
   const seconds = Math.floor((ms % 60000) / 1000);
   return `${hours}h ${minutes}m ${seconds}s`;
+}
+
+function fmtElapsed(s) {
+  const n = Number(s);
+  if (!Number.isFinite(n) || n < 0) return '0s';
+  const m = Math.floor(n / 60);
+  return m > 0 ? `${m}m ${n % 60}s` : `${n}s`;
+}
+
+const PHASE_LABEL = {
+  starting: 'iniciando',
+  starting_chrome: 'arrancando Chrome',
+  picking: 'eligiendo vencidas',
+  publishing: 'publicando',
+  waiting: 'esperando para el siguiente',
+  done: 'terminada',
+  empty: 'sin vencidas',
+  error: 'falló',
+};
+
+// Barra de progreso en vivo de la corrida. Antes el frontend solo sabía si la
+// corrida había terminado: el backend no exponía nada a medio camino.
+function runProgressHtml(status) {
+  const cur = status?.current;
+  if (!cur) return '';
+  const el = document.getElementById('pubq-run-progress');
+  if (!el) return '';
+
+  const pct = cur.total ? Math.round((cur.done / cur.total) * 100) : 0;
+  const parts = [];
+  parts.push(`<strong>${escHtml(PHASE_LABEL[cur.phase] || cur.phase)}</strong>`);
+  if (cur.total) parts.push(`${cur.done}/${cur.total}`);
+  if (cur.current_group) parts.push(`· ${escHtml(cur.current_group)}`);
+  if (cur.ok) parts.push(`· <span style="color:var(--success)">${cur.ok} ok</span>`);
+  if (cur.errors) parts.push(`· <span style="color:var(--danger)">${cur.errors} err</span>`);
+  if (Number.isFinite(cur.elapsed_s)) parts.push(`· ${fmtElapsed(cur.elapsed_s)}`);
+
+  let warn = '';
+  if (cur.sesion) {
+    warn = '<div style="color:var(--warning);margin-top:4px">⚠️ La sesión de Facebook parece vencida: abrí el perfil de Chrome y logueate de nuevo. El run sigue, pero los posts van a fallar.</div>';
+  } else if (cur.noBrowser) {
+    warn = '<div style="color:var(--danger);margin-top:4px">⚠️ No hay Chrome escuchando en el puerto 9222.</div>';
+  } else if (cur.phase === 'error' && cur.error) {
+    warn = `<div style="color:var(--danger);margin-top:4px">⚠️ ${escHtml(cur.error)}</div>`;
+  }
+
+  el.innerHTML = `
+    <div style="margin-top:6px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${parts.join(' ')}</div>
+      <div style="height:4px;background:var(--border-color,#333);border-radius:2px;margin-top:5px;overflow:hidden">
+        <div style="height:100%;width:${cur.phase === 'done' || cur.phase === 'error' ? 100 : pct}%;background:var(--primary,#4a9eff);transition:width .3s"></div>
+      </div>
+      ${warn}
+    </div>`;
+}
+
+function chromeBadgeHtml(chrome) {
+  if (chrome === true) return '<span class="badge badge--active" title="Chrome escuchando en el puerto 9222">Chrome 9222 OK</span>';
+  if (chrome === false) return '<span class="badge badge--pending" title="Se arrancará solo al correr">Chrome 9222 caído</span>';
+  return '';
+}
+
+/**
+ * Sigue la corrida por polling hasta que el backend marque running=false.
+ * onDone recibe el `current` final.
+ */
+function startPublishPoll(onDone) {
+  stopPublishPoll();
+  const tick = async () => {
+    let st;
+    try {
+      st = await api.getGroupPublishStatus();
+    } catch {
+      return; // un poll fallido no debe cortar el seguimiento
+    }
+    if (currentTab === 'pending') runProgressHtml(st);
+    if (st.running) return;
+    stopPublishPoll();
+    if (st.current) onDone(st.current);
+  };
+  publishPoll = setInterval(tick, POLL_MS);
+  tick();
+}
+
+function stopPublishPoll() {
+  if (publishPoll) {
+    clearInterval(publishPoll);
+    publishPoll = null;
+  }
+}
+
+/** Traduce el `current` final a un toast legible. */
+function runOutcome(cur) {
+  if (!cur) return null;
+  if (cur.phase === 'error') {
+    if (cur.noBrowser) return { msg: cur.error || 'Chrome no disponible', kind: 'error' };
+    return { msg: cur.error || 'La corrida falló', kind: 'error' };
+  }
+  if (cur.sesion) {
+    return { msg: `Terminó con ${cur.errors} errores: la sesión de Facebook está vencida. Logueate de nuevo en el perfil de Chrome.`, kind: 'error' };
+  }
+  if (cur.phase === 'empty') return { msg: 'No había publicaciones vencidas.', kind: 'success' };
+  if (cur.errors) return { msg: `${cur.ok} ok, ${cur.errors} errores`, kind: 'error' };
+  if (cur.ok) return { msg: `Listo: ${cur.ok} publicaciones`, kind: 'success' };
+  return { msg: 'Sin publicaciones procesadas', kind: 'success' };
 }
 
 function generateVariants(text) {
@@ -144,9 +255,11 @@ async function renderPending(container) {
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
           <span style="font-weight:600">🤖 Auto-publicado:</span>
           <span class="badge ${ap.enabled ? 'badge--active' : ''}">${cfgTxt}</span>
+          ${chromeBadgeHtml(autoStatus?.chrome)}
           <span style="color:var(--text-muted)">| Última corrida: ${lastTxt}</span>
           <button class="btn btn--sm btn--secondary" id="pubq-run-all" ${autoStatus?.running ? 'disabled' : ''}>Correr vencidos</button>
         </div>
+        <div id="pubq-run-progress"></div>
       </div>`;
 
     if (pending.length === 0) {
@@ -242,53 +355,79 @@ async function renderPending(container) {
       });
     });
 
-    document.getElementById('pubq-run-all')?.addEventListener('click', async () => {
-      const btn = document.getElementById('pubq-run-all');
-      btn.disabled = true;
-      btn.textContent = 'Corriendo...';
-      try {
-        const r = await api.runGroupPublish({ force: true });
-        if (r.ok === false) throw new Error(r.error || 'No se pudo correr');
-        showToast(r.message || `Procesados ${r.grabbed || 0}`, r.errors > 0 ? 'error' : 'success');
-      } catch (err) {
-        showToast(err.message, 'error');
-      }
-      renderPending(container);
+    // Si la página se recarga con una corrida en curso, se retoma el seguimiento
+    // en vez de mostrar "en curso" sin más.
+    if (autoStatus?.running && autoStatus?.current) {
+      activeRun = { runId: autoStatus.current.runId, kind: 'all', watchId: null };
+      runProgressHtml(autoStatus);
+      startPublishPoll((cur) => {
+        activeRun = null;
+        const out = runOutcome(cur);
+        if (out) showToast(out.msg, out.kind);
+        renderPending(container);
+      });
+    }
+
+    // Un handler común: dispara, y sigue la corrida por polling. El backend
+    // responde 202 al toque, así que el resultado no viene en la respuesta.
+    const trackRun = ({ kind, id = null, body, btn, busyLabel }) => {
+      const original = btn ? btn.textContent : null;
+      if (btn) { btn.disabled = true; btn.textContent = busyLabel; }
+      const finish = (msg, kindToast) => {
+        if (btn) { btn.disabled = false; btn.textContent = original; }
+        if (msg) showToast(msg, kindToast);
+        renderPending(container);
+      };
+      startPublishPoll((cur) => {
+        const row = id && cur?.results?.find(r => String(r.item_id) === String(id));
+        if (row?.ok) {
+          if (kind === 'prepare' && row.url) {
+            showToast('Post preparado en la pestaña. Revisalo y publicalo.', 'success');
+            window.open(row.url, '_blank');
+          } else {
+            showToast(row.message || 'Publicado', 'success');
+          }
+          activeRun = null;
+          finish(null, 'success');
+          return;
+        }
+        activeRun = null;
+        if (row) finish(row.message || 'No se pudo completar', 'error');
+        else {
+          const out = runOutcome(cur);
+          finish(out?.msg || 'La corrida terminó sin resultado', out?.kind || 'error');
+        }
+      });
+      return (async () => {
+        try {
+          const r = id ? await api.runGroupPublishOne(id, body) : await api.runGroupPublish(body);
+          if (r.skipped) {
+            stopPublishPoll();
+            finish(r.reason || 'No se pudo correr', 'error');
+            return;
+          }
+          activeRun = { runId: r.runId, kind, watchId: id };
+        } catch (err) {
+          stopPublishPoll();
+          finish(err.message, 'error');
+        }
+      })();
+    };
+
+    document.getElementById('pubq-run-all')?.addEventListener('click', function (ev) {
+      ev.currentTarget.disabled = true;
+      trackRun({ kind: 'all', body: { force: true }, btn: ev.currentTarget, busyLabel: 'Correndo...' });
     });
 
     container.querySelectorAll('.pubq-auto').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        btn.disabled = true;
-        btn.textContent = 'Publicando...';
-        try {
-          const r = await api.runGroupPublishOne(btn.dataset.id, { mode: 'publish', force: true });
-          const res = r.results?.[0];
-          if (r.ok === false) throw new Error(r.error || 'No se pudo publicar');
-          if (res?.ok) showToast(res.message || 'Publicado', 'success');
-          else throw new Error(res?.message || 'El grupo no se pudo publicar');
-        } catch (err) {
-          showToast(err.message, 'error');
-        }
-        renderPending(container);
+      btn.addEventListener('click', () => {
+        trackRun({ kind: 'publish', id: btn.dataset.id, body: { mode: 'publish', force: true }, btn, busyLabel: 'Publicando...' });
       });
     });
 
     container.querySelectorAll('.pubq-prepare').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        btn.disabled = true;
-        btn.textContent = 'Preparando...';
-        try {
-          const r = await api.runGroupPublishOne(btn.dataset.id, { mode: 'prepare', force: true });
-          const res = r.results?.[0];
-          if (r.ok === false) throw new Error(r.error || 'No se pudo preparar');
-          if (res?.ok) {
-            showToast('Post preparado en la pestaña. Revisalo y publicalo.', 'success');
-            window.open(res.url, '_blank');
-          } else throw new Error(res?.message || 'No se pudo preparar el post');
-        } catch (err) {
-          showToast(err.message, 'error');
-        }
-        renderPending(container);
+      btn.addEventListener('click', () => {
+        trackRun({ kind: 'prepare', id: btn.dataset.id, body: { mode: 'prepare', force: true }, btn, busyLabel: 'Preparando...' });
       });
     });
 
@@ -948,4 +1087,5 @@ function stopTimerRefresh() {
 
 export function cleanup() {
   stopTimerRefresh();
+  stopPublishPoll();
 }
