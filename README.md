@@ -19,6 +19,7 @@ Panel de gestión para gestores de ventas que trabajan con importadores de elect
 - [Anuncios generados con IA](#anuncios-generados-con-ia)
 - [Catálogo Público (GitHub Pages)](#catálogo-público-github-pages)
 - [Publicaciones en Redes Sociales](#publicaciones-en-redes-sociales)
+- [Publicador automático de grupos](#publicador-automático-de-grupos)
 - [Ranking de grupos (Biblioteca de Contenido)](#ranking-de-grupos-biblioteca-de-contenido)
 - [Sistema de Respaldos](#sistema-de-respaldos)
 - [Flujo de Trabajo](#flujo-de-trabajo)
@@ -188,10 +189,14 @@ DaniMarvisStore/
 │   │   └── database.js        # Esquema, migraciones y seed de BD
 │   ├── lib/
 │   │   ├── catalogGenerator.js # Generador de HTML estático del catálogo público
+│   │   ├── chromeLauncher.js   # Auto-arranque de Chrome con puerto 9222 + perfil FB
 │   │   ├── currency.js         # Formateador de precios en USD
 │   │   ├── facebook.js         # Integración con Facebook Graph API
+│   │   ├── groupPublisher.js   # Publicador automático de grupos (cola + corrida async)
 │   │   ├── imageUtils.js       # Conversión de imágenes a WebP con sharp
 │   │   └── ocr.js              # OCR con tesseract.js + fuzzy matching
+│   ├── jobs/
+│   │   └── dailyRanking.js     # Corrida diaria del ranking + estado en disco
 │   ├── routes/
 │   │   ├── products.js        # CRUD productos + visibilidad
 │   │   ├── providers.js       # CRUD proveedores
@@ -201,6 +206,7 @@ DaniMarvisStore/
 │   │   ├── exports.js         # CRUD historial de exportaciones
 │   │   ├── import.js          # Análisis OCR + aplicación de precios
 │   │   ├── images.js           # Importación de imágenes generadas con IA
+│   │   ├── groupPublish.js     # API del publicador de grupos (202 + status)
 │   │   └── backup.js          # Exportar/restaurar datos como JSON
 │   │   └── rankingsRouter.js  # Ranking de grupos + historial (Biblioteca de Contenido)
 │   └── scripts/
@@ -364,6 +370,36 @@ Response: { "user": {...}, "token": "..." }
 | `images` | TEXT | Array JSON de URLs de imágenes |
 | `publication_date` | TEXT | Fecha de publicación |
 | `sort_order` | INTEGER | Orden de visualización |
+
+### Publicador automático de grupos
+
+Publica la cola en grupos de Facebook vía CDP (navegador), no por Graph API.
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/group-publish/status` | Estado: `running`, `chrome`, `config`, `current`, `lastResult` |
+| `POST` | `/api/group-publish/run` | Dispara las vencidas. **202** con `runId` |
+| `POST` | `/api/group-publish/run/:id` | Dispara un ítem puntual. **202** con `runId` |
+
+> Las dos rutas de disparo responden **202 al toque** y el trabajo sigue en background. El resultado no viene en la respuesta: hay que consultarlo en `/status`. Antes la ruta esperaba el run entero, y como el poster tiene `--max-seconds=300` con 45-135s entre posts, eso son minutos de request colgado.
+
+**Payload de `POST /run`:** `{ mode?: "publish"|"prepare", force?: boolean, ids?: string[] }`
+
+**Códigos de respuesta:** `202` aceptada · `409` (`skipped`) ya hay una corrida en curso, o auto-publicado deshabilitado.
+
+**Campos de `GET /status`:**
+
+| Campo | Tipo | Descripción |
+|-------|------|-------------|
+| `running` | boolean | Hay una corrida en curso |
+| `chrome` | boolean | Hay Chrome escuchando en el 9222 (sondeo real, no estimado) |
+| `config` | object | Config de auto-publicado activa |
+| `current` | object \| null | Progreso en vivo: `runId`, `phase`, `total`, `done`, `ok`, `errors`, `current_group`, `results[]`, `elapsed_s`, `sesion`, `noBrowser` |
+| `lastResult` | object \| null | Resultado de la última corrida terminada |
+
+`phase` es `starting` → `starting_chrome` → `picking` → `publishing` → `waiting` → `done` (o `empty` / `error`).
+
+Los flags `sesion` y `noBrowser` distinguen *por qué* falló: **sesión de Facebook vencida** (hay muro de login) o **no hay Chrome escuchando**. Antes todo se reportaba como un `error` genérico.
 
 ### Exportaciones
 
@@ -708,6 +744,61 @@ En **Configuración** del panel, configura:
 
 ---
 
+## Publicador automático de grupos
+
+La cola de publicaciones (`publication_queue`) puede publicarse sola en grupos de Facebook. A diferencia de la publicación por Graph API (que va a tu Page), esto **escribe en la interfaz del grupo** como un usuario: usa un Chrome real controlado por CDP.
+
+### Cómo funciona
+
+1. **Chrome** — `backend/lib/chromeLauncher.js` (`ensureDebugChrome`) garantiza un Chrome con `--remote-debugging-port=9222` y el perfil de `C:\Users\Dani\fb-leave\fb-debug-perfil`. Si el puerto ya responde devuelve `already_running` y **no relanza ni toca nada** (no interfiere con tu Chrome personal ni con el scraper de rankings). Si no, lo arranca y espera hasta 45s.
+2. **Poster** — por cada ítem, `utilidades/fb-ranking/group_poster.js` abre el grupo en una pestaña, escribe el texto, adjunta imágenes y hace clic en Publicar.
+3. **Cola** — `updateQueue` marca el ítem como `published`/`prepared`, deja el post en `pending_approval` si el grupo pide aprobación del administrador, y anota el resultado en `notes`.
+4. **Ritmo** — entre posts consecutivos hay una separación aleatoria de 45-135s para simular flujo humano.
+
+### El perfil no es incógnito
+
+Usa `--user-data-dir` con un **perfil separado y persistente**, no `--incognito`. Es lo que permite conservar la sesión de Facebook entre corridas. Efecto práctico parecido al del Chrome personal (no lo toca, no lo cierra), pero el estado vive en otra carpeta.
+
+### Corridas asíncronas
+
+Una corrida no se espera: `POST /run` responde **202** con un `runId` en ~5ms y el trabajo sigue en background. El frontend hace **polling cada 2s** a `/group-publish/status` y dibuja la barra de progreso con fase, grupo actual, publicados y errores.
+
+Motivo: el poster tiene `--max-seconds=300` con timeout de 280s, así que **incluso un solo ítem puede tardar ~4.7 minutos**, y con la separación entre posts una tanda completa mucho más. Antes la ruta esperaba todo eso y `api.js` no tiene timeout, así que el botón quedaba en "Corriendo..." sin saber si coltaba o trabajando.
+
+`GET /status` incluye `elapsed_s` calculado en el servidor a propósito: el timestamp `started` viene recortado a 19 chars sin la `Z`, así que el browser lo parsearía como hora local (4h desfasado en Venezuela).
+
+### Fallas que se distinguen
+
+| Flag | Significado | Qué hacer |
+|------|-------------|-----------|
+| `sesion` | La sesión de Facebook venció, hay muro de login | Abrí el perfil y logueate de nuevo. La corrida sigue y los posts van a fallar. |
+| `noBrowser` | No hay Chrome escuchando en el 9222 | Se auto-arranca; si falla, revisá que exista `chrome.exe` y el perfil |
+| `phase: error` | Otro fallo | `current.error` trae el detalle |
+
+`GET /status` devuelve `chrome: true|false` con un sondeo real, así que la barra lo muestra antes de que intentes publicar.
+
+### Límites de la corrida automática
+
+Los defaults (`DEFAULT_AUTO_PUBLISH` en `backend/lib/groupPublisher.js`):
+
+| Clave | Default | Significado |
+|-------|---------|-------------|
+| `enabled` | `false` | Auto-publicado habilitado |
+| `mode` | `publish` | `publish` o `prepare` (deja el post en la pestaña) |
+| `daily_cap` | `6` | Máx. publicaciones reales por día |
+| `hours_from` / `hours_to` | `8` / `21` | Franja horaria local de actividad |
+| `min_gap_min` | `45` | Separación mínima entre publicaciones consecutivas |
+| `cooldown_min` | `240` | Espera mínima entre 2 posts del **mismo** grupo |
+| `worker_batch` | `3` | Cuántos dispara el worker por tick |
+
+> Los botones manuales de la UI mandan `force: true` e ignoran franja, cap y cooldowns. Prudencia: probá con **un** ítem primero, porque un lote consume el cap diario y los cooldowns de una vez.
+
+### Requisito conocido
+
+Ranking y publicador comparten la **misma instancia** de Chrome (mismo puerto, mismo perfil) y sus guards `running` son por módulo, así que **pueden correr a la vez y pelearse las pestañas**. El ranking diario quedó a las 23:00 y el publicador tiene su propia franja: hay solapamiento posible. Pendiente un mutex compartido.
+
+---
+
 ## Ranking de grupos (Biblioteca de Contenido)
 
 La vista `#/rankings` mide qué grupos de Facebook devuelven **más** (y **menos**) visualizaciones por publicación, usando la **Biblioteca de Contenido** del Panel Profesional (no usa la Graph API).
@@ -726,8 +817,8 @@ La vista `#/rankings` mide qué grupos de Facebook devuelven **más** (y **menos
 
 ### Requisitos
 
-- Chrome con el perfil logueado en Facebook y el flag `--remote-debugging-port=9222` (se puede abrir con `ranking_grupos.bat` de la carpeta `fb-leave`).
-- Sesión de Facebook activa; si no la hay, el refresco responde con error 401.
+- Chrome con el perfil logueado en Facebook. **No hace falta abrirlo a mano**: `ensureDebugChrome` lo arranca solo si el puerto 9222 no responde. Si preferís levantarlo vos, `ranking_grupos.bat` en la carpeta `fb-leave` lo hace a mano.
+- Sesión de Facebook activa. Si el perfil no la tiene, el arranque abre la Biblioteca de Contenido y hay que loguearse ahí; recién después la corrida funciona.
 
 ---
 
@@ -899,6 +990,10 @@ En **Configuración** del panel puedes definir una plantilla de texto con placeh
 - [x] Descarga masiva de imágenes en ZIP (JSZip)
 - [x] Selector de moneda de comisión (USD/MN) por proveedor con override个别 por producto
 - [x] Ranking de grupos por visualizaciones desde la Biblioteca de Contenido, con historial por fecha y evolución por grupo
+- [x] Publicador automático en grupos de Facebook vía CDP, con Chrome auto-arrancado (puerto 9222 + perfil con sesión)
+- [x] Corridas del publicador asíncronas (202 + `runId`) con progreso en vivo por polling, en vez de request bloqueante
+- [x] Diagnóstico de fallas del publicador: distingue sesión de Facebook vencida de Chrome no disponible
+- [x] Marca de publicaciones que quedan `pending_approval` cuando el grupo pide aprobación del administrador
 
 ### Por implementar
 
@@ -911,6 +1006,9 @@ En **Configuración** del panel puedes definir una plantilla de texto con placeh
 - [ ] **Integración con Facebook Catalog** para Dynamic Ads
 - [ ] **Compartir módulo `escHtml()`/`escAttr()`** como utilidad centralizada
 - [ ] **Unificar generación de IDs** en el backend para todos los recursos
+- [ ] **Mutex compartido** entre el ranking de grupos y el publicador (hoy comparten Chrome y pueden pelearse las pestañas)
+- [ ] **Corte anticipado** del publicador cuando el primer ítem falla por sesión/Chrome, en vez de seguir consumiendo la cola
+- [ ] **Timeout en `api.js`**: hoy `fetch` no tiene timeout, así que un endpoint colgado queda colgado
 
 ---
 
