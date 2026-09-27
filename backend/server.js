@@ -25,6 +25,7 @@ import providerStylesRouter from './routes/providerStyles.js';
 import warrantyRulesRouter from './routes/warrantyRules.js';
 import { generateCatalogFile } from './lib/catalogGenerator.js';
 import { ensureWebp } from './lib/imageUtils.js';
+import { startGroupPublishScheduler } from './lib/groupPublisher.js';
 import { createBackup } from './scripts/backup.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -444,6 +445,12 @@ async function start() {
   app.listen(PORT, () => {
     console.log(`[Server] Panel DaniMarvis corriendo en http://localhost:${PORT}`);
   });
+
+  // El worker automático de publicación de grupos. Antes no existía: la etiqueta
+  // de Ajustes prometía una corrida cada 5 minutos pero nada la disparaba. Se
+  // arranca acá (y no dentro del listen) para que quede después de que la BD
+  // terminó de cargar en el start() de arriba.
+  startGroupPublishScheduler();
 }
 
 start();

@@ -19,11 +19,11 @@ están las trampas. Todas las referencias son `archivo:línea`.
 | `frontend/js/views/pubQueueView.js` (1091) | Toda la UI de la cola. Una sola vista con 5 pestañas |
 | `frontend/js/views/settingsView.js:154-203` | Config del auto-publicado (dentro del form de plantilla) |
 | `frontend/js/db/api.js:133-143` | Los 9 métodos HTTP de la cola y el publicador |
-| `backend/lib/groupPublisher.js` (492) | Orquestador: config, selección, spawn del poster, estado en vivo |
+| `backend/lib/groupPublisher.js` (631) | Orquestador: config, selección, spawn del poster, worker, estado en vivo |
 | `backend/routes/groupPublish.js` (44) | `/api/group-publish` → 202 + `runId` |
 | `backend/routes/pubQueue.js` (201) | CRUD de la cola, `/due`, `/timer` |
 | `backend/lib/chromeLauncher.js` (107) | Auto-arranque de Chrome en el 9222 + perfil con sesión |
-| `utilidades/fb-ranking/group_poster.js` (888) | El scraper CDP que escribe en el grupo |
+| `utilidades/fb-ranking/group_poster.js` (892) | El scraper CDP que escribe en el grupo |
 | `backend/db/database.js:268-282, 388-406` | Esquema y migraciones de `publication_queue` |
 
 **El motor de BD es sql.js (WASM)**: la base completa vive en memoria y `saveDB()` escribe
@@ -58,8 +58,8 @@ Creada en `database.js:268-282`; `images` y `pending_approval` llegan por `ALTER
 | Estado | Lo pone | Cuándo |
 |---|---|---|
 | `pending` | Default del esquema | Toda fila nueva. **También en que queda un ítem que falló** |
-| `published` | `groupPublisher.js:275` (auto) · `pubQueue.js:139` (PATCH manual) | `result.ok && mode==='publish'` |
-| `prepared` | `groupPublisher.js:278` | `result.ok && mode==='prepare'` |
+| `published` | `groupPublisher.js:317` (auto) · `pubQueue.js:139` (PATCH manual) | `result.ok && mode==='publish'` |
+| `prepared` | `groupPublisher.js:320` | `result.ok && mode==='prepare'` |
 | `skipped` | Solo el front: `pubQueueView.js:449` | Botón "Omitir" |
 
 `error`, `warn` y `dry-run` **existen solo en el JSON del poster**, nunca en la columna `status`.
@@ -117,12 +117,33 @@ a 19 chars sin la `Z`, y el JS lo parsearía como hora local (4 h de desfase en 
 > marca `published` ítem por ítem durante la corrida, un mismo grupo con 2 filas en la cola
 > **se publica dos veces en la misma corrida**.
 
-### El worker no existe
+### El worker
 
-`startGroupPublish` solo se llama desde `backend/routes/groupPublish.js`. **No hay `setInterval`,
-ni cron, ni nada que dispare la corrida solo** en todo el backend. La etiqueta de Ajustes dice
-"Habilitar el worker automático cada 5 minutos" (`settingsView.js:165`) y `cfg.enabled` solo
-controla si el modo `auto` se acepta: **el disparo sigue siendo manual**. Ver Trampa 1.
+Existe desde el commit que cerró la Trampa 1. `startGroupPublishScheduler()`
+(`groupPublisher.js:609`) se llama desde `server.js:453`, después de que la BD carga, y
+dispara un tick cada `SCHEDULER_INTERVAL_MS` = 5 min (`groupPublisher.js:523`).
+
+El tick (`runSchedulerTick`, `groupPublisher.js:532`) es corto y tiene cuatro salidas posibles:
+
+| Situación | Resultado en `last_tick_result` |
+|---|---|
+| Ya hay una corrida en curso | `skipped: "ya hay una corrida en curso"` |
+| `cfg.enabled` en `false` | `skipped: "auto-publicado deshabilitado"` |
+| `pickForRun()` devuelve 0 | `skipped: "no hay publicaciones vencidas"` |
+| Hay trabajo | `started: true` + `runId` |
+
+> ⚠️ **El chequeo de `pickForRun()` antes de arrancar es lo que hace que esto sea usable.**
+> `runGroupPublish()` llama a `ensureDebugChrome({launch: true })` en su primer paso
+> (`groupPublisher.js:370`), así que sin ese filtro el worker abriría Chrome cada 5 minutos
+> aunque no hubiera nada que publicar. Con el filtro, un tick sin trabajo no toca el navegador.
+
+> ⚠️ **`enabled` es un interruptor real, y en esta base ya está en `true`.** Con el worker
+> armado, publicar dejó de ser 100% manual. Ver "Antes de tocar nada" arriba.
+
+`GET /api/group-publish/status` expone el bloque `scheduler` (`schedulerState()`,
+`groupPublisher.js:599`) con `active`, `interval_ms`, `last_tick`, `next_tick` y
+`last_tick_result`, para que la UI pueda mostrar la próxima corrida en vez de un
+"cada 5 minutos" que no existía.
 
 ---
 
@@ -277,7 +298,7 @@ Vive en `settings.publish_config` (columna TEXT con JSON), fila `id = 1`. La sub
 
 ## Contrato del poster (`group_poster.js`)
 
-Se invoca como proceso hijo (`groupPublisher.js:231-258`):
+Se invoca como proceso hijo (`groupPublisher.js:279-294`):
 
 ```
 node group_poster.js --no-sandbox --groups=<url> --message-file=<path>
@@ -286,28 +307,31 @@ node group_poster.js --no-sandbox --groups=<url> --message-file=<path>
 ```
 
 Imprime por stdout **un objeto JSON por grupo** (mezclado con texto humano). El backend parsea
-línea por línea y se queda con **la primera que tenga la clave `ok`** (`:245-247`).
+línea por línea y se queda con el **primer objeto cuyo `status` sea terminal** —
+`published`, `prepared`, `dry-run` o `error` (`groupPublisher.js:237-263` en
+`parsePosterOutput()`). Los avisos (`status: 'warn'`) se acumulan aparte en `warnings[]` y se
+muestran en las notas de la cola, pero nunca cuentan como resultado.
 
 Claves del resultado exitoso (`group_poster.js:836-845`):
 
 | Clave | Significado |
 |---|---|
 | `status` | `published` \| `prepared` \| `dry-run` \| `warn` |
-| `post_url` | URL del post, **o cadena vacía** si no se encontró el ancla (`:608`) |
+| `post_url` | URL del post, **o cadena vacía** si no se encontró el ancla (`:613`) |
 | `imagen_adjunta` | nº de miniaturas que FB muestra de verdad |
 | `imagenes_pedidas` | nº de paths que se le pasaron |
 | `texto_digits` | Longitud del texto que quedó en el compositor |
-| `requiere_aprobacion` | `1`/`0`, busca 3 frases de FB en el body (`:700-709`) |
-| `toral_ms` | Duración. **El typo es real** (`:844`), no `total_ms` |
+| `requiere_aprobacion` | `1`/`0`, busca 3 frases de FB en el body (`:705-714`) |
+| `toral_ms` | Duración. **El typo es real** (`:849`), no `total_ms` |
 
 Los errores son `{ group_url, ok:false, status:'error', message }` con 7 mensajes distintos.
 Los que te importan para la UI: `'Sesión de Facebook requerida…'`, `'No se encontró el
 compositor del grupo (¿grupo cerrado/archivado?).'` y `'Los adjuntos no quedaron subidos a
 tiempo en FB; no se publicó…'`.
 
-**`--max-seconds` no es un presupuesto global**: se reinicia en cada grupo (`:872`, dentro del
+**`--max-seconds` no es un presupuesto global**: se reinicia en cada grupo (`:877`, dentro del
 bucle `for (const [i, groupUrl] of groups.entries())`), y además `execFile` mata el proceso a los
-280 s (`:243`), o sea que ese guard nunca llega a disparar por tiempo. El timeout real es 280 s.
+280 s (`:291`), o sea que ese guard nunca llega a disparar por tiempo. El timeout real es 280 s.
 
 ---
 
@@ -315,14 +339,53 @@ bucle `for (const [i, groupUrl] of groups.entries())`), y además `execFile` mat
 
 Las que más te van a afectar si tocás la UI. Las marqué con cómo las comprobé.
 
-### 1. El worker no existe 🔴
+### 1. ~~El worker no existe~~ → RESUELTA ✅
 
-`startGroupPublish` solo se llama desde `backend/routes/groupPublish.js`. No hay `setInterval`,
-ni cron, ni ningún `scheduleJob` en el backend (grep sobre todo `backend/`). Sin embargo la
-etiqueta de Ajustes dice *"Habilitar el worker automático cada 5 minutos"*
-(`settingsView.js:165`) y el comentario de `groupPublisher.js:492` dice *"reúso desde server.js
-/ worker"*. **`cfg.enabled` no programa nada**: solo habilita el modo `auto`. Si en la UI mostrás
-algo como "se publica solo cada 5 minutos", estás mostrando algo falso.
+**Era esto:** `startGroupPublish()` solo se llamaba desde las rutas, así que publicar era 100%
+manual, mientras la etiqueta de Ajustes prometía "cada 5 minutos".
+
+**Ahora:** `startGroupPublishScheduler()` (`groupPublisher.js:609`) corre un `setInterval` de
+5 min desde `server.js:453`, y `runSchedulerTick()` (`groupPublisher.js:532`) decide en función
+de `enabled`, si hay corrida en curso y si `pickForRun()` encuentra trabajo real. Sin trabajo no
+arranca Chrome. Estado visible en `GET /group-publish/status` → `scheduler`.
+
+**Lo que hay que saber antes de confiar en él:**
+
+- El `setInterval` corre aunque el server esté ocioso; solo se apoya en el `running` global.
+- Una corrida con `worker_batch: 3` y 45-135 s de separación entre posts dura más que el
+  intervalo, así que los ticks siguientes se acumulan y se saltan solos. Correcto, pero
+  significa que el intervalo de 5 min es *máximo*, no una cadencia real.
+- El ranking diario de las 23:00 comparte la instancia de Chrome con el publicador. Si la
+  franja `hours_to` se deja en 24, se pueden pisar. Ver Trampa 10.
+- **No hay red de contención:** si `enabled` es `true` y hay vencidas dentro de la franja, el
+  worker publica solo. En esta base `autopublish.enabled` ya está en `true`.
+
+### 3. ~~La línea `warn` marcaba ítems como publicados~~ → RESUELTA ✅
+
+**Era esto:** `typeText()` emitía `console.log({ ok: true, status: 'warn', ... })`
+(`group_poster.js:178`) antes del resultado final, y el parseo tomaba la **primera** línea con
+`ok`. Consecuencia: `ok: true` → `updateQueue` ponía `status = 'published'` con
+`published_at` de ahora, mientras el resumen de la corrida contaba 0 publicadas. Es decir:
+**la BD decía publicado, la UI decía que no se había publicado nada, y no había error visible.**
+
+**El arreglo tiene dos capas:**
+
+1. **En la fuente** (`group_poster.js:178`): el aviso ahora lleva `event: 'warn'` y ya **no**
+   lleva `ok`. Estructuralmente no puede confundirse con un resultado.
+2. **En el consumidor** (`groupPublisher.js:237`): `TERMINAL_STATUSES` define qué es un
+   resultado —`published`, `prepared`, `dry-run`, `error`— y `parsePosterOutput()`
+   (`groupPublisher.js:243`) solo acepta líneas con esos status. Los avisos se acumulan aparte
+   en `warnings[]` y ya no se pierden: se escriben en `notes` (`updateQueue`,
+   `groupPublisher.js:297`) y llegan al `results[]` de la corrida para que la UI los pueda mostrar.
+
+`parsePosterOutput()` es una **función pura y exportada**: no toca Chrome ni la BD, así que el
+contrato se puede testear con fixtures sin riesgo de publicar. Cubierto por 16 casos
+(warn+publish, solo warn, la carrera del guard de timeout, errores reales, salida basura).
+
+> Ojo con un detalle que se dejó intencionalmente: `parsePosterOutput` usa el **primer**
+> terminal, no el último. El guard de timeout del poster (`group_poster.js:881`) no se cancela
+> cuando el worker gana la carrera, así que tras un publish OK puede llegar una línea de error
+> después. El primero es el bueno.
 
 ### 2. `GET /due` nunca marca como vencida lo programado para hoy 🟡
 
@@ -348,7 +411,7 @@ formato primero.
 
 `typeText()` emite un `console.log(JSON.stringify({ ok:true, status:'warn', … }))`
 (`group_poster.js:171-175`) **antes** del resultado final, y el parser se queda con la
-**primera** línea con `ok` (`groupPublisher.js:245-247`). Entonces: `ok:true` →
+**primera** línea con `ok` (`groupPublisher.js:237-263`). Entonces: `ok:true` →
 `updateQueue` marca `published` en la BD, pero el resumen de la corrida cuenta
 `status==='published'` y da 0. O sea: **BD dice publicado, la UI dice que no se publicó nada**,
 sin error visible.
@@ -382,7 +445,7 @@ que `updateQueue` caiga en la rama `'prepared'`.
 
 ### 9. Dos formatos de `published_at` 🟢
 
-`groupPublisher.js:262` escribe ISO con `Z`; `pubQueue.js:139` escribe formato SQL sin `Z`. Las
+`groupPublisher.js:299` escribe ISO con `Z`; `pubQueue.js:139` escribe formato SQL sin `Z`. Las
 consultas de cap diario y cooldown comparan por string contra valores de ambos mundos.
 
 ### 10. Sin mutex con el ranking 🟡
@@ -400,10 +463,10 @@ ranking diario quedó a las 23:00; el publicador tiene su propia franja.
 | Cambiar el aspecto de una tarjeta | `renderPending()` `:279-325` |
 | Agregar/quitar un botón por ítem | `renderPending()` `:315-321` + su `querySelectorAll` |
 | Cambiar qué se considera "vencido" | `isDue` `:282` y/o `dueCandidates()` `groupPublisher.js:183` |
-| Cambiar el ritmo o las pausas | `groupPublisher.js:395-399` (los 45-135 s) |
+| Cambiar el ritmo o las pausas | `groupPublisher.js:440-443` (los 45-135 s) |
 | Agregar un paso nuevo a la corrida | `runGroupPublish()` `:357-400` + un `phase` nuevo en `runProgressHtml` |
 | Cambiar qué se muestra mientras corre | `runProgressHtml()` `:51` |
-| Cambiar los textos de error | `group_poster.js` (los `out({... message: '...'})`) y `classifyFailure()` `groupPublisher.js:300` |
+| Cambiar los textos de error | `group_poster.js` (los `out({... message: '...'})`) y `classifyFailure()` `groupPublisher.js:342` |
 | Agregar un estado a la cola | `createSchema` + `migratePubQueue` + los UPDATE de `updateQueue` + el filtro de `dueCandidates` + el de `renderPending` `:236` |
 | Cambiar los límites automáticos | `DEFAULT_AUTO_PUBLISH` + el clamp de `getAutopublishConfig()` + el form de Ajustes |
 

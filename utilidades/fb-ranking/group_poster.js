@@ -169,8 +169,13 @@ async function typeText(page, handle, coords) {
   const breaks = lines.length - 1;
   const gotBreaks = await composerLineCount(handle);
   if (breaks > 0 && gotBreaks > 0 && gotBreaks < breaks) {
+    // `event` y NO `ok`: esto es un aviso intermedio, no el resultado del post.
+    // groupPublisher.parsePosterOutput() solo toma líneas con status terminal
+    // (published/prepared/dry-run/error). Antes esta línea llevaba `ok:true` y el
+    // parseo tomaba la primera con `ok`, con lo que un post nunca publicado
+    // quedaba marcado 'published' en la cola.
     console.log(JSON.stringify({
-      ok: true, status: 'warn', mode: MODE,
+      event: 'warn', status: 'warn', mode: MODE,
       message: `saltos de linea: ${gotBreaks}/${breaks} — revisar texto pegado`,
     }));
   }

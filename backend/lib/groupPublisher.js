@@ -228,6 +228,54 @@ function writeMessageFile(item) {
   return file;
 }
 
+// Estados que el poster emite como resultado FINAL de un grupo. Cualquier otra
+// línea de stdout (banner, logs, avisos 'warn') es intermedia y NO debe tocar la
+// cola. Antes el parseo acceptaba cualquier objeto con clave `ok`, y el poster
+// emite un `ok:true, status:'warn'` ANTES del resultado final cuando pierde
+// saltos de línea: eso hacía que un ítem quedara marcado 'published' en la BD
+// sin haberse publicado nunca, mientras el resumen de la corrida contaba 0.
+const TERMINAL_STATUSES = new Set(['published', 'prepared', 'dry-run', 'error']);
+
+/**
+ * Convierte la salida del poster en un único resultado. Función pura (no toca
+ * ni Chrome ni la BD) para poder testear el contrato con fixtures.
+ */
+export function parsePosterOutput(stdout, { err = null, allText = '' } = {}) {
+  const objs = String(stdout || '')
+    .split('\n')
+    .map(l => l.trim())
+    .filter(Boolean)
+    .map(l => { try { return JSON.parse(l); } catch { return null; } })
+    .filter(x => x && typeof x === 'object' && !Array.isArray(x));
+
+  // Los avisos se acumulan aparte: son diagnósticos valiosos ("faltaron saltos
+  // de línea al escribir") pero no son el resultado del post. Antes se perdían
+  // porque el parseo cortaba en el primero.
+  const warnings = objs
+    .filter(x => x.status === 'warn' || x.event === 'warn')
+    .map(x => x.message || 'aviso sin detalle');
+
+  // .find y no el último a propósito: el guard de timeout del poster no se
+  // cancela cuando el worker gana la carrera, así que tras un publish OK puede
+  // llegar una línea de error después. El primer terminal es el bueno.
+  const line = objs.find(x => TERMINAL_STATUSES.has(x.status));
+
+  if (line) {
+    const imgA = typeof line.imagen_adjunta === 'number' ? line.imagen_adjunta : null;
+    if (imgA !== null) line.img_adjunta = imgA;
+    const imgP = typeof line.imagenes_pedidas === 'number' ? line.imagenes_pedidas : null;
+    if (imgP !== null) line.img_pedidas = imgP;
+    if (warnings.length) line.warnings = warnings;
+    return line;
+  }
+  return {
+    ok: false,
+    status: 'error',
+    message: (err?.message || allText || 'Sin salida del poster').slice(0, 300),
+    ...(warnings.length ? { warnings } : {}),
+  };
+}
+
 function spawnPoster({ groupUrl, messageFile, imageFiles, mode, label, debug = false }) {
   return new Promise((resolve) => {
     const args = [
@@ -241,18 +289,7 @@ function spawnPoster({ groupUrl, messageFile, imageFiles, mode, label, debug = f
     if (debug) args.push('--debug=1');
     if (imageFiles.length) args.push('--images=' + imageFiles.join(';'));
     execFile(process.execPath, [POSTER_JS, ...args], { timeout: 280000 }, (err, stdout, stderr) => {
-      const allText = `${stdout || ''}\n${stderr || ''}`;
-      const line = String(stdout || '').split('\n').map(l => l.trim()).filter(Boolean)
-        .map(l => { try { return JSON.parse(l); } catch { return null; } })
-        .find(x => x && typeof x === 'object' && 'ok' in x);
-      if (line) {
-        const imgA = typeof line.imagen_adjunta === 'number' ? line.imagen_adjunta : null;
-        if (imgA !== null) line.img_adjunta = imgA;
-        const imgP = typeof line.imagenes_pedidas === 'number' ? line.imagenes_pedidas : null;
-        if (imgP !== null) line.img_pedidas = imgP;
-        return resolve(line);
-      }
-      resolve({ ok: false, status: 'error', message: (err?.message || allText || 'Sin salida del poster').slice(0, 300) });
+      resolve(parsePosterOutput(stdout, { err, allText: `${stdout || ''}\n${stderr || ''}` }));
     });
   });
 }
@@ -263,6 +300,10 @@ function updateQueue(item, result, mode) {
   const base = (item.notes || '').trim();
   // grupo con moderation: el post sale pero espera al administrador
   const pending = result.requiere_aprobacion ? 1 : 0;
+  // Avisos no terminales del poster (p.ej. saltos de línea perdidos). Antes el
+  // parseo los descartaba; ahora quedan registrados aunque el post salga bien.
+  const avisos = Array.isArray(result.warnings) && result.warnings.length
+    ? ` | aviso: ${result.warnings.join('; ')}` : '';
   let notes;
   if (result.ok) {
     const tag = mode === 'prepare' ? 'preparado' : 'publicado';
@@ -271,6 +312,7 @@ function updateQueue(item, result, mode) {
   } else {
     notes = [base, `auto:error ${result.message || ''}`.trim()].filter(Boolean).join(' | ').slice(0, 500);
   }
+  notes = (notes + avisos).slice(0, 500);
   if (result.ok && mode === 'publish') {
     db.prepare("UPDATE publication_queue SET status = 'published', notes = ?, published_at = ?, pending_approval = ?, updated_at = datetime('now') WHERE id = ?")
       .run(notes, now, pending, item.id);
@@ -370,6 +412,8 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
         debug,
       });
       updateQueue(item, result, effectiveMode);
+      const avisos = Array.isArray(result.warnings) && result.warnings.length
+        ? result.warnings.join('; ') : '';
       const row = {
         item_id: item.id,
         group: item.group_name,
@@ -377,8 +421,9 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
         mode: effectiveMode,
         ok: result.ok,
         status: result.status,
-        message: ((result.message || '') + (result.img_adjunta !== undefined ? ` | img_adjunta:${result.img_adjunta}` : '') + (result.img_pedidas !== undefined ? ` de ${result.img_pedidas}` : '')).slice(0, 220),
+        message: ((result.message || '') + (avisos ? ` | aviso: ${avisos}` : '') + (result.img_adjunta !== undefined ? ` | img_adjunta:${result.img_adjunta}` : '') + (result.img_pedidas !== undefined ? ` de ${result.img_pedidas}` : '')).slice(0, 220),
         post_url: result.post_url || '',
+        warnings: Array.isArray(result.warnings) ? result.warnings : [],
       };
       // El aviso de sesión/Chrome puede aparecer en cualquier ítem: se marca
       // para que la UI lo diga aunque el run siga y termine con otros errores.
@@ -471,6 +516,63 @@ export function startGroupPublish({ auto, force = false, ids = [], mode = null, 
   return { accepted: true, runId, started, total: ids.length || cfg.worker_batch };
 }
 
+// ----------------------------------------------------------- worker auto ---
+// El worker que faltaba. La etiqueta de Ajustes promete "cada 5 minutos" pero
+// no había nada que disparara la corrida sola: startGroupPublish() solo se
+// llamaba desde las rutas, o sea que publicar era 100% manual.
+const SCHEDULER_INTERVAL_MS = 5 * 60 * 1000;
+
+let schedulerTimer = null;
+let lastTickAt = null;
+let nextTickAt = null;
+let lastTickResult = null;
+
+// Exportado para poder ejercitarlo en tests: con enabled=false el tick corta
+// antes de pickForRun y antes de tocar Chrome, así que es seguro invocarlo.
+export function runSchedulerTick() {
+  lastTickAt = toIsoUtc(new Date());
+  nextTickAt = toIsoUtc(new Date(Date.now() + SCHEDULER_INTERVAL_MS));
+
+  const skip = (reason) => {
+    lastTickResult = { skipped: true, reason, at: lastTickAt };
+    return lastTickResult;
+  };
+
+  if (running) return skip('ya hay una corrida en curso');
+
+  let cfg;
+  try {
+    cfg = getAutopublishConfig();
+  } catch (err) {
+    // getDB() puede fallar si la BD aún no cargó; no se debe matar el interval.
+    return skip(`config ilegible: ${err.message.slice(0, 120)}`);
+  }
+  if (!cfg.enabled) return skip('auto-publicado deshabilitado');
+
+  // Clave: NO arrancar la corrida "a ciegas". runGroupPublish() llama a
+  // ensureDebugChrome({launch:true}) al principio, así que sin este chequeo el
+  // worker abriría Chrome cada 5 minutos aunque no haya nada que publicar.
+  // pickForRun con auto=true ya aplica franja, cap diario, gap y cooldown.
+  let hayTrabajo = 0;
+  try {
+    hayTrabajo = pickForRun(cfg, { auto: true, force: false }).length;
+  } catch (err) {
+    return skip(`no se pudo evaluar la cola: ${err.message.slice(0, 120)}`);
+  }
+  if (hayTrabajo === 0) return skip('no hay publicaciones vencidas');
+
+  const res = startGroupPublish({ auto: true });
+  lastTickResult = res.accepted
+    ? { started: true, runId: res.runId, queued: hayTrabajo, at: lastTickAt }
+    : { skipped: true, reason: res.reason, at: lastTickAt };
+  if (res.accepted) {
+    console.log(`[publish] worker: corrida ${res.runId.slice(0, 8)} con ${hayTrabajo} pendiente(s)`);
+  } else {
+    console.log(`[publish] worker: se saltea el tick — ${res.reason}`);
+  }
+  return lastTickResult;
+}
+
 export async function groupPublishStatus() {
   const cfg = getAutopublishConfig();
   return {
@@ -486,7 +588,45 @@ export async function groupPublishStatus() {
       ? { ...currentRun, elapsed_s: currentRun.startedMs ? Math.round((Date.now() - currentRun.startedMs) / 1000) : null }
       : null,
     lastResult,
+    scheduler: schedulerState(),
   };
+}
+
+/**
+ * Estado del worker automático, para que la UI pueda mostrar la próxima corrida
+ * en vez de un "cada 5 minutos" que no existía.
+ */
+function schedulerState() {
+  return {
+    active: Boolean(schedulerTimer),
+    interval_ms: SCHEDULER_INTERVAL_MS,
+    last_tick: lastTickAt,
+    next_tick: nextTickAt,
+    last_tick_result: lastTickResult,
+  };
+}
+
+export function startGroupPublishScheduler() {
+  if (schedulerTimer) {
+    console.log('[publish] worker automático ya estaba activo');
+    return schedulerState();
+  }
+  schedulerTimer = setInterval(runSchedulerTick, SCHEDULER_INTERVAL_MS);
+  // unref: el timer no debe impedir que el proceso baje limpio. El http server
+  // lo mantiene vivo igual.
+  schedulerTimer.unref?.();
+  nextTickAt = toIsoUtc(new Date(Date.now() + SCHEDULER_INTERVAL_MS));
+  console.log(`[publish] worker automático cada ${Math.round(SCHEDULER_INTERVAL_MS / 60000)} min (enabled=${getAutopublishConfig().enabled}). Primera corrida en ${Math.round(SCHEDULER_INTERVAL_MS / 60000)} min.`);
+  return schedulerState();
+}
+
+export function stopGroupPublishScheduler() {
+  if (schedulerTimer) {
+    clearInterval(schedulerTimer);
+    schedulerTimer = null;
+  }
+  nextTickAt = null;
+  return schedulerState();
 }
 
 export { getAutopublishConfig }; // reúso desde server.js / worker
