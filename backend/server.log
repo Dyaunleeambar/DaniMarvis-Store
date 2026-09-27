@@ -1,3 +1,5 @@
 [DB] Base de datos inicializada
-[Backup] Respaldo reciente (11.5h). Omitido. Usá force=true para forzar.
+[Backup] Respaldo reciente (21.9h). Omitido. Usá force=true para forzar.
 [Server] Panel DaniMarvis corriendo en http://localhost:3456
+[26/9/2026, 20:21:46] [RankingDiario] objetivo=2026-09-26 fuerza=true min_groups=8
+[26/9/2026, 20:24:30] [RankingDiario] OK: 14 grupos para 2026-09-26 (63 vistas) → ranking_history reemplazado

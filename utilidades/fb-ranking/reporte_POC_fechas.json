@@ -1,7 +1,56 @@
 {
-  "error": "no_rows",
-  "collected_posts": 50,
-  "byDate": {
-    "2026-09-26": 50
-  }
+  "fecha": "2026-09-27",
+  "generado": "2026-09-27T07:10:06.623Z",
+  "total_posts_fecha": 3,
+  "grupos": [
+    {
+      "group": "Publicada",
+      "posts": 3,
+      "views": 0,
+      "impressions": 0,
+      "max": 0,
+      "promedio": 0,
+      "ultima_fecha": "2026-09-27"
+    }
+  ],
+  "top": [
+    {
+      "group": "Publicada",
+      "posts": 3,
+      "views": 0,
+      "impressions": 0,
+      "max": 0,
+      "promedio": 0,
+      "ultima_fecha": "2026-09-27"
+    }
+  ],
+  "posts": [
+    {
+      "grupo": "Publicada",
+      "fecha_iso": "2026-09-27",
+      "fecha": "Hoy a las 3:01",
+      "vistas": 0,
+      "impresiones": 0,
+      "texto": "Historia con foto Publicada • Hoy a las 3:01",
+      "url": ""
+    },
+    {
+      "grupo": "Publicada",
+      "fecha_iso": "2026-09-27",
+      "fecha": "Hoy a las 3:00",
+      "vistas": 0,
+      "impresiones": 0,
+      "texto": "Historia con foto Publicada • Hoy a las 3:00",
+      "url": ""
+    },
+    {
+      "grupo": "Publicada",
+      "fecha_iso": "2026-09-27",
+      "fecha": "Hoy a las 2:58",
+      "vistas": 0,
+      "impresiones": 0,
+      "texto": "Historia con foto Publicada • Hoy a las 2:58",
+      "url": ""
+    }
+  ]
 }

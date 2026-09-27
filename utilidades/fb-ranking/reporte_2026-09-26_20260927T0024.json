@@ -1,0 +1,398 @@
+{
+  "fecha": "2026-09-26",
+  "generado": "2026-09-27T00:24:29.720Z",
+  "total_posts_fecha": 15,
+  "grupos": [
+    {
+      "group": "Shein santa clara �",
+      "posts": 2,
+      "views": 12,
+      "impressions": 11,
+      "max": 7,
+      "promedio": 6,
+      "ultima_fecha": "2026-09-26"
+    },
+    {
+      "group": "Compra y venta en el municipio de CALIMETE(Manguito,Calimete,Amarillas)",
+      "posts": 1,
+      "views": 10,
+      "impressions": 7,
+      "max": 10,
+      "promedio": 10,
+      "ultima_fecha": "2026-09-26"
+    },
+    {
+      "group": "Compra-Venta Perico",
+      "posts": 1,
+      "views": 7,
+      "impressions": 6,
+      "max": 7,
+      "promedio": 7,
+      "ultima_fecha": "2026-09-26"
+    },
+    {
+      "group": "El Trueque de Jaguey Grande",
+      "posts": 1,
+      "views": 7,
+      "impressions": 5,
+      "max": 7,
+      "promedio": 7,
+      "ultima_fecha": "2026-09-26"
+    },
+    {
+      "group": "®REVOLICO ×× ©CIENFUEGOS",
+      "posts": 1,
+      "views": 5,
+      "impressions": 3,
+      "max": 5,
+      "promedio": 5,
+      "ultima_fecha": "2026-09-26"
+    },
+    {
+      "group": "compra--venta/Santa Marta--Varadero",
+      "posts": 1,
+      "views": 5,
+      "impressions": 5,
+      "max": 5,
+      "promedio": 5,
+      "ultima_fecha": "2026-09-26"
+    },
+    {
+      "group": "Compra-Venta Máximo Gómez Perico",
+      "posts": 1,
+      "views": 5,
+      "impressions": 4,
+      "max": 5,
+      "promedio": 5,
+      "ultima_fecha": "2026-09-26"
+    },
+    {
+      "group": "Se VENDE de todo Jaguey Grande",
+      "posts": 1,
+      "views": 4,
+      "impressions": 3,
+      "max": 4,
+      "promedio": 4,
+      "ultima_fecha": "2026-09-26"
+    },
+    {
+      "group": "REVOLICO CIENFUEGOS OFICIAL",
+      "posts": 1,
+      "views": 3,
+      "impressions": 3,
+      "max": 3,
+      "promedio": 3,
+      "ultima_fecha": "2026-09-26"
+    },
+    {
+      "group": "VARADERO Vende",
+      "posts": 1,
+      "views": 2,
+      "impressions": 2,
+      "max": 2,
+      "promedio": 2,
+      "ultima_fecha": "2026-09-26"
+    },
+    {
+      "group": "💲💲Ventas Cárdenas💲💲",
+      "posts": 1,
+      "views": 1,
+      "impressions": 1,
+      "max": 1,
+      "promedio": 1,
+      "ultima_fecha": "2026-09-26"
+    },
+    {
+      "group": "ventas en Real campiña",
+      "posts": 1,
+      "views": 1,
+      "impressions": 1,
+      "max": 1,
+      "promedio": 1,
+      "ultima_fecha": "2026-09-26"
+    },
+    {
+      "group": "LA CHOPI AGUADA DE PASAJEROS",
+      "posts": 1,
+      "views": 1,
+      "impressions": 1,
+      "max": 1,
+      "promedio": 1,
+      "ultima_fecha": "2026-09-26"
+    },
+    {
+      "group": "Revolico Remedios Lo mas barato",
+      "posts": 1,
+      "views": 0,
+      "impressions": 0,
+      "max": 0,
+      "promedio": 0,
+      "ultima_fecha": "2026-09-26"
+    }
+  ],
+  "top": [
+    {
+      "group": "Shein santa clara �",
+      "posts": 2,
+      "views": 12,
+      "impressions": 11,
+      "max": 7,
+      "promedio": 6,
+      "ultima_fecha": "2026-09-26"
+    },
+    {
+      "group": "Compra y venta en el municipio de CALIMETE(Manguito,Calimete,Amarillas)",
+      "posts": 1,
+      "views": 10,
+      "impressions": 7,
+      "max": 10,
+      "promedio": 10,
+      "ultima_fecha": "2026-09-26"
+    },
+    {
+      "group": "Compra-Venta Perico",
+      "posts": 1,
+      "views": 7,
+      "impressions": 6,
+      "max": 7,
+      "promedio": 7,
+      "ultima_fecha": "2026-09-26"
+    },
+    {
+      "group": "El Trueque de Jaguey Grande",
+      "posts": 1,
+      "views": 7,
+      "impressions": 5,
+      "max": 7,
+      "promedio": 7,
+      "ultima_fecha": "2026-09-26"
+    },
+    {
+      "group": "®REVOLICO ×× ©CIENFUEGOS",
+      "posts": 1,
+      "views": 5,
+      "impressions": 3,
+      "max": 5,
+      "promedio": 5,
+      "ultima_fecha": "2026-09-26"
+    },
+    {
+      "group": "compra--venta/Santa Marta--Varadero",
+      "posts": 1,
+      "views": 5,
+      "impressions": 5,
+      "max": 5,
+      "promedio": 5,
+      "ultima_fecha": "2026-09-26"
+    },
+    {
+      "group": "Compra-Venta Máximo Gómez Perico",
+      "posts": 1,
+      "views": 5,
+      "impressions": 4,
+      "max": 5,
+      "promedio": 5,
+      "ultima_fecha": "2026-09-26"
+    },
+    {
+      "group": "Se VENDE de todo Jaguey Grande",
+      "posts": 1,
+      "views": 4,
+      "impressions": 3,
+      "max": 4,
+      "promedio": 4,
+      "ultima_fecha": "2026-09-26"
+    },
+    {
+      "group": "REVOLICO CIENFUEGOS OFICIAL",
+      "posts": 1,
+      "views": 3,
+      "impressions": 3,
+      "max": 3,
+      "promedio": 3,
+      "ultima_fecha": "2026-09-26"
+    },
+    {
+      "group": "VARADERO Vende",
+      "posts": 1,
+      "views": 2,
+      "impressions": 2,
+      "max": 2,
+      "promedio": 2,
+      "ultima_fecha": "2026-09-26"
+    },
+    {
+      "group": "💲💲Ventas Cárdenas💲💲",
+      "posts": 1,
+      "views": 1,
+      "impressions": 1,
+      "max": 1,
+      "promedio": 1,
+      "ultima_fecha": "2026-09-26"
+    },
+    {
+      "group": "ventas en Real campiña",
+      "posts": 1,
+      "views": 1,
+      "impressions": 1,
+      "max": 1,
+      "promedio": 1,
+      "ultima_fecha": "2026-09-26"
+    },
+    {
+      "group": "LA CHOPI AGUADA DE PASAJEROS",
+      "posts": 1,
+      "views": 1,
+      "impressions": 1,
+      "max": 1,
+      "promedio": 1,
+      "ultima_fecha": "2026-09-26"
+    },
+    {
+      "group": "Revolico Remedios Lo mas barato",
+      "posts": 1,
+      "views": 0,
+      "impressions": 0,
+      "max": 0,
+      "promedio": 0,
+      "ultima_fecha": "2026-09-26"
+    }
+  ],
+  "posts": [
+    {
+      "grupo": "💲💲Ventas Cárdenas💲💲",
+      "fecha_iso": "2026-09-26",
+      "fecha": "Hoy a las 18:09",
+      "vistas": 1,
+      "impresiones": 1,
+      "texto": "🏷️🏷️🏷️ DaniMarvis-Store – Tu destino, tu tienda online 🛒 Catálogo: [https://dyaunleeambar.github.io/DaniMarvis-Store",
+      "url": ""
+    },
+    {
+      "grupo": "ventas en Real campiña",
+      "fecha_iso": "2026-09-26",
+      "fecha": "Hoy a las 18:09",
+      "vistas": 1,
+      "impresiones": 1,
+      "texto": "🏷️🏷️🏷️ DaniMarvis-Store – Tu destino, tu tienda online 🛒 Catálogo: [https://dyaunleeambar.github.io/DaniMarvis-Store",
+      "url": ""
+    },
+    {
+      "grupo": "®REVOLICO ×× ©CIENFUEGOS",
+      "fecha_iso": "2026-09-26",
+      "fecha": "Hoy a las 18:09",
+      "vistas": 5,
+      "impresiones": 3,
+      "texto": "🏷️🏷️🏷️ DaniMarvis-Store – Tu destino, tu tienda online 🛒 Catálogo: [https://dyaunleeambar.github.io/DaniMarvis-Store",
+      "url": ""
+    },
+    {
+      "grupo": "VARADERO Vende",
+      "fecha_iso": "2026-09-26",
+      "fecha": "Hoy a las 18:09",
+      "vistas": 2,
+      "impresiones": 2,
+      "texto": "🏷️🏷️🏷️ DaniMarvis-Store – Tu destino, tu tienda online 🛒 Catálogo: [https://dyaunleeambar.github.io/DaniMarvis-Store",
+      "url": ""
+    },
+    {
+      "grupo": "Se VENDE de todo Jaguey Grande",
+      "fecha_iso": "2026-09-26",
+      "fecha": "Hoy a las 18:09",
+      "vistas": 4,
+      "impresiones": 3,
+      "texto": "🏷️🏷️🏷️ DaniMarvis-Store – Tu destino, tu tienda online 🛒 Catálogo: [https://dyaunleeambar.github.io/DaniMarvis-Store",
+      "url": ""
+    },
+    {
+      "grupo": "REVOLICO CIENFUEGOS OFICIAL",
+      "fecha_iso": "2026-09-26",
+      "fecha": "Hoy a las 18:08",
+      "vistas": 3,
+      "impresiones": 3,
+      "texto": "🏷️🏷️🏷️ DaniMarvis-Store – Tu destino, tu tienda online 🛒 Catálogo: [https://dyaunleeambar.github.io/DaniMarvis-Store",
+      "url": ""
+    },
+    {
+      "grupo": "Revolico Remedios Lo mas barato",
+      "fecha_iso": "2026-09-26",
+      "fecha": "Hoy a las 18:08",
+      "vistas": 0,
+      "impresiones": 0,
+      "texto": "🏷️🏷️🏷️ DaniMarvis-Store – Tu destino, tu tienda online 🛒 Catálogo: [https://dyaunleeambar.github.io/DaniMarvis-Store",
+      "url": ""
+    },
+    {
+      "grupo": "Compra y venta en el municipio de CALIMETE(Manguito,Calimete,Amarillas)",
+      "fecha_iso": "2026-09-26",
+      "fecha": "Hoy a las 18:08",
+      "vistas": 10,
+      "impresiones": 7,
+      "texto": "🏷️🏷️🏷️ DaniMarvis-Store – Tu destino, tu tienda online 🛒 Catálogo: [https://dyaunleeambar.github.io/DaniMarvis-Store",
+      "url": ""
+    },
+    {
+      "grupo": "Shein santa clara �",
+      "fecha_iso": "2026-09-26",
+      "fecha": "Hoy a las 18:08",
+      "vistas": 7,
+      "impresiones": 6,
+      "texto": "🏷️🏷️🏷️ DaniMarvis-Store – Tu destino, tu tienda online 🛒 Catálogo: [https://dyaunleeambar.github.io/DaniMarvis-Store",
+      "url": ""
+    },
+    {
+      "grupo": "compra--venta/Santa Marta--Varadero",
+      "fecha_iso": "2026-09-26",
+      "fecha": "Hoy a las 18:08",
+      "vistas": 5,
+      "impresiones": 5,
+      "texto": "🏷️🏷️🏷️ DaniMarvis-Store – Tu destino, tu tienda online 🛒 Catálogo: [https://dyaunleeambar.github.io/DaniMarvis-Store",
+      "url": ""
+    },
+    {
+      "grupo": "Shein santa clara �",
+      "fecha_iso": "2026-09-26",
+      "fecha": "Hoy a las 18:07",
+      "vistas": 5,
+      "impresiones": 5,
+      "texto": "🏷️🏷️ DaniMarvis-Store – Tu destino, tu tienda online 🛒 Catálogo: [https://dyaunleeambar.github.io/DaniMarvis-Store/pu",
+      "url": ""
+    },
+    {
+      "grupo": "Compra-Venta Perico",
+      "fecha_iso": "2026-09-26",
+      "fecha": "Hoy a las 18:07",
+      "vistas": 7,
+      "impresiones": 6,
+      "texto": "🏷️🏷️ DaniMarvis-Store – Tu destino, tu tienda online 🛒 Catálogo: [https://dyaunleeambar.github.io/DaniMarvis-Store/pu",
+      "url": ""
+    },
+    {
+      "grupo": "Compra-Venta Máximo Gómez Perico",
+      "fecha_iso": "2026-09-26",
+      "fecha": "Hoy a las 18:06",
+      "vistas": 5,
+      "impresiones": 4,
+      "texto": "🏷️🏷️ DaniMarvis-Store – Tu destino, tu tienda online 🛒 Catálogo: [https://dyaunleeambar.github.io/DaniMarvis-Store/pu",
+      "url": ""
+    },
+    {
+      "grupo": "El Trueque de Jaguey Grande",
+      "fecha_iso": "2026-09-26",
+      "fecha": "Hoy a las 18:06",
+      "vistas": 7,
+      "impresiones": 5,
+      "texto": "🏷️🏷️ DaniMarvis-Store – Tu destino, tu tienda online 🛒 Catálogo: [https://dyaunleeambar.github.io/DaniMarvis-Store/pu",
+      "url": ""
+    },
+    {
+      "grupo": "LA CHOPI AGUADA DE PASAJEROS",
+      "fecha_iso": "2026-09-26",
+      "fecha": "Hoy a las 18:06",
+      "vistas": 1,
+      "impresiones": 1,
+      "texto": "🏷️🏷️ DaniMarvis-Store – Tu destino, tu tienda online 🛒 Catálogo: [https://dyaunleeambar.github.io/DaniMarvis-Store/pu",
+      "url": ""
+    }
+  ]
+}
