@@ -508,7 +508,14 @@ function renderQueueForm(root, ctx, initial, onSave, { mode = 'add' } = {}) {
   const publications = ctx.publications || [];
   const groups = ctx.groups || [];
   const st = {
-    pubId: initial?.publication_id || publications[0]?.id || '',
+    // Origen del texto: 'catalog' sale de una publicación de la BD, 'own' es
+    // redacción libre sin publicación asociada. En un ítem ya guardado manda lo
+    // que haya: si no tiene publication_id, es propio.
+    origin: initial ? (initial.publication_id ? 'catalog' : 'own') : 'catalog',
+    // OJO: sin el fallback a publications[0]. Con él, un ítem de redacción
+    // propia (publication_id NULL) se guardaba enganchado a la publicación #1
+    // al editarlo, porque `null || publications[0].id`.
+    pubId: initial?.publication_id || '',
     text: initial?.variant_text || initial?.publish_text || '',
     images: Array.isArray(initial?.images) ? initial.images.slice() : [],
     textTouched: !!initial,
@@ -519,13 +526,54 @@ function renderQueueForm(root, ctx, initial, onSave, { mode = 'add' } = {}) {
     filter: { provider: '', category: '', vis: '', q: '' },
     useVariants: false,
   };
-  if (!initial && st.pubId) {
-    const first = publications.find(p => p.id === st.pubId);
-    if (first) { st.text = first.publish_text || ''; st.images = (first.images || []).slice(); }
+  // Solo en alta, y solo en modo catálogo, se precarga la primera publicación.
+  if (!initial && st.origin === 'catalog' && publications.length) {
+    const first = publications[0];
+    st.pubId = first.id;
+    st.text = first.publish_text || '';
+    st.images = (first.images || []).slice();
   }
 
   const providers = [...new Set(publications.map(p => p.provider_name).filter(Boolean))].sort();
   const categories = [...new Set(publications.map(p => p.category).filter(Boolean))].sort();
+
+  // Placeholders que el publicador resuelve al publicar (fillTemplateText en
+  // backend/lib/groupPublisher.js). En redacción propia no hay publicación
+  // asociada, así que {NOMBRE}/{PRECIO}/{PUBLISH_TEXT} no tienen de dónde
+  // sacarse: no se ofrecen, y si el usuario los escribe a mano el guardado se
+  // rechaza en vez de publicar un "$0" silencioso.
+  const PLACEHOLDERS = {
+    catalog: [
+      ['{FECHA}', 'Fecha'],
+      ['{NOMBRE}', 'Nombre'],
+      ['{PRECIO}', 'Precio'],
+      ['{PUBLISH_TEXT}', 'Texto original'],
+    ],
+    own: [['{FECHA}', 'Fecha']],
+  };
+  const SIN_FUENTE = ['{NOMBRE}', '{PRECIO}', '{PUBLISH_TEXT}'];
+
+  function insertAtCursor(el, snippet) {
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? el.value.length;
+    el.value = el.value.slice(0, start) + snippet + el.value.slice(end);
+    const pos = start + snippet.length;
+    el.focus();
+    el.setSelectionRange(pos, pos);
+    st.text = el.value;
+    st.textTouched = true;
+    renderVariants();
+  }
+
+  function placeholderHelpHtml() {
+    const chips = PLACEHOLDERS[st.origin]
+      .map(([k, label]) => `<button type="button" class="btn btn--sm btn--ghost" data-ph="${escAttr(k)}">${escHtml(label)}</button>`)
+      .join('');
+    const nota = st.origin === 'own'
+      ? '<span style="font-size:.74rem;color:var(--text-muted)">En redacción propia solo se reemplaza la fecha: el nombre y el precio necesitan una publicación asociada.</span>'
+      : '<span style="font-size:.74rem;color:var(--text-muted)">Se reemplazan al publicar, con los datos de la publicación elegida.</span>';
+    return `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px">${chips}${nota}</div>`;
+  }
 
   function filteredPubs() {
     const f = st.filter;
@@ -562,10 +610,18 @@ function renderQueueForm(root, ctx, initial, onSave, { mode = 'add' } = {}) {
         ${mode === 'edit'
           ? `<div style="font-size:.82rem;color:var(--text-secondary);margin-bottom:12px">
                Grupo: <b>${escHtml(st.groupName || '—')}</b>
-               ${initial?.product_name ? ` · Publicación: <b>${escHtml(initial.product_name)}</b>` : ''}
+               ${initial?.product_name ? ` · Publicación: <b>${escHtml(initial.product_name)}</b>` : ' · <b>Redacción propia</b>'}
              </div>`
           : `
-        <div style="margin-bottom:8px">
+        <div style="margin-bottom:10px">
+          <label style="font-size:.82rem;color:var(--text-secondary);display:block;margin-bottom:4px">Origen del texto</label>
+          <div style="display:flex;gap:6px" id="pubq-origin">
+            <button type="button" class="btn btn--sm btn--secondary" data-origin="catalog">📚 Del catálogo</button>
+            <button type="button" class="btn btn--sm btn--secondary" data-origin="own">✍️ Redacción propia</button>
+          </div>
+          <div style="font-size:.76rem;color:var(--text-muted);margin-top:5px" id="pubq-origin-hint"></div>
+        </div>
+        <div id="pubq-catalog-block" style="margin-bottom:8px">
           <label style="font-size:.82rem;color:var(--text-secondary);display:block;margin-bottom:4px">Filtros de publicación</label>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
             <input type="text" id="pubq-filter-q" class="form-control" placeholder="Buscar por nombre o texto…" style="flex:2;min-width:180px" />
@@ -588,8 +644,9 @@ function renderQueueForm(root, ctx, initial, onSave, { mode = 'add' } = {}) {
 
         <div style="display:flex;flex-direction:column;gap:12px">
           <div>
-            <label style="font-size:.82rem;color:var(--text-secondary);display:block;margin-bottom:4px">Texto de la publicación (${mode === 'edit' ? 'editable' : 'editable, se precarga al elegir publicación'})</label>
+            <label style="font-size:.82rem;color:var(--text-secondary);display:block;margin-bottom:4px" id="pubq-text-label">Texto de la publicación</label>
             <textarea id="pubq-text" class="form-control" style="min-height:130px;white-space:pre-wrap">${escHtml(st.text)}</textarea>
+            <div id="pubq-ph-help"></div>
           </div>
 
           ${mode === 'add' ? `
@@ -636,6 +693,60 @@ function renderQueueForm(root, ctx, initial, onSave, { mode = 'add' } = {}) {
 
   const textEl = root.querySelector('#pubq-text');
   const gridEl = root.querySelector('#pubq-images-grid');
+
+  // Modo redacción propia: sin publicación asociada, se manda publication_id
+  // null. El texto propio vive en variant_text, que el publicador ya prioriza
+  // sobre publish_text, así que no hace falta nada más en el backend.
+  function applyOriginUi() {
+    root.querySelectorAll('#pubq-origin [data-origin]').forEach(b => {
+      const on = b.dataset.origin === st.origin;
+      b.className = 'btn btn--sm ' + (on ? 'btn--primary' : 'btn--secondary');
+    });
+    const block = root.querySelector('#pubq-catalog-block');
+    if (block) block.style.display = st.origin === 'catalog' ? '' : 'none';
+    const hint = root.querySelector('#pubq-origin-hint');
+    if (hint) {
+      hint.textContent = st.origin === 'catalog'
+        ? 'Elegí una publicación: el texto y las imágenes se pre-cargan y quedan editables.'
+        : 'Escribí el texto desde cero. Queda guardado solo en la cola, sin publicación asociada.';
+    }
+    const label = root.querySelector('#pubq-text-label');
+    if (label) {
+      label.textContent = st.origin === 'catalog'
+        ? 'Texto de la publicación (editable, se precarga al elegir publicación)'
+        : 'Texto de la publicación (redacción propia)';
+    }
+    textEl.placeholder = st.origin === 'own'
+      ? 'Escribí el texto que querés publicar en los grupos…'
+      : '';
+    const help = root.querySelector('#pubq-ph-help');
+    if (help) help.innerHTML = placeholderHelpHtml();
+  }
+
+  // Cambiar de origen no pisa lo que el usuario ya escribió: solo se reprecarga
+  // el default del modo destino si el texto sigue sin tocar.
+  function setOrigin(next) {
+    if (next === st.origin || mode === 'edit') return;
+    const intacto = !st.textTouched;
+    st.origin = next;
+    if (next === 'own') {
+      st.pubId = '';
+      if (intacto) { st.text = ''; textEl.value = ''; }
+      if (!st.imagesDirty) { st.images = []; renderImages(); }
+    } else if (publications.length) {
+      const first = publications.find(p => p.id === st.pubId) || publications[0];
+      st.pubId = first.id;
+      if (intacto) { st.text = first.publish_text || ''; textEl.value = st.text; }
+      if (!st.imagesDirty) { st.images = (first.images || []).slice(); renderImages(); }
+    }
+    applyOriginUi();
+    renderPubList();
+    renderVariants();
+  }
+
+  root.querySelectorAll('#pubq-origin [data-origin]').forEach(b => {
+    b.addEventListener('click', () => setOrigin(b.dataset.origin));
+  });
 
   function renderImages() {
     if (!gridEl) return;
@@ -725,6 +836,12 @@ function renderQueueForm(root, ctx, initial, onSave, { mode = 'add' } = {}) {
 
   // texto y variantes --------------------------------------------------------
   textEl.addEventListener('input', () => { st.text = textEl.value; st.textTouched = true; renderVariants(); });
+  // Delegación: los chips se re-renderizan al cambiar de origen, así que no
+  // se cablean uno por uno.
+  root.querySelector('#pubq-ph-help')?.addEventListener('click', (e) => {
+    const chip = e.target.closest('[data-ph]');
+    if (chip) insertAtCursor(textEl, chip.dataset.ph);
+  });
   const uvEl = root.querySelector('#pubq-use-variants');
   uvEl?.addEventListener('change', () => { st.useVariants = uvEl.checked; renderVariants(); });
 
@@ -798,8 +915,19 @@ function renderQueueForm(root, ctx, initial, onSave, { mode = 'add' } = {}) {
     const variant_text = st.text.trim();
     if (!variant_text) { showToast('Escribí el texto de la publicación', 'error'); return; }
 
+    // En redacción propia no hay publicación de la que tomar nombre/precio, así
+    // que esos placeholders nunca se resolverían y el post saldría con "$0" o
+    // con el texto literal. Se rechaza antes de que llegue a la cola.
+    if (st.origin === 'own') {
+      const sueltos = SIN_FUENTE.filter(k => variant_text.includes(k));
+      if (sueltos.length) {
+        showToast(`En redacción propia no podés usar ${sueltos.join(', ')}: no hay publicación asociada de la que tomar ese dato`, 'error');
+        return;
+      }
+    }
+
     const payload = {
-      publication_id: st.pubId || null,
+      publication_id: st.origin === 'own' ? null : (st.pubId || null),
       variant_index: st.useVariants ? 1 : 0,
       variant_text,
       images: st.images.slice(0, 6),
@@ -839,6 +967,7 @@ function renderQueueForm(root, ctx, initial, onSave, { mode = 'add' } = {}) {
 
   root.querySelector('#pubq-edit-cancel')?.addEventListener('click', () => closeModal(true));
 
+  applyOriginUi();
   renderPubList();
   renderImages();
   renderGroups();
@@ -896,7 +1025,7 @@ async function renderHistory(container) {
             <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
               <div>
                 <span style="font-weight:600;font-size:.85rem">${escHtml(item.group_name)}</span>
-                <span style="font-size:.72rem;color:var(--text-muted);margin-left:8px">${item.product_name || ''}</span>
+                <span style="font-size:.72rem;color:var(--text-muted);margin-left:8px">${item.product_name || 'Redacción propia'}</span>
                 ${Number(item.pending_approval) === 1 ? '<div style="font-size:.72rem;color:var(--warning);margin-top:3px">Pendiente de aprobación del administrador: aún no es visible en el grupo</div>' : ''}
               </div>
               <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
@@ -912,7 +1041,7 @@ async function renderHistory(container) {
             <div style="display:flex;justify-content:space-between;align-items:center">
               <div>
                 <span style="font-weight:600;font-size:.85rem">${escHtml(item.group_name)}</span>
-                <span style="font-size:.72rem;color:var(--text-muted);margin-left:8px">${item.product_name || ''}</span>
+                <span style="font-size:.72rem;color:var(--text-muted);margin-left:8px">${item.product_name || 'Redacción propia'}</span>
               </div>
               <span style="font-size:.72rem;color:var(--text-muted)">⊘ omitida</span>
             </div>

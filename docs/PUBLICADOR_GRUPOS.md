@@ -16,13 +16,13 @@ están las trampas. Todas las referencias son `archivo:línea`.
 
 | Archivo | Rol |
 |---|---|
-| `frontend/js/views/pubQueueView.js` (1091) | Toda la UI de la cola. Una sola vista con 5 pestañas |
+| `frontend/js/views/pubQueueView.js` (1220) | Toda la UI de la cola. Una sola vista con 5 pestañas, y el form de alta/edición con selector de origen (catálogo o redacción propia) |
 | `frontend/js/views/settingsView.js:154-203` | Config del auto-publicado (dentro del form de plantilla) |
 | `frontend/js/db/api.js:133-143` | Los 9 métodos HTTP de la cola y el publicador |
-| `backend/lib/groupPublisher.js` (631) | Orquestador: config, selección, spawn del poster, worker, estado en vivo |
-| `backend/routes/groupPublish.js` (44) | `/api/group-publish` → 202 + `runId` |
+| `backend/lib/groupPublisher.js` (644) | Orquestador: config, selección, placeholders, spawn del poster, worker, estado en vivo |
+| `backend/routes/groupPublish.js` (43) | `/api/group-publish` → 202 + `runId` |
 | `backend/routes/pubQueue.js` (201) | CRUD de la cola, `/due`, `/timer` |
-| `backend/lib/chromeLauncher.js` (107) | Auto-arranque de Chrome en el 9222 + perfil con sesión |
+| `backend/lib/chromeLauncher.js` (106) | Auto-arranque de Chrome en el 9222 + perfil con sesión |
 | `utilidades/fb-ranking/group_poster.js` (892) | El scraper CDP que escribe en el grupo |
 | `backend/db/database.js:268-282, 388-406` | Esquema y migraciones de `publication_queue` |
 
@@ -164,9 +164,9 @@ arranca `startTimerRefresh()` (re-render cada 30 s, `:1068`).
 |---|---|---|---|
 | Pendientes | `pending` | `renderPending()` `:225` | La cola + barra de progreso + config |
 | Agregar a cola | `add` | `renderAddForm()` `:484` | Form de alta |
-| Historial | `history` | `renderHistory()` `:869` | Publicadas / omitidas / pendientes de aprobación |
-| Temporizadores | `timers` | `renderTimers()` `:927` | Cooldowns por grupo |
-| Grupos | `groups` | `renderGroups()` `:967` | Alta/baja de `facebook_groups` |
+| Historial | `history` | `renderHistory()` `:998` | Publicadas / omitidas / pendientes de aprobación |
+| Temporizadores | `timers` | `renderTimers()` `:1056` | Cooldowns por grupo |
+| Grupos | `groups` | `renderGroups()` `:1096` | Alta/baja de `facebook_groups` |
 
 Todas escriben dentro del mismo `#pubq-tab-content` (`:204`). Cambiar de pestaña re-renderiza
 el contenedor completo, no hay estado compartido entre pestañas salvo `currentTab`.
@@ -232,7 +232,7 @@ polling. Cuando termina, busca la fila del ítem en `cur.results` y muestra el t
 **Detalles que importan si tocás esto:**
 
 - El poll vive en una **variable de módulo** (`publishPoll`, `:18`), no en el DOM. `cleanup()`
-  (`:1088`) lo cancela al salir de la vista.
+  (`:1217`) lo cancela al salir de la vista.
 - `startPublishPoll` corre un `tick()` **inmediato** además del primer intervalo, para no
   esperar 2 s en mostrar.
 - Un poll fallido **no corta el seguimiento** (`:101-103`): hace `return` y espera al siguiente.
@@ -265,8 +265,60 @@ Las clases `pubq-*` (`pubq-auto`, `pubq-prepare`, `pubq-edit`, `pubq-skip`, `pub
 ## Si vas a agregar un control al form de la cola
 
 `renderQueueForm()` (`:507`) es **reutilizable**: sirve para el alta (`renderAddForm`) y para la
-edición en modal (`openEditModal`, `:852`), vía `mode: 'add' | 'edit'`. El payload se arma en
-`:801-806` y hoy manda solo `publication_id`, `variant_index`, `variant_text` e `images`.
+edición en modal (`openEditModal`, `:980`), vía `mode: 'add' | 'edit'`. El payload se arma en
+`:929-934` y hoy manda `publication_id`, `variant_index`, `variant_text` e `images`.
+
+### Origen del texto: catálogo o redacción propia
+
+El estado `st.origin` (`'catalog' | 'own'`, `:510`) decide de dónde sale el texto. Es el único
+campo que se manda explícitamente:
+
+| `origin` | `publication_id` que se manda | Cómo se ve el form |
+|---|---|---|
+| `catalog` (default) | el id de la publicación elegida | Lista de publicaciones con filtros, texto e imágenes precargados |
+| `own` | `null` | La lista de publicaciones se oculta, el textarea arranca vacío, las imágenes se suben a mano |
+
+El texto propio se guarda en `variant_text`, que el publicador ya priorizaba sobre
+`publish_text` (`groupPublisher.js:237`), así que **no hizo falta nada en el backend para el
+texto en sí**: `publication_id` NULL ya estaba permitido por el schema y por el `LEFT JOIN`.
+
+Tres detalles que no son evidentes:
+
+- `PLACEHOLDERS` (`:545`) define qué variables se ofrecen en cada modo, y `SIN_FUENTE`
+  (`:554`) cuáles se rechazan al guardar. En `own` solo se ofrece `{FECHA}`: sin publicación
+  asociada, `{NOMBRE}` y `{PRECIO}` no tienen de dónde sacarse.
+- `setOrigin()` (`:728`) **no pisa lo que el usuario ya escribió**: solo reprecarga el default
+  del modo destino si el texto sigue sin tocar (`textTouched`). Cambiar de ida y vuelta no
+  borra una redacción.
+- El fallback `|| publications[0]?.id` se eliminó a propósito. Con él, editar un ítem de
+  redacción propia lo guardaba enganchado a la publicación #1 (`null || publications[0].id`).
+
+En modo edición el origen no se puede cambiar: se muestra como etiqueta junto al grupo
+(`:613`) y se deriva del ítem.
+
+### Placeholders: de dónde salen los datos
+
+`fillTemplateText()` (`groupPublisher.js:167`) reemplaza cuatro variables al publicar. Los datos
+vienen de las columnas que trae `dueCandidates()` (`groupPublisher.js:184`):
+
+| Variable | Fuente | Sin publicación asociada |
+|---|---|---|
+| `{FECHA}` | La fecha local del momento de publicar | Funciona |
+| `{NOMBRE}` | `p.product_name` (de `publications`) | Queda literal |
+| `{PRECIO}` | `pd.price` (de `products`) | Queda literal |
+| `{PUBLISH_TEXT}` | `p.publish_text` | Queda literal |
+
+Tres trampas que ya están resueltas y conviene no volver a introducir:
+
+1. **`publications` no tiene columna de precio.** El precio vive en `products` y se une por
+   `product_id`, igual que hace `routes/publications.js`. Por eso el SELECT hace
+   `LEFT JOIN products pd` y no alcanza con leer de `publications`.
+2. **La columna viene aliaseada** a `product_price` porque así la espera `fillTemplateText()`.
+   Sin el alias, `{PRECIO}` queda literal aunque el dato esté ahí.
+3. **Solo se reemplazan los placeholders que tienen dato** (`.filter(([, v]) => v !== '')`).
+   Antes, sin publicación, `{PRECIO}` se convertía en `$0` y `{NOMBRE}` en vacío: un post
+   publicado con el precio en $0 y sin ningún error. Ahora quedan literales, que es visible, y
+   la UI además impide guardarlos.
 
 **Trampa al guardar:** `PUT /api/settings` manda el `publish_config` **entero** y el merge del
 server es shallow (`server.js:187`). Si sacás un input de Ajustes, **estás borrando ese campo**
@@ -472,7 +524,7 @@ ranking diario quedó a las 23:00; el publicador tiene su propia franja.
 
 **Al agregar un estado nuevo**, actualizá los cuatro filtros que asumen el enum:
 `dueCandidates()` (`:188`), `GET /due` (`pubQueue.js:74`), el filtro de la UI (`:236`) y el de
-`renderHistory` (`:873-875`).
+`renderHistory` (`:1002-1004`).
 
 ---
 

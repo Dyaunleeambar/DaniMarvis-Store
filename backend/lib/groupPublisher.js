@@ -165,14 +165,19 @@ async function toFacebookFriendly(file) {
 }
 
 function fillTemplateText(text, pub) {
-  const price = '$' + Number(pub?.product_price || 0).toLocaleString('es-CO');
   const map = {
     '{FECHA}': isoLocal(localNow()).slice(0, 10),
     '{NOMBRE}': pub?.product_name || '',
-    '{PRECIO}': price,
+    '{PRECIO}': pub?.product_price ? `$${Number(pub.product_price).toLocaleString('es-CO')}` : '',
     '{PUBLISH_TEXT}': pub?.publish_text || '',
   };
-  return Object.entries(map).reduce((acc, [k, v]) => acc.split(k).join(v), text || '');
+  // Solo se reemplaza lo que tiene dato detrás. Sin publicación asociada
+  // (redacción propia) {NOMBRE}/{PRECIO}/{PUBLISH_TEXT} no tienen fuente, y
+  // antes se convertían en '' y '$0': un post salía publicado con el precio
+  // en $0 sin ningún error. Ahora quedan literales, que es visible.
+  return Object.entries(map)
+    .filter(([, v]) => v !== '')
+    .reduce((acc, [k, v]) => acc.split(k).join(v), text || '');
 }
 
 // --------------------------------------------------------- selección due ---
@@ -182,9 +187,17 @@ function dueCandidates() {
   return db.prepare(`
     SELECT pq.id, pq.publication_id, pq.group_name, pq.group_url, pq.variant_text,
            pq.scheduled_at, p.publish_text, COALESCE(pq.images, p.images) AS images,
-           p.publication_date
+           p.publication_date,
+           -- fillTemplateText() lee product_name/price del objeto que le llega.
+           -- Sin esto, {NOMBRE} salía vacío y {PRECIO} en $0 para todos los
+           -- ítems, tuvieran o no publicación asociada. Ojo: publications NO
+           -- tiene columna de precio — el precio vive en products y se une por
+           -- product_id, igual que routes/publications.js. Se aliasea a
+           -- product_price porque así lo espera fillTemplateText().
+           p.product_name, pd.price AS product_price
     FROM publication_queue pq
     LEFT JOIN publications p ON p.id = pq.publication_id
+    LEFT JOIN products pd ON pd.id = p.product_id
     WHERE pq.status = 'pending' AND (pq.scheduled_at IS NULL OR pq.scheduled_at <= ?)
     ORDER BY COALESCE(pq.scheduled_at, pq.created_at) ASC
   `).all(now);
