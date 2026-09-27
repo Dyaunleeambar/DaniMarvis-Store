@@ -2,10 +2,17 @@
  * chromeLauncher.js
  * Garantiza que haya una instancia de Chrome con debugging remoto (puerto 9222)
  * y el perfil aislado donde queda guardada la sesión de Facebook, ANTES de que
- * corra el scraper de la Biblioteca de Contenido.
+ * corra cualquier cosa que necesite ese navegador por CDP.
+ *
+ * Lo consumen dos subsistemas:
+ *  - el scraper de la Biblioteca de Contenido (rankings)
+ *  - el publicador de grupos (groupPublisher)
  *
  * Misma receta que ranking_grupos.bat (C:\Users\Dani\fb-leave), pero sin matar
  * el Chrome del usuario: solo lanzamos si el puerto 9222 no responde ya.
+ *
+ * No es un perfil incógnito: es un perfil separado y persistente, así que la
+ * sesión de Facebook sobrevive entre corridas.
  */
 import { spawn } from 'child_process';
 import fs from 'fs';
@@ -44,8 +51,9 @@ async function waitForPort(port, timeoutMs) {
  * @returns {{ok:boolean, status:string, port:number, error?:string}}
  *  status: 'already_running' | 'launched' | 'no_chrome' | 'launch_error' | 'timeout'
  */
-export async function ensureRankingChrome({ launch = true } = {}) {
-  // el scraper conecta a un Chrome EXISTENTE: si el puerto ya responde, listo.
+export async function ensureDebugChrome({ launch = true } = {}) {
+  // los consumidores se connectan a un Chrome EXISTENTE por CDP: si el puerto
+  // ya responde, no se relanza nada (ni se toca el Chrome del usuario).
   if (await portResponds(DEBUG_PORT)) {
     return { ok: true, status: 'already_running', port: DEBUG_PORT };
   }

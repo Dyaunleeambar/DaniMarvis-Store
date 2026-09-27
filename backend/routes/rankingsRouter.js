@@ -5,7 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { getDB } from '../db/database.js';
 import { runDailyRanking, dailyRankingStatus } from '../jobs/dailyRanking.js';
-import { ensureRankingChrome } from '../jobs/chromeLauncher.js';
+import { ensureDebugChrome } from '../lib/chromeLauncher.js';
 
 const router = Router();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -475,7 +475,7 @@ router.post('/refresh', async (req, res) => {
   // Precondición de las corridas (diarias y manuales): Chrome con debug 9222 y
   // sesión FB. Si el puerto no responde, se lanza Chrome automáticamente.
   try {
-    const chrome = await ensureRankingChrome({ launch: true });
+    const chrome = await ensureDebugChrome({ launch: true });
     if (!chrome.ok) {
       console.log(`[Ranking/refresh] Chrome no disponible: ${chrome.error || chrome.status}`);
       return res.status(502).json({

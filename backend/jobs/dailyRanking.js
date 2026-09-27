@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getDB, initDB } from '../db/database.js';
-import { ensureRankingChrome } from './chromeLauncher.js';
+import { ensureDebugChrome } from '../lib/chromeLauncher.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SCRAPER_JS = path.join(__dirname, '..', '..', 'utilidades', 'fb-ranking', 'content_library_views.js');
@@ -204,7 +204,7 @@ async function runDailyRankingInner({ force = false, target = null } = {}) {
   };
 
   // Garantiza Chrome + sesión FB (puerto 9222) antes de correr el scraper.
-  const chrome = await ensureRankingChrome({ launch: true });
+  const chrome = await ensureDebugChrome({ launch: true });
   if (!chrome.ok) {
     const outcome = { ok: false, error: `Chrome no disponible (${chrome.error || chrome.status})`, noBrowser: true };
     saveState(stampState(today, targetDate, outcome, force ? 'manual' : 'auto'));

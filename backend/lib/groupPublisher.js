@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { getDB } from '../db/database.js';
 import { resolveLocalUpload } from './imageUtils.js';
+import { ensureDebugChrome } from './chromeLauncher.js';
 import { v4 as uuid } from 'uuid';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -88,12 +89,6 @@ function lastPublishedForGroup(groupName) {
 function withinHoursWindow(cfg) {
   const h = localNow().getHours();
   return h >= (Number(cfg.hours_from) || 0) && h < (Number(cfg.hours_to) || 24);
-}
-
-function isChromeReachable() {
-  return fetch('http://localhost:9222/json/version', { signal: AbortSignal.timeout(2500) })
-    .then(r => r.ok)
-    .catch(() => false);
 }
 
 // ------------------------------------------------------- resolución inputs ---
@@ -302,9 +297,13 @@ export async function runGroupPublish({ auto = false, force = false, ids = [], m
   const effectiveMode = mode || cfg.mode;
 
   try {
-    const chrome = await isChromeReachable();
-    if (!chrome) {
-      const r = { ok: false, error: 'Chrome no está accesible en el puerto 9222. Abrí Chrome con --remote-debugging-port=9222 logueado en Facebook.', started: toIsoUtc(new Date()).slice(0, 19) };
+    // Garantiza Chrome con debugging remoto (puerto 9222) y el perfil con la
+    // sesión de Facebook ANTES de publicar. Antes esto solo sondeaba el puerto
+    // y abortaba: había que abrirlo a mano. Si el puerto ya responde no se toca
+    // nada (no interfiere con el Chrome del usuario ni con el scraper).
+    const chrome = await ensureDebugChrome({ launch: true });
+    if (!chrome.ok) {
+      const r = { ok: false, error: `Chrome no disponible (${chrome.error || chrome.status}). Se necesita Chrome con --remote-debugging-port=9222 y la sesión de Facebook abierta en ese perfil.`, noBrowser: true, started: toIsoUtc(new Date()).slice(0, 19) };
       lastResult = r;
       return r;
     }
