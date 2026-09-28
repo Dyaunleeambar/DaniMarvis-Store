@@ -25,7 +25,7 @@ import providerStylesRouter from './routes/providerStyles.js';
 import warrantyRulesRouter from './routes/warrantyRules.js';
 import { generateCatalogFile } from './lib/catalogGenerator.js';
 import { ensureWebp } from './lib/imageUtils.js';
-import { startGroupPublishScheduler } from './lib/groupPublisher.js';
+import { startGroupPublishScheduler, rescheduleGroupPublish, groupPublishSchedulerState } from './lib/groupPublisher.js';
 import { createBackup } from './scripts/backup.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -160,6 +160,10 @@ app.get('/api/settings', (req, res) => {
 app.put('/api/settings', (req, res) => {
   const db = getDB();
   const { exchange_rate, publish_config } = req.body;
+  // Estado del worker antes de tocar la config: hace falta para saber si estaba
+  // activo, asi guardar los ajustes no enciende un worker apagado.
+  let activeBefore = false;
+  try { activeBefore = Boolean(groupPublishSchedulerState().active); } catch { activeBefore = false; }
 
   if (exchange_rate !== undefined) {
     if (!exchange_rate || exchange_rate <= 0) {
@@ -189,6 +193,14 @@ app.put('/api/settings', (req, res) => {
     }
     db.prepare("UPDATE settings SET publish_config = ?, updated_at = datetime('now') WHERE id = 1")
       .run(JSON.stringify(merged));
+    // Si se toco la config del worker, el temporizador se rearma en el momento.
+    // Antes el setInterval se creaba con una constante al arrancar, asi que un
+    // cambio en el intervalo o en el interruptor no se notaba hasta reiniciar.
+    if (publish_config && publish_config.autopublish) {
+      const wasActive = activeBefore;
+      const r = rescheduleGroupPublish({ wasActive });
+      if (r.rescheduled) console.log('[settings] temporizador del worker reaplicado sin reiniciar el server');
+    }
   }
 
   const settings = db.prepare('SELECT exchange_rate, publish_config FROM settings WHERE id = 1').get();

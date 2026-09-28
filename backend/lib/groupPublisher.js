@@ -20,6 +20,7 @@ export const DEFAULT_AUTO_PUBLISH = {
   min_gap_min: 45,      // separación mínima entre publicaciones consecutivas
   cooldown_min: 240,    // espera mínima entre 2 posts del MISMO grupo
   worker_batch: 3,      // cuántos dispara el worker por tick
+  tick_min: 5,          // cada cuánto mira la cola el worker
 };
 
 let running = false;
@@ -61,6 +62,9 @@ function getAutopublishConfig() {
   cfg.mode = cfg.mode === 'prepare' ? 'prepare' : 'publish';
   cfg.daily_cap = Math.max(1, Number(cfg.daily_cap) || DEFAULT_AUTO_PUBLISH.daily_cap);
   cfg.worker_batch = Math.max(1, Math.min(20, Number(cfg.worker_batch) || DEFAULT_AUTO_PUBLISH.worker_batch));
+  // El intervalo del tick antes era una constante (5 min) y la UI prometía
+  // "cada 5 minutos" sin forma de cambiarlo. Ahora sale de la config.
+  cfg.tick_min = Math.max(1, Math.min(120, Number(cfg.tick_min) || DEFAULT_AUTO_PUBLISH.tick_min));
   cfg.min_gap_min = Math.max(5, Number(cfg.min_gap_min) || DEFAULT_AUTO_PUBLISH.min_gap_min);
   cfg.cooldown_min = Math.max(30, Number(cfg.cooldown_min) || DEFAULT_AUTO_PUBLISH.cooldown_min);
   return cfg;
@@ -559,6 +563,15 @@ export function startGroupPublish({ auto, force = false, ids = [], mode = null, 
 // llamaba desde las rutas, o sea que publicar era 100% manual.
 const SCHEDULER_INTERVAL_MS = 5 * 60 * 1000;
 
+/** Intervalo efectivo del tick, leído de la config (cae al default si no se puede leer). */
+function schedulerIntervalMs() {
+  try {
+    return getAutopublishConfig().tick_min * 60 * 1000;
+  } catch {
+    return SCHEDULER_INTERVAL_MS;
+  }
+}
+
 let schedulerTimer = null;
 let lastTickAt = null;
 let nextTickAt = null;
@@ -568,7 +581,7 @@ let lastTickResult = null;
 // antes de pickForRun y antes de tocar Chrome, así que es seguro invocarlo.
 export function runSchedulerTick() {
   lastTickAt = toIsoUtc(new Date());
-  nextTickAt = toIsoUtc(new Date(Date.now() + SCHEDULER_INTERVAL_MS));
+  nextTickAt = toIsoUtc(new Date(Date.now() + schedulerIntervalMs()));
 
   const skip = (reason) => {
     lastTickResult = { skipped: true, reason, at: lastTickAt };
@@ -632,11 +645,14 @@ export async function groupPublishStatus() {
 /**
  * Estado del worker automático, para que la UI pueda mostrar la próxima corrida
  * en vez de un "cada 5 minutos" que no existía.
+ *
+ * Exportada además para `server.js`, que la consulta antes de guardar la config
+ * para saber si el worker estaba activo (y no encenderlo de paso).
  */
-function schedulerState() {
+export function schedulerState() {
   return {
     active: Boolean(schedulerTimer),
-    interval_ms: SCHEDULER_INTERVAL_MS,
+    interval_ms: schedulerIntervalMs(),
     last_tick: lastTickAt,
     next_tick: nextTickAt,
     last_tick_result: lastTickResult,
@@ -648,12 +664,17 @@ export function startGroupPublishScheduler() {
     console.log('[publish] worker automático ya estaba activo');
     return schedulerState();
   }
-  schedulerTimer = setInterval(runSchedulerTick, SCHEDULER_INTERVAL_MS);
+  const every = schedulerIntervalMs();
+  schedulerTimer = setInterval(runSchedulerTick, every);
   // unref: el timer no debe impedir que el proceso baje limpio. El http server
   // lo mantiene vivo igual.
   schedulerTimer.unref?.();
-  nextTickAt = toIsoUtc(new Date(Date.now() + SCHEDULER_INTERVAL_MS));
-  console.log(`[publish] worker automático cada ${Math.round(SCHEDULER_INTERVAL_MS / 60000)} min (enabled=${getAutopublishConfig().enabled}). Primera corrida en ${Math.round(SCHEDULER_INTERVAL_MS / 60000)} min.`);
+  nextTickAt = toIsoUtc(new Date(Date.now() + every));
+  // enabled solo se lee para el log. Se aísla porque si la BD no está lista el
+  // arranque del timer no debería caer: el worker decides igual en cada tick.
+  let enabled = '?';
+  try { enabled = getAutopublishConfig().enabled; } catch { /* sin BD */ }
+  console.log(`[publish] worker automático cada ${Math.round(every / 60000)} min (enabled=${enabled}). Primera corrida en ${Math.round(every / 60000)} min.`);
   return schedulerState();
 }
 
@@ -666,4 +687,40 @@ export function stopGroupPublishScheduler() {
   return schedulerState();
 }
 
+/**
+ * Re-arma el timer cuando cambia el intervalo o el interruptor.
+ *
+ * El `setInterval` se creaba una sola vez al arrancar el server con una
+ * constante, así que cambiar el temporizador desde Ajustes no se notaba hasta
+ * reiniciar. Ahora se rearma solo, y solo si el intervalo cambió de verdad:
+ * guardar cualquier otro ajuste no reinicia la cuenta del próximo tick.
+ *
+ * `wasActive` viene del estado anterior, así que un worker apagado no se
+ * enciende solo por guardar la config.
+ */
+export function rescheduleGroupPublish({ wasActive = true } = {}) {
+  const before = schedulerTimer ? schedulerState().interval_ms : null;
+  const after = schedulerIntervalMs();
+
+  if (!wasActive || before === null) {
+    // el worker estaba apagado: no lo levantamos por guardar la config
+    if (schedulerTimer) stopGroupPublishScheduler();
+    return { rescheduled: false, reason: wasActive ? 'no_active' : 'was_off', state: schedulerState() };
+  }
+  if (before === after) {
+    return { rescheduled: false, reason: 'same_interval', state: schedulerState() };
+  }
+  stopGroupPublishScheduler();
+  const state = startGroupPublishScheduler();
+  // La config se lee acá y no antes, solo para el log: pedirla antes obliga a que
+  // la BD esté inicializada y hace que esta función no se pueda probar sola.
+  let enabled = '?';
+  try { enabled = getAutopublishConfig().enabled; } catch { /* sin BD */ }
+  console.log(`[publish] temporizador del worker cambiado a ${Math.round(after / 60000)} min (enabled=${enabled})`);
+  return { rescheduled: true, from_ms: before, to_ms: after, state };
+}
+
 export { getAutopublishConfig }; // reúso desde server.js / worker
+// alias explicito: server.js lo usa para leer si el worker estaba activo antes de
+// guardar la config, y asi un guardado no enciende un worker apagado.
+export { schedulerState as groupPublishSchedulerState };

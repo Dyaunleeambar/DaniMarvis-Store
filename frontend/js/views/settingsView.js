@@ -151,8 +151,8 @@ function renderPage(container, settings, categories, providerStyles) {
             </div>
           </details>
 
-          <details style="margin-top:12px" ${ap.enabled ? 'open' : ''}>
-            <summary style="cursor:pointer;font-weight:600;font-size:.9rem;color:var(--rose)">🤖 Auto-publicar en grupos (opcional)</summary>
+          <details style="margin-top:12px" open>
+            <summary style="cursor:pointer;font-weight:600;font-size:.9rem;color:var(--rose)">🤖 Auto-publicar en grupos (opcional) — ${ap.enabled ? `activo · máx ${ap.daily_cap ?? 6}/día · ${ap.hours_from ?? 8}:00–${ap.hours_to ?? 21}:00 · gap ${ap.min_gap_min ?? 45} min · cada ${ap.tick_min ?? 5} min` : 'apagado'}</summary>
             <p style="margin:8px 0 12px;font-size:.8rem;color:var(--text-secondary)">
               El panel deja los posts listos (texto + imagen) en la Cola de Publicaciones y un worker
               los dispara en los grupos usando tu Chrome (requiere <code>--remote-debugging-port=9222</code>
@@ -199,7 +199,18 @@ function renderPage(container, settings, categories, providerStyles) {
                 <label>Posts por tick del worker</label>
                 <input type="number" name="ap_batch" class="form-control" min="1" max="20" value="${ap.worker_batch ?? 3}" />
               </div>
+              <div class="form-group">
+                <label>Temporizador: cada cuántos minutos mira la cola</label>
+                <input type="number" name="ap_tick" class="form-control" min="1" max="120" value="${ap.tick_min ?? 5}" />
+                <small style="color:var(--text-secondary);font-size:.72rem">Antes era una constante de 5 minutos y no se podía cambiar. Se aplica al guardar, sin reiniciar.</small>
+              </div>
             </div>
+            <p style="margin:10px 0 0;font-size:.78rem;color:var(--text-secondary)">
+              <strong>Ojo:</strong> estos límites son los del <em>worker automático</em>. El botón
+              <em>«Correr vencidos»</em> de la cola manda <code>force</code> y se salta el cap diario,
+              la franja horaria, el gap y el cooldown por grupo. Para vaciar la cola con estos
+              límites, activá el worker.
+            </p>
           </details>
 
           <details style="margin-top:12px" ${rk.auto_enabled !== false ? 'open' : ''}>
@@ -392,7 +403,8 @@ function renderPage(container, settings, categories, providerStyles) {
         hours_to: parseInt(fd.get('ap_hours_to'), 10) || 21,
         min_gap_min: parseInt(fd.get('ap_min_gap'), 10) || 45,
         cooldown_min: parseInt(fd.get('ap_cooldown'), 10) || 240,
-        worker_batch: parseInt(fd.get('ap_batch'), 10) || 3
+        worker_batch: parseInt(fd.get('ap_batch'), 10) || 3,
+        tick_min: parseInt(fd.get('ap_tick'), 10) || 5
       },
       ranking: {
         auto_enabled: fd.get('rk_auto_enabled') === '1',
