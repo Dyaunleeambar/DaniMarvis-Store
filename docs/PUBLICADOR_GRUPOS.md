@@ -401,8 +401,15 @@ de quitar foto, tomó los adjuntos. Las notas de la cola dicen *"FB confirmó lo
 un número falso en la cola no lo cuestiona nadie.
 
 Máximo **10 imágenes** por publicación (`MAX_IMAGES` en `backend/routes/pubQueue.js:10` y
-`frontend/js/views/pubQueueView.js`). Cada imagen se intenta 2 veces y, si falla, el bucle
+`frontend/js/views/pubQueueView.js`). Cada imagen se envía **una sola vez** y, si falla, el bucle
 **sigue con la siguiente** en vez de cortar el lote entero.
+
+> **Cada archivo se sube exactamente una vez.** Ya pasó: con el conteo de adjuntos roto, la
+> condición "el panel ganó un adjunto" nunca se cumplía, el lazo de reintentos se agotaba siempre
+> y **cada foto salía duplicada** en el post. Un archivo solo se reenvía si `uploadFile` **lanza**
+> excepción, porque eso significa que el input quedó vacío. Si `uploadFile` no lanza, el archivo
+> entró y no se toca otra vez, aunque no haya forma de comprobar si FB lo tomó. Ante la duda,
+> perder una imagen es preferible a duplicarla.
 
 > Cuando Facebook vuelva a cambiar el DOM del compositor, el síntoma será
 > `adjuntos_confirmados: 0` con imágenes pedidas. Se diagnostica mirando el volcado

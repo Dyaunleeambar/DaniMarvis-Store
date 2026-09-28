@@ -503,52 +503,60 @@ async function mediaAttachedCount(page, rect) {
 }
 
 async function attachImages(page) {
-  if (!images.length) return { images: 0, preview: false, attached: 0, failed: [], hasRemove: false };
+  if (!images.length) return { images: 0, preview: false, attached: 0, enviadas: 0, failed: [], hasRemove: false };
 
-  let indexBase = 0;
   let panel = null;
   const failed = [];
-  // FB/React solo procesa el primer archivo de un upload múltiple en un mismo
-  // evento change, así que subimos de a UNA imagen por input fresco y esperamos
-  // a que el panel del compositor gane un adjunto visible antes del siguiente.
+  const enviadas = [];
+  // FB/React con `multiple` procesa solo el primer archivo del evento change, así
+  // que se sube de a UNA imagen por upload.
   //
-  // Dos cambios con respecto a la versión anterior:
-  //  - cada imagen tiene hasta ATTACH_ATTEMPTS intentos con input fresco, porque
-  //    un solo intento fallaba con un input que FB ya había consumido;
-  //  - una imagen que no se adjunta NO corta el loop. Antes un `break` dejaba
-  //    las imágenes siguientes sin intentar, y como el gate de publicación
-  //    exigía el total pedido, el post entero se caía.
+  // REGLA CRÍTICA: un archivo se envía UNA SOLA VEZ. Reenviarlo duplica la foto en
+  // el post, y ya pasó: el conteo de adjuntos quedó roto contra el DOM actual de
+  // Facebook, así que la condición "el panel ganó un adjunto" nunca se cumplía, el
+  // ciclo de reintentos se agotaba siempre y cada imagen salía dos veces.
+  //
+  // La Única razón para reintentar es que `uploadFile` lance: si lanza, el input
+  // quedó vacío y no hay nada adjunto. Si NO lanza, el archivo entró al input y
+  // no se vuelve a mandar, porque no hay forma honesta de saber si FB lo tomó.
+  // Si FB lo descarta, la imagen falta en el post: preferimos eso a duplicarla.
   for (const file of images) {
     const ctx = await composerMediaContext(page);
     if (ctx.rect) panel = ctx.rect;
-    const base = Math.max(indexBase, (await mediaAttachedCount(page, panel)).n);
 
-    let done = false;
-    for (let attempt = 1; attempt <= ATTACH_ATTEMPTS && !done; attempt++) {
+    let enviada = false;
+    let ultimoError = null;
+    for (let attempt = 1; attempt <= ATTACH_ATTEMPTS; attempt++) {
       const input = await composerFileInput(page);
       if (!input) {
-        if (attempt === ATTACH_ATTEMPTS) { failed.push(file); continue; }
+        ultimoError = 'no se encontró el input de imágenes del compositor';
         await sleep(1000 * attempt);
         continue;
       }
       try {
-        // FB/React con multiple procesa solo el primer archivo del evento change;
-        // se sube de a UNA imagen por input.
         await input.evaluate(el => { if (el.hasAttribute('multiple')) el.removeAttribute('multiple'); });
         await input.uploadFile(file);
+        enviada = true;
+        break;
       } catch (e) {
-        console.error('[MEDIA] upload falló:', (e.message || '').slice(0, 120));
-      }
-      for (let i = 0; i < ATTACH_WAIT_POLLS; i++) {
-        await sleep(ATTACH_POLL_MS);
-        const now = (await mediaAttachedCount(page, panel)).n;
-        if (now > base) { done = true; break; }
+        ultimoError = (e.message || '').slice(0, 120);
+        console.error('[MEDIA] upload launchó error:', ultimoError);
+        await sleep(1000 * attempt);
       }
     }
-    indexBase = (await mediaAttachedCount(page, panel)).n;
-    if (!done) {
+    if (enviada) {
+      enviadas.push(file);
+    } else {
       failed.push(file);
-      console.error(`[MEDIA] ${path.basename(file)} no se adjuntó tras ${ATTACH_ATTEMPTS} intentos; se sigue con la siguiente.`);
+      console.error(`[MEDIA] ${path.basename(file)} no se pudo enviar: ${ultimoError}; se sigue con la siguiente.`);
+    }
+
+    // Espera de cadencia para que FB termine de procesar antes del siguiente
+    // archivo. NO decide reintentos: solo evita que se le pisen encima.
+    for (let i = 0; i < ATTACH_WAIT_POLLS; i++) {
+      await sleep(ATTACH_POLL_MS);
+      const st = await mediaAttachedCount(page, panel);
+      if (st.hasRemove || st.n > 0) break;
     }
   }
   // Recuento final. Se usa el conteo robusto (panel oficial + <img> del panel +
@@ -560,6 +568,7 @@ async function attachImages(page) {
     images: images.length,
     preview: st.n > 0,
     attached: st.n,
+    enviadas: enviadas.length,
     failed,
     hasRemove: st.hasRemove,
     detect: st,
