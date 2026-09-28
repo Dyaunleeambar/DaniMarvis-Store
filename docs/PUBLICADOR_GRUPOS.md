@@ -583,6 +583,31 @@ para no pagar el coste del chequeo real en cada lectura de estado.
 > Al operar: si cerrás a mano la pestaña de la Biblioteca de Contenido del Chrome de debug,
 > cerrás el navegador entero. Volvés a abrirlo con la UI o dejando que el launcher lo levante.
 
+### 13. Falso negativo al confirmar la publicación 🟢
+
+Síntoma: `Se hizo clic en Publicar pero el post no se envió (posible limitación o mensaje de
+verificación)`, cuando **el post sí se había publicado**. Confirmado a mano el 2026-09-28: el
+primer intento salió, el reintento sacó una segunda copia y hubo que borrar la primera a mano.
+
+Causa: la comprobación tomaba `cands[0]`, el **primer** `[contenteditable]` visible con texto de
+toda la página, que no es necesariamente el compositor del post (puede ser un comentario, una
+búsqueda o el editor de otro post). Como ese campo nunca se vacía, el chequeo-after-publicar
+fallaba siempre. Es el mismo criterio erróneo que usa `clickPublish()` para ubicar el compositor.
+
+Ahora:
+
+- se mide el editable visible con texto de **mayor área** (el compositor es un panel grande, los
+  campos de comentario chicos);
+- se relee el compositor al final: si quedó vacío, se declara **publicado** (la primera lectura
+  puede llegar tarde, algo normal con posts largos o de 6+ imágenes);
+- si el texto sigue ahí, el error lo dice explícitamente, en vez del genérico "posible
+  limitación", e incluye el aviso de bloqueo de Facebook si aparece ("límite", "verificación",
+  "intenta de nuevo más tarde", "spam").
+
+> **Al reintentar un ítem que falló así, revisá el grupo antes.** Este error implicaba que había
+> que borrar el post duplicado a mano, y un "reintentar" a ciegas lo vuelve a crear. El feed no
+> renderiza en modo automatizado, así que el código no puede confirmarlo solo.
+
 ---
 
 ## Puntos de extensión
