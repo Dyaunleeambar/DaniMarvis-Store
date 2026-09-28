@@ -203,6 +203,11 @@ async function collectRows(page) {
   console.log('  Analyzer de visualizaciones por grupo');
   console.log('========================================');
   console.log(`  Conectando a Chrome en puerto ${DEBUG_PORT}...`);
+  // OJO: nos CONECTAMOS al Chrome de debug, no lo lanzamos nosotros. Por eso
+  // al terminar hay que hacer disconnect() y NUNCA close(): browser.close() sobre
+  // un browser conectado termina el proceso remoto y se lleva por delante el
+  // Chrome que necesita el publicador de grupos. Ademas Chrome se muere solo si
+  // se cierra su ultima pestana, y este script no debe ser el que la cierre.
   const browser = await puppeteer.connect({ browserURL: `http://localhost:${DEBUG_PORT}`, defaultViewport: null });
   const pages = await browser.pages();
   const page = pages[pages.length - 1];
@@ -213,7 +218,7 @@ async function collectRows(page) {
 
   if (/login|checkpoint|confirm/i.test(page.url())) {
     console.log('!! Sesión requerida. Abrí el perfil y logueáte.');
-    await browser.close();
+    await browser.disconnect();
     return;
   }
   console.log(`URL: ${page.url()}`);
@@ -227,7 +232,7 @@ async function collectRows(page) {
 
   if (rows.length === 0) {
     console.log('No se encontraron filas. Revisá la página manualmente.');
-    await browser.close();
+    await browser.disconnect();
     return;
   }
 
@@ -280,5 +285,5 @@ async function collectRows(page) {
     console.log(`${String(i + 1).padStart(2)}. [${p.label || '?'}] ${fmt(p.m.visualizaciones).padStart(7)} vistas | ${p.date || ''} | ${String(p.post).slice(0, 70)}`);
   }
 
-  await browser.close();
+  await browser.disconnect();
 })().catch(e => { console.error('FATAL:', e.message); process.exit(1); });

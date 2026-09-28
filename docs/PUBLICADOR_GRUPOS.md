@@ -546,6 +546,43 @@ Ranking y publicador comparten la **misma instancia** de Chrome (9222, mismo per
 guards `running` son por módulo, así que pueden correr a la vez y pelearse las pestañas. El
 ranking diario quedó a las 23:00; el publicador tiene su propia franja.
 
+### 11. El Chrome de debug se cerraba solo 🟢
+
+Diagnóstico hecho el 2026-09-28, con evidencia, no por teoría:
+
+- Windows registra **0 crashes** de `chrome.exe` y el código **nunca** mata Chrome
+  (no hay `taskkill` ni `Stop-Process`). Se descartó que "se_muera".
+- La causa real: **Chrome se cierra entero cuando se cierra su última pestaña**, y
+  `background_mode` está desactivado en el perfil. Comprobado: con 1 pestaña el puerto
+  responde, se abre una segunda y sigue vivo, se cierra la de arranque y sigue vivo, y al
+  cerrar la última el puerto da `ECONNREFUSED`.
+- El launcher abre el Chrome con **una sola pestaña** (la Biblioteca de Contenido). Ese es
+  el invariante frágil: si algo cierra esa pestaña, el publicador se queda sin navegador.
+- `analyze_views.js` era la trampa: hace `puppeteer.connect()` al Chrome **compartido** y al
+  terminar llamaba `browser.close()`, que termina el proceso remoto y se lleva por delante
+  el navegador del publicador. Ahora usa `disconnect()`.
+
+### 12. `ensureDebugChrome` daba por sano un Chrome trabado 🟢
+
+`portResponds()` solo pregunta por `/json/version`. Se comprobó que un Chrome con el
+**renderer trabado sigue contestando ese endpoint**, así que el early-return `already_running`
+le pasaba un navegador muerto al poster, que se quedaba esperando hasta agotar su timeout de
+280 s. El síntoma era `Network.enable timed out` en cualquier comando de Puppeteer.
+
+Ahora, si el puerto responde pero ningún target de página evalúa, el launcher:
+
+1. cierra **solo** esa instancia por CDP (`Browser.close`) — nunca busca ni mata procesos de
+   Chrome por nombre, así que tu Chrome personal queda intacto;
+2. espera a que el puerto se libere (si no, el proceso nuevo ve el lock del perfil, le pasa la
+   URL al viejo y se sale, y `waitForPort` termina en timeout);
+3. relanza.
+
+`debugChromeReachable()` sigue siendo el chequeo pasivo de 800 ms que usa la UI en cada poll,
+para no pagar el coste del chequeo real en cada lectura de estado.
+
+> Al operar: si cerrás a mano la pestaña de la Biblioteca de Contenido del Chrome de debug,
+> cerrás el navegador entero. Volvés a abrirlo con la UI o dejando que el launcher lo levante.
+
 ---
 
 ## Puntos de extensión

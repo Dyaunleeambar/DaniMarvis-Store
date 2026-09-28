@@ -39,6 +39,73 @@ async function portResponds(port, timeoutMs = 1500) {
 }
 
 /**
+ * El puerto vivo NO significa que el Chrome sirva para trabajar. Se comprobó el
+ * caso real: un Chrome con el renderer trabado sigue contestando
+ * /json/version, así que el chequeo Weak dio por bueno un navegador muerto y el
+ * poster se quedó esperando hasta agotar su timeout de 280 s. El síntoma fue
+ * `Network.enable timed out` en cualquier comando de Puppeteer.
+ *
+ * Este chequeo de verdad se conecta a un target de página y le pide evaluar una
+ * expresión. Si eso no responde, el navegador está atascado y hay que relanzarlo.
+ */
+/**
+ * Cierra el Chrome de debug que quedó atascado, para poder relanzarlo.
+ *
+ * Se hace por CDP (`Browser.close`) y solo contra la instancia que YA está
+ * escuchando en el puerto de debug. Jamás se buscan ni se matan procesos de
+ * Chrome por nombre: el Chrome personal del usuario queda intacto.
+ *
+ * Sin esto, relanzar no sirve: el Chrome trabado sigue teniendo el lock del
+ * perfil, el proceso nuevo arranca, ve el lock, le pasa la URL al viejo y se
+ * sale, y `waitForPort` termina en timeout.
+ */
+async function cerrarChromeAtascado(port) {
+  let browser;
+  try {
+    const puppeteer = (await import('puppeteer-core')).default;
+    browser = await puppeteer.connect({
+      browserURL: `http://localhost:${port}`,
+      defaultViewport: null,
+      protocolTimeout: 4000,
+    });
+    await browser.close();
+  } catch {
+    // si ni siquiera se puede cerrar, se sigue: el spawn de todas formas no va
+    // a prosperar y waitForPort va a avisar.
+  } finally {
+    try { await browser?.disconnect(); } catch { /* noop */ }
+  }
+  // esperar a que el puerto se libere antes de relanzar
+  for (let i = 0; i < 10 && await portResponds(port, 500); i++) await sleep(300);
+}
+
+async function portRespondsConTargetVivo(port, timeoutMs = 6000) {
+  let browser;
+  try {
+    const puppeteer = (await import('puppeteer-core')).default;
+    browser = await puppeteer.connect({
+      browserURL: `http://localhost:${port}`,
+      defaultViewport: null,
+      protocolTimeout: timeoutMs,
+    });
+    const pages = await browser.pages();
+    for (const p of pages) {
+      try {
+        await p.evaluate('1 + 1');
+        return true;
+      } catch {
+        // ese target esta trabado: probamos con el siguiente
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  } finally {
+    try { await browser?.disconnect(); } catch { /* noop */ }
+  }
+}
+
+/**
  * Sondeo PASIVO: solo informa si hay un Chrome escuchando, no lanza nada.
  * Para que la UI pueda mostrar el estado sin disparar un arranque.
  * Timeout corto a propósito: se consulta en cada poll de /group-publish/status.
@@ -63,8 +130,17 @@ async function waitForPort(port, timeoutMs) {
 export async function ensureDebugChrome({ launch = true } = {}) {
   // los consumidores se connectan a un Chrome EXISTENTE por CDP: si el puerto
   // ya responde, no se relanza nada (ni se toca el Chrome del usuario).
+  //
+  // Pero "el puerto responde" no alcanza: un Chrome con el renderer trabado
+  // sigue contestando /json/version y colgaría al poster hasta su timeout de
+  // 280 s. Por eso, si ya hay uno, se verifica que tenga un target de página que
+  // responda de verdad antes de darlo por bueno.
   if (await portResponds(DEBUG_PORT)) {
-    return { ok: true, status: 'already_running', port: DEBUG_PORT };
+    if (await portRespondsConTargetVivo(DEBUG_PORT)) {
+      return { ok: true, status: 'already_running', port: DEBUG_PORT };
+    }
+    console.warn('[ChromeLauncher] el puerto responde pero el navegador no sirve (renderer trabado). Relanzando...');
+    await cerrarChromeAtascado(DEBUG_PORT);
   }
   if (!launch) return { ok: false, status: 'not_running', port: DEBUG_PORT };
 
