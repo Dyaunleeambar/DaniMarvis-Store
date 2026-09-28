@@ -575,12 +575,41 @@ async function attachImages(page) {
   };
 }
 
+/**
+ * Largo del texto que queda en el compositor del POST, para decidir si se envió.
+ *
+ * Antes tomaba `cands[0]`: el PRIMER `[contenteditable]` visible con texto de toda
+ * la página. Ese no es necesariamente el compositor; puede ser un campo de
+ * comentario, una búsqueda o el editor de otro post. Como ese campo nunca se
+ * vacía, el chequeo-after-publicar daba falso negativo siempre y terminaba en
+ * "Se hizo clic en Publicar pero el post no se envió" con el post ya publicado.
+ *
+ * Ahora se elige el editable visible con texto de MAYOR área: el compositor del
+ * post es un panel grande, los campos de comentario son chicos. Es el mismo
+ * criterio que ya usan el input de imágenes y el botón Publicar.
+ *
+ * Devuelve 0 si no queda ningún editable con texto, que es el caso bueno: se
+ * envió todo.
+ */
 async function currentComposerLen(page) {
   return page.evaluate(() => {
-    const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-    const cands = Array.from(document.querySelectorAll('[contenteditable="true"]'))
-      .filter(el => vis(el) && (el.innerText || '').trim());
-    return cands.length ? (cands[0].innerText || '').trim().length : 0;
+    const vis = (el) => {
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return false;
+      const cs = getComputedStyle(el);
+      return cs.visibility !== 'hidden' && cs.display !== 'none' && cs.opacity !== '0';
+    };
+    const conTexto = Array.from(document.querySelectorAll('[contenteditable="true"]'))
+      .filter(el => vis(el) && (el.innerText || '').trim().length > 0);
+    if (!conTexto.length) return 0;
+    let mejor = conTexto[0];
+    let area = -1;
+    for (const el of conTexto) {
+      const r = el.getBoundingClientRect();
+      const a = r.width * r.height;
+      if (a > area) { area = a; mejor = el; }
+    }
+    return (mejor.innerText || '').trim().length;
   });
 }
 
@@ -1010,7 +1039,57 @@ async function processGroup(browser, groupUrl, label) {
       return out({ group_url: groupUrl, ok: false, status: 'error', message: 'No se encontró el botón Publicar.' });
     }
     if (!cleared) {
-      return out({ group_url: groupUrl, ok: false, status: 'error', message: 'Se hizo clic en Publicar pero el post no se envió (posible limitación o mensaje de verificacion).', clicks: pub });
+      // Diagnóstico para que el error diga POR QUÉ no se ve el envío y no haya
+      // que adivinar. Se separa el caso "el texto sigue en el compositor" (FB no
+      // lo tomó: límite, verificación, o el clic no_registryó) del caso "no
+      // quedó texto en ningún editor" (el compositor ni se encontró al releer).
+      const diag = await page.evaluate(() => {
+        const vis = (el) => {
+          const r = el.getBoundingClientRect();
+          if (r.width <= 0 || r.height <= 0) return false;
+          const cs = getComputedStyle(el);
+          return cs.visibility !== 'hidden' && cs.display !== 'none' && cs.opacity !== '0';
+        };
+        const edits = Array.from(document.querySelectorAll('[contenteditable="true"]')).filter(vis);
+        const conTexto = edits.filter(el => (el.innerText || '').trim().length > 0);
+        let mayor = 0;
+        for (const el of conTexto) {
+          const r = el.getBoundingClientRect();
+          mayor = Math.max(mayor, r.width * r.height);
+        }
+        // texto de bloqueo que FB muestra en el compositor o encima
+        const norm = (s) => (s || '').replace(/\s+/g, ' ').toLowerCase();
+        const bloqueo = ['no puedes publicar', 'límite', 'limite', 'intenta de nuevo más tarde',
+          'intenta de nuevo mas tarde', 'verificación', 'verificacion', 'confirmá tu cuenta',
+          'confirma tu cuenta', 'sugerencia', 'error', 'bloqueado', 'demasiado']
+          .find(k => Array.from(document.querySelectorAll('div[role="alert"], span[role="alert"]'))
+            .some(a => norm(a.innerText).includes(k)));
+        return {
+          editables: edits.length,
+          conTexto: conTexto.length,
+          areaMax: Math.round(mayor),
+          bloqueo: bloqueo || null,
+        };
+      }).catch(() => ({}));
+      // Un post largo o con 6+ imágenes necesita bastante más que 30 s para
+      // aparecer; el tiempo de espera era el otro mitad del problema.
+      const otra = await currentComposerLen(page);
+      if (otra === 0) {
+        return out({ group_url: groupUrl, ok: true, status: 'published',
+          message: 'Publicado (el compositor se vació, la primera lectura llegó tarde).',
+          post_url: '', imagen_adjunta: imgs.attached, imagenes_pedidas: imgs.images,
+          adjuntos_confirmados: confirmados ? 1 : 0, texto_digits: lenBefore, toral_ms: Date.now() - t0 });
+      }
+      const porQuien = diag.bloqueo
+        ? ` FB mostró un aviso: "${diag.bloqueo}".`
+        : (diag.conTexto
+            ? ' El texto sigue en el compositor: el post probablemente NO se envió.'
+            : ' No se encontró el compositor al releer, así que no se puede confirmar el envío.');
+      return out({
+        group_url: groupUrl, ok: false, status: 'error',
+        message: `Se hizo clic en Publicar pero el post no se envió (${diag.conTexto || 0} editor(es) con texto, el mayor de ${diag.areaMax || 0}px²).${porQuien}`,
+        clicks: pub,
+      });
     }
     // diagnosticar el post recién publicado (¿trae la foto?) en esta misma pestaña
     try {
