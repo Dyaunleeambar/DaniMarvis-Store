@@ -278,6 +278,11 @@ export function parsePosterOutput(stdout, { err = null, allText = '' } = {}) {
     if (imgA !== null) line.img_adjunta = imgA;
     const imgP = typeof line.imagenes_pedidas === 'number' ? line.imagenes_pedidas : null;
     if (imgP !== null) line.img_pedidas = imgP;
+    // `adjuntos_confirmados` es el campo de confianza del poster. Va aparte de
+    // img_adjunta porque aquel numero no se puede sostener contra el DOM actual
+    // de FB (da 0 con los adjuntos presentes). Este si: se apoya en que
+    // aparezcan los controles de "quitar foto".
+    if (typeof line.adjuntos_confirmados === 'number') line.img_confirmados = line.adjuntos_confirmados;
     if (warnings.length) line.warnings = warnings;
     return line;
   }
@@ -317,11 +322,24 @@ function updateQueue(item, result, mode) {
   // parseo los descartaba; ahora quedan registrados aunque el post salga bien.
   const avisos = Array.isArray(result.warnings) && result.warnings.length
     ? ` | aviso: ${result.warnings.join('; ')}` : '';
+  // El poster publica aunque falten imágenes (para que un problema de adjuntos
+  // nunca impida que el post salga), pero informa si FB las tomó. El conteo exacto
+  // no es confiable contra el DOM actual de FB, así que la nota dice "confirmado"
+  // o "no confirmado" en vez de inventar un "3 de 6": un número falso en la cola
+  // es peor que una advertencia honesta, porque nadie lo va a cuestionar.
+  const pedidas = Number(result.imagenes_pedidas) || 0;
+  const confirmadas = Number(result.adjuntos_confirmados) || 0;
+  const imgNota = pedidas > 0
+    ? (confirmadas
+        ? ` | imágenes: FB confirmó los adjuntos (${pedidas} pedidas; conteo exacto no verificado)`
+        : ` | ATENCIÓN imágenes: se pidieron ${pedidas} y FB no mostró los controles de quitar foto; probablemente no las tomó`)
+    : '';
   let notes;
   if (result.ok) {
     const tag = mode === 'prepare' ? 'preparado' : 'publicado';
     notes = [base, `auto:${tag} ${now.slice(0, 19)}`.trim()].filter(Boolean).join(' | ');
     if (pending) notes += ' | pendiente de aprobación del administrador';
+    notes += imgNota;
   } else {
     notes = [base, `auto:error ${result.message || ''}`.trim()].filter(Boolean).join(' | ').slice(0, 500);
   }
@@ -333,7 +351,13 @@ function updateQueue(item, result, mode) {
     db.prepare("UPDATE publication_queue SET status = 'prepared', notes = ?, pending_approval = ?, updated_at = datetime('now') WHERE id = ?")
       .run(notes, pending, item.id);
   } else {
-    db.prepare("UPDATE publication_queue SET notes = ?, updated_at = datetime('now') WHERE id = ?")
+    // OJO: antes esta rama solo escribía las notas y dejaba el status en
+    // 'pending'. Como dueCandidates() filtra por 'pending', el worker volvía a
+    // agarrar el ítem en cada tick, fallaba igual y repetía para siempre, sin
+    // contador de intentos ni backoff. Por eso un fallo de red se veía en la UI
+    // como "quedó esperando" indefinidamente. Ahora el ítem queda en 'error' y
+    // la UI lo muestra en su propio balde, con reintento manual.
+    db.prepare("UPDATE publication_queue SET status = 'error', notes = ?, published_at = NULL, updated_at = datetime('now') WHERE id = ?")
       .run(notes, item.id);
   }
 }

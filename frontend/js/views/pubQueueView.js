@@ -234,6 +234,11 @@ async function renderPending(container) {
 
     const dueIds = new Set(dueItems.map(d => d.id));
     const pending = items.filter(i => i.status === 'pending' || i.status === 'prepared');
+    // Ítems que fallaron. Antes no existía el estado: updateQueue() dejaba el
+    // status en 'pending' al fallar, así que el worker los reintentaba para
+    // siempre y en la UI se veían como "listos para publicar" sin más. Ahora el
+    // poster los deja en 'error' y se listan acá, con el motivo y un reintento.
+    const fallidos = items.filter(i => i.status === 'error');
     const timerMap = {};
     for (const t of timerData.timers) {
       timerMap[t.group_name.toLowerCase()] = t;
@@ -262,7 +267,7 @@ async function renderPending(container) {
         <div id="pubq-run-progress"></div>
       </div>`;
 
-    if (pending.length === 0) {
+    if (pending.length === 0 && fallidos.length === 0) {
       container.innerHTML = `
         ${barHtml}
         <div class="empty-state" style="padding:48px">
@@ -276,6 +281,28 @@ async function renderPending(container) {
     container.innerHTML = `
       ${barHtml}
       <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
+        ${fallidos.length ? `
+        <div class="card" style="padding:12px 14px;border-color:var(--error)">
+          <div style="font-weight:600;font-size:.85rem;color:var(--error);margin-bottom:6px">⚠ ${fallidos.length} publicación(es) fallaron</div>
+          <div style="font-size:.76rem;color:var(--text-muted);margin-bottom:10px">Una corrida fallida ya no se reintenta sola: queda acá con el motivo, para no reintentar en loop. Cuando quieras, reintentá a mano.</div>
+          ${fallidos.map(item => `
+            <div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;background:var(--bg)">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+                <div style="flex:1;min-width:0">
+                  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+                    <span style="font-weight:600;font-size:.85rem">${escHtml(item.group_name)}</span>
+                    <span style="font-size:.72rem;color:var(--text-muted)">${item.product_name || 'Redacción propia'}</span>
+                  </div>
+                  <div style="font-size:.74rem;color:var(--error);word-break:break-word">${escHtml((item.notes || 'Sin detalle del error').slice(0, 300))}</div>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">
+                  <button class="btn btn--sm btn--primary pubq-retry" data-id="${item.id}">↻ Reintentar</button>
+                  <button class="btn btn--sm btn--ghost pubq-edit" data-id="${item.id}">✎ Editar</button>
+                  <button class="btn btn--sm btn--ghost pubq-delete" data-id="${item.id}" style="color:var(--error)">Quitar</button>
+                </div>
+              </div>
+            </div>`).join('')}
+        </div>` : ''}
         ${pending.map(item => {
           const timer = timerMap[item.group_name.toLowerCase()];
           const canPublish = !timer || timer.can_publish;
@@ -431,6 +458,20 @@ async function renderPending(container) {
       });
     });
 
+    // Reintento manual de un ítem que falló: vuelve a 'pending' y queda en manos
+    // del worker (o del botón "Auto-publicar") como cualquier otro pendiente.
+    container.querySelectorAll('.pubq-retry').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        try {
+          await api.updatePubQueue(btn.dataset.id, { status: 'pending' });
+          showToast('Volvió a la cola para reintentarse', 'success');
+          renderPending(container);
+        } catch (err) {
+          showToast(err.message, 'error');
+        }
+      });
+    });
+
     container.querySelectorAll('.pubq-mark-published').forEach(btn => {
       btn.addEventListener('click', async () => {
         try {
@@ -457,7 +498,10 @@ async function renderPending(container) {
 
     container.querySelectorAll('.pubq-edit').forEach(btn => {
       btn.addEventListener('click', async () => {
-        const item = pending.find(i => i.id === btn.dataset.id);
+        // Busca en pendientes Y en fallidos: el botón "Editar" también se
+        // renderiza en los ítems con error, y buscar solo en `pending` los
+        // dejaba sin hacer nada en silencio.
+        const item = [...pending, ...fallidos].find(i => i.id === btn.dataset.id);
         if (!item) return;
         await openEditModal(item);
       });
@@ -656,7 +700,7 @@ function renderQueueForm(root, ctx, initial, onSave, { mode = 'add' } = {}) {
           <div id="pubq-variant-preview">${variantPreviewHtml()}</div>` : ''}
 
           <div>
-            <label style="font-size:.82rem;color:var(--text-secondary);display:block;margin-bottom:4px">Imágenes (máx. 6) — subí archivos o pegá con Ctrl+V sobre el área</label>
+            <label style="font-size:.82rem;color:var(--text-secondary);display:block;margin-bottom:4px">Imágenes (máx. 10) — subí archivos o pegá con Ctrl+V sobre el área</label>
             <div id="pubq-images-grid" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px"></div>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
               <button class="btn btn--sm btn--secondary" id="pubq-img-add">+ Agregar imágenes</button>
@@ -930,7 +974,7 @@ function renderQueueForm(root, ctx, initial, onSave, { mode = 'add' } = {}) {
       publication_id: st.origin === 'own' ? null : (st.pubId || null),
       variant_index: st.useVariants ? 1 : 0,
       variant_text,
-      images: st.images.slice(0, 6),
+      images: st.images.slice(0, 10),
     };
 
     if (mode === 'edit') {

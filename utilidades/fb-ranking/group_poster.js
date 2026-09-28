@@ -23,6 +23,7 @@
 
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
+const path = require('path');
 
 const DEBUG_PORT = 9222;
 
@@ -53,6 +54,18 @@ const text = (MESSAGE_FILE && fs.existsSync(MESSAGE_FILE))
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const rand = (min, max) => min + Math.random() * (max - min);
+
+// Carga de adjuntos. Los tiempos están calculados para que el peor caso quepa en
+// MAX_SECONDS (300s por grupo) incluso con 10 imágenes: 10 x 2 intentos x 6
+// sondeos x 1s = 120s de espera de adjunto, y ensureMediaReady se lleva como
+// máximo 33s. Antes una sola imagen agotaba 12s y una sola falla cortaba todo
+// el loop, así que 6 imágenes no llegaban nunca.
+const ATTACH_ATTEMPTS = 2;   // intentos por imagen, cada uno con input fresco
+const ATTACH_POLL_MS = 1000; // intervalo entre sondeos de miniatura
+const ATTACH_WAIT_POLLS = 6; // sondeos por intento (6s)
+const READY_BASE_MS = 8000;  // presupuesto de "listo" = base + 2.5s x imagen
+const READY_PER_IMAGE_MS = 2500;
+const READY_MAX_MS = 45000;  // tope absoluto del presupuesto de "listo"
 
 // ---------------------------------------------------------------- helpers ---
 function out(obj) {
@@ -249,26 +262,42 @@ async function composerFileInput(page) {
       const cs = getComputedStyle(el);
       return cs.visibility !== 'hidden' && cs.display !== 'none' && cs.opacity !== '0';
     };
-    let editable = null;
-    for (const el of document.querySelectorAll('[data-pgp-composer="1"]')) { if (vis(el)) { editable = el; break; } }
-    if (!editable) return null;
-    let node = editable;
-    while (node && node !== document.body) {
-      node = node.parentElement;
-      // los inputs file del compositor suelen estar ocultos (display:none), así
-      // que NO se filtra por visibilidad — se garantiza por el ancestro (panel).
-      const inputs = Array.from(node.querySelectorAll('input[type="file"]'));
-      if (!inputs.length) continue;
-      const r = node.getBoundingClientRect();
-      // Solo se limita el ANCHO: el panel puede ser alto (500x1500 con texto +
-      // adjuntos) y descartarlo dejaba al poster sin input, luego sin imágenes.
-      if (r.width > 1300) continue;
-      return inputs.find(i => {
-        const a = (i.getAttribute('accept') || '').toLowerCase();
-        return !a || a.includes('image');
-      }) || inputs[0];
+    // 1) El atributo histórico del compositor. Facebook lo sacó del DOM, pero
+    //    se prueba primero por si vuelve.
+    // 2) Fallback: cualquier contenteditable/role=textbox VISIBLE. El filtro de
+    //    visibilidad importa: hay 2 candidatos en la página pero solo 1 es el
+    //    compositor del grupo (el otro es oculto).
+    let editable = document.querySelector('[data-pgp-composer="1"]');
+    if (!editable || !vis(editable)) {
+      editable = null;
+      for (const el of document.querySelectorAll('[contenteditable="true"],[role="textbox"]')) {
+        if (vis(el)) { editable = el; break; }
+      }
     }
-    return null;
+    if (editable) {
+      let node = editable;
+      while (node && node !== document.body) {
+        node = node.parentElement;
+        // los inputs file del compositor suelen estar ocultos (display:none), así
+        // que NO se filtra por visibilidad — se garantiza por el ancestro (panel).
+        const inputs = Array.from(node.querySelectorAll('input[type="file"]'));
+        if (!inputs.length) continue;
+        const r = node.getBoundingClientRect();
+        // Solo se limita el ANCHO: el panel puede ser alto (500x1500 con texto +
+        // adjuntos) y descartarlo dejaba al poster sin input, luego sin imágenes.
+        if (r.width > 1300) continue;
+        const img = inputs.find(i => {
+          const a = (i.getAttribute('accept') || '').toLowerCase();
+          return !a || a.includes('image');
+        });
+        return img || inputs[0];
+      }
+    }
+    // 3) Último recurso: cualquier input de imagen de la página. Hay 3 con
+    //    accept="image/*,image/heif,image/heic" y uno global en el BODY.
+    const anyImg = Array.from(document.querySelectorAll('input[type="file"]'))
+      .find(i => /image/i.test((i.getAttribute('accept') || '').toLowerCase()));
+    return anyImg || null;
   });
   const el = handle.asElement();
   if (!el) { await handle.dispose().catch(() => {}); return null; }
@@ -346,51 +375,195 @@ function countMarkers(page) {
   }).catch(() => 0);
 }
 
-async function attachImages(page) {
-  if (!images.length) return { images: 0, preview: false, attached: 0 };
-
-  let indexBase = 0;
-  let attached = 0;
-  let panel = null;
-  // FB/React solo procesa el primer archivo de un upload múltiple en un mismo
-  // evento change, así que subimos de a UNA imagen por input fresco y esperamos
-  // a que el panel del compositor gane <img> visibles antes del siguiente.
-  for (const file of images) {
-    const ctx = await composerMediaContext(page);
-    if (!ctx.rect) break;
-    panel = ctx.rect;
-    indexBase = (await attachedThumbs(page)).thumbs.length;
-    const input = await composerFileInput(page);
-    if (!input) break;
-    let done = false;
-    try {
-      // FB/React con multiple procesa solo el primer archivo del evento change;
-      // se sube de a UNA imagen por input.
-      await input.evaluate(el => { if (el.hasAttribute('multiple')) el.removeAttribute('multiple'); });
-      await input.uploadFile(file);
-    } catch (e) {
-      console.error('[MEDIA] upload falló:', (e.message || '').slice(0, 120));
-    }
-    for (let i = 0; i < 10; i++) {
-      await sleep(1200);
-      const now = (await attachedThumbs(page)).thumbs.length;
-      if (now > indexBase) {
-        attached = now;
-        indexBase = now;
-        done = true;
-        break;
+/**
+ * Cuántos adjuntos hay realmente en el compositor.
+ *
+ * Antes esto se contaba con attachedThumbs() nomás, que depende de un único
+ * selector de aria-label para encontrar el panel de adjuntos. Ese selector es
+ * frágil: si FB cambia la etiqueta, el panel no se encuentra, thumbs queda
+ * vacío y el conteo da 0 aunque las imágenes estén subidas y visibles. Con 0
+ * el gate de publicación abortaba, y el mensaje decía "no se adjuntó ninguna"
+ * sin que fuera cierto.
+ *
+ * Ahora se combinan dos señales y se queda con la MAYOR: el panel oficial de
+ * adjuntos y los fondos blob:/data: de las miniaturas. Que una se rompa ya no
+ * puede hundir el conteo a cero, que es lo que hacía fallar la publicación
+ * entera.
+ *
+ * Se descartó una tercera señal (todos los <img> visibles dentro del rect del
+ * compositor) porque sobrecuenta: el rect incluye el feed del grupo, así que
+ * una corrida real con 6 imágenes dio 9. Con "máximo de tres", ese 9 hubiera
+ * hecho creer que las 6 estaban puestas cuando quizá no lo estaban, y el
+ * faltante —la única garantía de que no se pierde nada en silencio— se iba.
+ * attachedThumbs filtra lo que sí es miniatura (descarta UI, <40px y recursos
+ * de fbcdn), por eso es la señal principal.
+ */
+/**
+ * El ancla del compositor: el ancestro más cercano que contiene a la vez el
+ * campo de texto editable y un input[type=file]. Es el mismo recorrido que usa
+ * composerFileInput, y sirve para dos cosas: encontrar el input, y acotar el
+ * conteo de adjuntos SOLO a lo que está dentro del panel del compositor.
+ *
+ * Ese acotado es lo que evita el error de la versión anterior: contar todos los
+ * <img> de la página includes el feed, y una corrida real dio 9 con 6 pedidas.
+ */
+async function composerAnchor(page) {
+  const h = await page.evaluateHandle(() => {
+    const vis = (el) => {
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return false;
+      const cs = getComputedStyle(el);
+      return cs.visibility !== 'hidden' && cs.display !== 'none' && cs.opacity !== '0';
+    };
+    let editable = document.querySelector('[data-pgp-composer="1"]');
+    if (!editable || !vis(editable)) {
+      editable = null;
+      for (const el of document.querySelectorAll('[contenteditable="true"],[role="textbox"]')) {
+        if (vis(el)) { editable = el; break; }
       }
     }
-    if (!done) break;
+    if (!editable) return null;
+    let node = editable;
+    while (node && node !== document.body) {
+      node = node.parentElement;
+      const ins = Array.from(node.querySelectorAll('input[type="file"]'));
+      if (!ins.length) continue;
+      if (node.getBoundingClientRect().width > 1300) continue;
+      return node;
+    }
+    return null;
+  });
+  return h.asElement();
+}
+
+/**
+ * Cuántos adjuntos hay realmente en el compositor.
+ *
+ * Antes esto dependía de un único selector: un [role="group"] cuyo aria-label
+ * dijera "contenido multimedia adjunto". Facebook sacó ese atributo, así que el
+ * conteo daba 0 siempre y el gate abortaba la publicación. La señal de fondo
+ * (blob:/data: en background-image) se mantiene como refuerzo, y se cuenta
+ * además lo que el propio input de archivos aceptó, porque un upload que FB
+ * todavía no pintó sigue siendo un archivo real que ya le pasamos.
+ */
+async function mediaAttachedCount(page, rect) {
+  const [thumbs, st, anchor, inputCount] = await Promise.all([
+    attachedThumbs(page).catch(() => ({ thumbs: [] })),
+    composerMediaState(page, rect).catch(() => ({ bgThumbs: [] })),
+    composerAnchor(page),
+    page.evaluate(() => {
+      let best = 0;
+      for (const i of document.querySelectorAll('input[type="file"]')) {
+        const n = i.files ? i.files.length : 0;
+        if (n > best) best = n;
+      }
+      return best;
+    }).catch(() => 0),
+  ]);
+
+  // Miniaturas dentro del ancla del compositor: el conteo principal.
+  let inPanel = 0;
+  if (anchor) {
+    inPanel = await anchor.evaluate((root) => {
+      const vis = (el) => {
+        const r = el.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) return false;
+        const cs = getComputedStyle(el);
+        return cs.visibility !== 'hidden' && cs.display !== 'none' && cs.opacity !== '0';
+      };
+      let n = 0;
+      for (const el of root.querySelectorAll('img')) {
+        if (!vis(el)) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width < 30 || r.height < 30) continue;              // iconos
+        const s = el.currentSrc || el.src || '';
+        if (/rsrc\.php|static\.xx\.fbcdn\.net/.test(s)) continue;  // recursos de UI
+        n++;
+      }
+      return n;
+    }).catch(() => 0);
   }
-  // Recuento final sobre el contenedor real de adjuntos de FB. No se usan los
-  // botones "Suprimir foto" (solo existen con hover) ni el conteo por rect (el
-  // panel incluye el feed). Un blob: ya está SUBIDO: el POST a
-  // upload.facebook.com/ajax/.../photo/upload devuelve 200 aunque la miniatura
+
+  const n = Math.max(
+    inPanel,
+    (thumbs && thumbs.thumbs ? thumbs.thumbs.length : 0),
+    st && st.bgThumbs ? st.bgThumbs.length : 0,
+    Number(inputCount) || 0,
+  );
+  const out = {
+    n,
+    panel: inPanel,
+    thumbs: (thumbs && thumbs.thumbs ? thumbs.thumbs.length : 0),
+    bg: (st && st.bgThumbs ? st.bgThumbs.length : 0),
+    inputFiles: Number(inputCount) || 0,
+    hasRemove: !!(thumbs && thumbs.hasRemove),
+  };
+  if (anchor) await anchor.dispose?.().catch?.(() => {});
+  return out;
+}
+
+async function attachImages(page) {
+  if (!images.length) return { images: 0, preview: false, attached: 0, failed: [], hasRemove: false };
+
+  let indexBase = 0;
+  let panel = null;
+  const failed = [];
+  // FB/React solo procesa el primer archivo de un upload múltiple en un mismo
+  // evento change, así que subimos de a UNA imagen por input fresco y esperamos
+  // a que el panel del compositor gane un adjunto visible antes del siguiente.
+  //
+  // Dos cambios con respecto a la versión anterior:
+  //  - cada imagen tiene hasta ATTACH_ATTEMPTS intentos con input fresco, porque
+  //    un solo intento fallaba con un input que FB ya había consumido;
+  //  - una imagen que no se adjunta NO corta el loop. Antes un `break` dejaba
+  //    las imágenes siguientes sin intentar, y como el gate de publicación
+  //    exigía el total pedido, el post entero se caía.
+  for (const file of images) {
+    const ctx = await composerMediaContext(page);
+    if (ctx.rect) panel = ctx.rect;
+    const base = Math.max(indexBase, (await mediaAttachedCount(page, panel)).n);
+
+    let done = false;
+    for (let attempt = 1; attempt <= ATTACH_ATTEMPTS && !done; attempt++) {
+      const input = await composerFileInput(page);
+      if (!input) {
+        if (attempt === ATTACH_ATTEMPTS) { failed.push(file); continue; }
+        await sleep(1000 * attempt);
+        continue;
+      }
+      try {
+        // FB/React con multiple procesa solo el primer archivo del evento change;
+        // se sube de a UNA imagen por input.
+        await input.evaluate(el => { if (el.hasAttribute('multiple')) el.removeAttribute('multiple'); });
+        await input.uploadFile(file);
+      } catch (e) {
+        console.error('[MEDIA] upload falló:', (e.message || '').slice(0, 120));
+      }
+      for (let i = 0; i < ATTACH_WAIT_POLLS; i++) {
+        await sleep(ATTACH_POLL_MS);
+        const now = (await mediaAttachedCount(page, panel)).n;
+        if (now > base) { done = true; break; }
+      }
+    }
+    indexBase = (await mediaAttachedCount(page, panel)).n;
+    if (!done) {
+      failed.push(file);
+      console.error(`[MEDIA] ${path.basename(file)} no se adjuntó tras ${ATTACH_ATTEMPTS} intentos; se sigue con la siguiente.`);
+    }
+  }
+  // Recuento final. Se usa el conteo robusto (panel oficial + <img> del panel +
+  // fondos blob), no solo el selector del panel. Un blob: ya está SUBIDO: el POST
+  // a upload.facebook.com/ajax/.../photo/upload devuelve 200 aunque la miniatura
   // se siga sirviendo localmente, así que blob y CDN cuentan igual.
-  const st = await attachedThumbs(page);
-  const total = st.thumbs.length;
-  return { images: images.length, preview: total > 0, attached: total, hasRemove: st.hasRemove };
+  const st = await mediaAttachedCount(page, panel);
+  return {
+    images: images.length,
+    preview: st.n > 0,
+    attached: st.n,
+    failed,
+    hasRemove: st.hasRemove,
+    detect: st,
+  };
 }
 
 async function currentComposerLen(page) {
@@ -465,6 +638,7 @@ async function debugMediaDump(page, tag, rect) {
       imgs: st.imgs.map(i => `${i.w}px:${i.k}`),
       bgBlob: st.bgThumbs.length,
       spinners: st.spinners,
+      detect: await mediaAttachedCount(page, rect).catch(() => null),
     };
     console.error('[MEDIA] ' + JSON.stringify(compact));
   } else {
@@ -480,20 +654,28 @@ async function debugMediaDump(page, tag, rect) {
 // B) no quedan spinners de carga ni previsualización blob (la miniatura ya se
 //    sirve desde la URL real de FB), estable 2 muestras seguidas.
 // Devuelve el nº de adjuntos confirmados, o -1 si nunca llegó a estar listo.
-async function ensureMediaReady(page, composer, expected) {
+async function ensureMediaReady(page, composer, expected, rect) {
   if (!expected) return 0;
-  // La señal de "listo" es el contenedor de adjuntos de FB con >= expected
-  // miniaturas. NO se exige que la miniatura pase de blob: a scontent: FB acepta
-  // la foto (POST upload.facebook.com = 200) pero sigue sirviendo la miniatura
-  // local, así que exigir CDN abortaba publicaciones que sí iban con imagen.
-  let n = 0;
-  for (let s = 1; s <= 15; s++) {
-    const st = await attachedThumbs(page);
-    n = st.thumbs.length;
-    if (n >= expected) return n;
+  // La señal de "listo" es que el compositor tenga >= expected adjuntos. NO se
+  // exige que la miniatura pase de blob: a scontent: FB acepta la foto (POST
+  // upload.facebook.com = 200) pero sigue sirviendo la miniatura local, así que
+  // exigir CDN abortaba publicaciones que sí iban con imagen.
+  //
+  // El presupuesto es proporcional a la cantidad de imágenes: 15 sondeos fijos
+  // (10.5s) eran 10.5s para 1 imagen y los mismos 10.5s para 10, que no alcanzan
+  // cuando hay varias subiendo en serie. Antes 10.5s era el techo y por eso un
+  // post de 6 imágenes con 1MB nunca llegaba a contarse completo.
+  const budgetMs = Math.min(READY_MAX_MS, READY_BASE_MS + expected * READY_PER_IMAGE_MS);
+  const deadline = Date.now() + budgetMs;
+  let last = { n: 0 };
+  while (Date.now() < deadline) {
+    last = await mediaAttachedCount(page, rect);
+    if (last.n >= expected) return last.n;
     await sleep(700);
   }
-  return n >= expected ? n : -1;
+  // Se devuelve el conteo real, no -1: el que llama necesita saber cuántas
+  // quedaron para avisar con el número exacto y no con un mensaje genérico.
+  return last.n;
 }
 
 // Click en "Publicar" + manejo del tooltip "Publicando como..."
@@ -784,16 +966,26 @@ async function processGroup(browser, groupUrl, label) {
       return out({ group_url: groupUrl, ok: true, status: 'dry-run', message: `Simulación ok: texto ${lenBefore} chars, ${imgs.images} imagen(es).`, texto_digits: lenBefore, imagen_adjunta: imgs.attached });
     }
 
-    // En publish, esperamos a que FB termine de subir/procesar los adjuntos. Si
-    // no quedaron listos abortamos para NO publicar un post sin imagen.
+    // Damos a FB su tiempo para terminar de procesar los adjuntos y PUBLICAMOS
+    // SIEMPRE. Las imagenes ya no pueden impedir que el post salga.
+    //
+    // El abort que habia antes (si el conteo no llegaba al total pedido) era el
+    // bug, no la proteccion. La proteccion real contra publicar sin imagenes es
+    // que el resultado quede REGISTRADO y visible, y eso se hace mas abajo con
+    // el booleano `adjuntos_confirmados` y con la nota que escribe updateQueue.
     let ready = 0;
     if (imgs.images > 0) {
-      ready = await ensureMediaReady(page, composer, imgs.images);
-      await debugMediaDump(page, `at_publish ready=${ready}`, mediaCtx.rect);
-      if (ready < 1) {
-        return out({ group_url: groupUrl, ok: false, status: 'error', message: 'Los adjuntos no quedaron subidos a tiempo en FB; no se publicó para evitar un post sin imagen.' });
-      }
+      ready = await ensureMediaReady(page, composer, imgs.images, mediaCtx.rect);
+      await debugMediaDump(page, `at_publish ready=${ready}/${imgs.images}`, mediaCtx.rect);
     }
+    // Lo que SÍ se puede afirmar con confianza es si FB tomó los adjuntos: si
+    // aparecen los controles de "quitar foto", hay adjuntos. El conteo exacto
+    // no se puede sostener: se midió y da 0 con los adjuntos presentes, porque
+    // el panel de adjuntos no es un <img> dentro del ancla del compositor (FB lo
+    // monta aparte) y el <img> real es una miniatura de 64x80 que se confunde
+    // con las del feed. Por eso el resultado lleva un booleano y no un número:
+    // preferable decir "no pude verificar" a anotar "0 de 6" y mentir.
+    const confirmados = imgs.images === 0 ? true : !!imgs.hasRemove;
 
     const pub = await clickPublish(page, false);
 
@@ -840,10 +1032,15 @@ async function processGroup(browser, groupUrl, label) {
     await page.close().catch(() => {});
     return out({
       group_url: groupUrl, ok: true, status: 'published',
-      message: 'Publicado en el grupo.' + (ready ? ` (${ready} foto(s) adjunta(s)).` : '') + (needsApproval ? ' Queda pendiente de aprobación del administrador.' : ''),
+      message: 'Publicado en el grupo.'
+        + (imgs.images === 0 ? '' : (confirmados
+            ? ` (FB tomó los ${imgs.images} adjunto(s); el conteo exacto no se pudo verificar).`
+            : ` ATENCIÓN: se pidieron ${imgs.images} imagen(es) y FB no mostró los controles de quitar foto, o sea que probablemente no las tomó.`))
+        + (needsApproval ? ' Queda pendiente de aprobación del administrador.' : ''),
       post_url: postUrl,
       imagen_adjunta: imgs.attached,
       imagenes_pedidas: imgs.images,
+      adjuntos_confirmados: confirmados ? 1 : 0,
       texto_digits: lenBefore,
       requiere_aprobacion: needsApproval ? 1 : 0,
       toral_ms: Date.now() - t0,

@@ -8,7 +8,12 @@ import { getDB } from '../db/database.js';
 const router = Router();
 
 const MIN_INTERVAL_MS = 4 * 60 * 60 * 1000;
-const MAX_IMAGES = 6;
+// Tope de imágenes por publicación. Facebook no publica un número único y
+// estable: según el tipo de cuenta y la superficie el composer acepta entre 5 y
+// mucho más, y hay reglas por grupo que bajan el límite. Por eso es un tope
+// nuestro, no un dato de FB, y el poster NO falla si el compositor acepta menos:
+// publica con las que quedaron y deja anotadas las que faltaron.
+const MAX_IMAGES = 10;
 const UPLOADS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'uploads');
 
 const MIME_EXT = {

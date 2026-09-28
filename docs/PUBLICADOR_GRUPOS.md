@@ -372,14 +372,47 @@ Claves del resultado exitoso (`group_poster.js:836-845`):
 | `post_url` | URL del post, **o cadena vacía** si no se encontró el ancla (`:613`) |
 | `imagen_adjunta` | nº de miniaturas que FB muestra de verdad |
 | `imagenes_pedidas` | nº de paths que se le pasaron |
+| `adjuntos_confirmados` | `1`/`0`. Señal de confianza: FB tomó los adjuntos. **Ver abajo** |
 | `texto_digits` | Longitud del texto que quedó en el compositor |
 | `requiere_aprobacion` | `1`/`0`, busca 3 frases de FB en el body (`:705-714`) |
 | `toral_ms` | Duración. **El typo es real** (`:849`), no `total_ms` |
 
+### Los adjuntos ya no bloquean la publicación
+
+Antes, si el conteo de miniaturas no llegaba al total pedido, el poster abortaba y el post
+**no se publicaba**. Eso quedó eliminado a propósito: un problema de adjuntos nunca puede
+impedir que el post salga. En su lugar el resultado reporta qué se pudo verificar y
+`updateQueue()` lo deja anotado en las notas de la cola.
+
+El conteo exacto **no es confiable** contra el DOM actual de Facebook, y no se debe reportar
+como si lo fuera. Lo medido el 2026-09-27, con 6 imágenes pedidas:
+
+| Señal | Resultado | Por qué no sirve |
+|---|---|---|
+| `input[type=file]` en el compositor | 0 | React lo vacía después de procesar |
+| `<img>` dentro del ancla del compositor | 0 | FB monta el panel de adjuntos **fuera** de ese subárbol |
+| `<img>` `scontent` de la página | 66 → 67 | Incluye el feed; da 9 con 6 pedidas |
+| Miniatura real del adjunto | `64x80` | Se confunde con miniaturas del feed (`227x227`) |
+| **Controles de "quitar foto"** | **presentes** | Único booleano que sí es fiable |
+
+Por eso `adjuntos_confirmados` es un **booleano y no un número**: si FB muestra los controles
+de quitar foto, tomó los adjuntos. Las notas de la cola dicen *"FB confirmó los adjuntos"* o
+*"ATENCIÓN: FB no mostró los controles de quitar foto"*, y nunca inventan un "3 de 6", porque
+un número falso en la cola no lo cuestiona nadie.
+
+Máximo **10 imágenes** por publicación (`MAX_IMAGES` en `backend/routes/pubQueue.js:10` y
+`frontend/js/views/pubQueueView.js`). Cada imagen se intenta 2 veces y, si falla, el bucle
+**sigue con la siguiente** en vez de cortar el lote entero.
+
+> Cuando Facebook vuelva a cambiar el DOM del compositor, el síntoma será
+> `adjuntos_confirmados: 0` con imágenes pedidas. Se diagnostica mirando el volcado
+> `[MEDIA]` que emite el poster (contiene `markers`, `imgs`, `bgBlob`, `spinners` y `detect`).
+> Para volcarlo a un archivo: `MEDIA_DEBUG=/ruta/absoluta/salida.json`.
+
 Los errores son `{ group_url, ok:false, status:'error', message }` con 7 mensajes distintos.
 Los que te importan para la UI: `'Sesión de Facebook requerida…'`, `'No se encontró el
 compositor del grupo (¿grupo cerrado/archivado?).'` y `'Los adjuntos no quedaron subidos a
-tiempo en FB; no se publicó…'`.
+tiempo en FB; no se publicó…'` (este último **ya no se emite**: el abort se eliminó).
 
 **`--max-seconds` no es un presupuesto global**: se reinicia en cada grupo (`:877`, dentro del
 bucle `for (const [i, groupUrl] of groups.entries())`), y además `execFile` mata el proceso a los
