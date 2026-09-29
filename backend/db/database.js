@@ -85,6 +85,7 @@ export async function initDB() {
   migratePromptEngine();
   migrateGeneratedImages();
   migrateCommissionCurrency();
+  migrateGroupFbId();
   migrateProviderStyleCode();
   migrateProviderStyles();
   migrateWarrantyRules();
@@ -760,6 +761,27 @@ function migrateAuthSecret() {
     const secret = randomUUID() + randomBytes(16).toString('hex');
     db.prepare("UPDATE settings SET auth_secret = ? WHERE id = 1").run(secret);
   }
+}
+
+// La identidad de un grupo en Facebook es su ID numérico, no su nombre: el
+// usuario puede renombrarlo y dos grupos distintos pueden llamarse igual. Sin
+// esta columna, importar la lista de suscripciones crea duplicados en cuanto
+// un grupo cambia de nombre, y el POST /api/groups (que deduplica por nombre)
+// deja pasar dos filas que son el mismo grupo.
+function migrateGroupFbId() {
+  try {
+    db.exec("ALTER TABLE facebook_groups ADD COLUMN fb_id TEXT");
+  } catch (_) { /* ya existe */ }
+
+  // Backfill: el ID siempre estuvo dentro de la URL.
+  const filas = db.prepare("SELECT id, url FROM facebook_groups WHERE url LIKE '%/groups/%'").all();
+  for (const f of filas) {
+    const m = String(f.url || '').match(/\/groups\/(\d+)/);
+    if (m && !db.prepare('SELECT fb_id FROM facebook_groups WHERE id = ?').get(f.id)?.fb_id) {
+      db.prepare('UPDATE facebook_groups SET fb_id = ? WHERE id = ?').run(m[1], f.id);
+    }
+  }
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_facebook_groups_fb_id ON facebook_groups(fb_id) WHERE fb_id IS NOT NULL AND fb_id <> ''");
 }
 
 // Índices para los JOIN/GROUP BY del dashboard y reportes. Idempotentes.
