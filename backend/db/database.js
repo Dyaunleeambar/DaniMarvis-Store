@@ -81,6 +81,7 @@ export async function initDB() {
   migratePublicationDate();
   migrateExportsKind();
   migratePubQueue();
+  migratePubAgenda();
   migratePromptEngine();
   migrateGeneratedImages();
   migrateCommissionCurrency();
@@ -357,8 +358,14 @@ function migratePublishConfig() {
         hours_from: 8,
         hours_to: 21,
         min_gap_min: 45,
-        cooldown_min: 240,
         worker_batch: 3
+      },
+      // Reloj del disparador por fecha. Vive aparte del worker con límites
+      // porque no comparte ni una sola de sus reglas.
+      agenda: {
+        auto: true,
+        tick_min: 1,
+        catchup_hours: 24
       }
     });
     db.prepare("UPDATE settings SET publish_config = ? WHERE id = 1").run(defaults);
@@ -403,6 +410,132 @@ function migratePubQueue() {
   try {
     db.exec("ALTER TABLE publication_queue ADD COLUMN pending_approval INTEGER DEFAULT 0");
   } catch (_) {}
+}
+
+// La agenda unifica lo que hasta ahora eran DOS fechas con dos husos distintos:
+// `publications.publication_date` (hora local, sin zona, la que veía el usuario
+// en el calendario) y `publication_queue.published_at` (UTC ISO, la que
+// comparaba el worker). `scheduled_at` nunca recibió un valor real: las filas
+// quedaron en NULL, o sea que el disparo por fecha nunca se probó de verdad.
+function migratePubAgenda() {
+  // ── 1) publication_date: hora local → UTC ────────────────────────────────
+  // Solo se convierten las que vinieron del formulario datetime-local, que
+  // guarda la hora de pared local sin zona. Las 10 que son idénticas a
+  // created_at vienen del backfill de migratePublicationDate() y YA están en
+  // UTC (SQLite datetime('now') es UTC): sumarle 4h las correría.
+  // Los dos criterios coinciden exactamente (19 chars con segundos ⟺
+  // publication_date = created_at), así que exigir ambos evita cualquier
+  // conversión dudosa.
+  // Idempotente: el valor nuevo es 'YYYY-MM-DDTHH:MM:SS.sssZ', que ya no
+  // matchea el patrón local, así que una segunda pasada no toca nada.
+  const LOCAL_WALL_CLOCK = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/;
+  const UTC_SIN_SUFIJO = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+  const filas = db.prepare(
+    "SELECT id, publication_date, created_at FROM publications WHERE publication_date IS NOT NULL"
+  ).all();
+  let convertidas = 0;
+  let normalizadas = 0;
+  for (const f of filas) {
+    const v = String(f.publication_date || '');
+
+    // Caso A — vino del formulario datetime-local: hora de pared local sin
+    // zona. Hay que sumarle el desplazamiento (new Date() la lee como local y
+    // toISOString() devuelve UTC).
+    if (LOCAL_WALL_CLOCK.test(v) && v !== f.created_at) {
+      const d = new Date(v.replace(' ', 'T'));
+      if (Number.isNaN(d.getTime())) continue;
+      db.prepare("UPDATE publications SET publication_date = ? WHERE id = ?").run(d.toISOString(), f.id);
+      convertidas++;
+      continue;
+    }
+
+    // Caso B — es idéntica a created_at, o sea que viene del backfill de
+    // migratePublicationDate(). SU VALOR YA ES UTC (SQLite datetime('now') es
+    // UTC), pero viene escrito como 'YYYY-MM-DD HH:MM:SS' sin 'Z', y V8 lee
+    // ese formato como hora LOCAL: se mostraría 4 horas corridas. Acá no se
+    // desplaza nada, solo se le pone el 'Z' que le faltaba.
+    if (UTC_SIN_SUFIJO.test(v) && v === f.created_at) {
+      const d = new Date(v.replace(' ', 'T') + 'Z');
+      if (Number.isNaN(d.getTime())) continue;
+      db.prepare("UPDATE publications SET publication_date = ? WHERE id = ?").run(d.toISOString(), f.id);
+      normalizadas++;
+    }
+  }
+
+  // ── 2) Descartar lo que quedó en la cola sin fecha (UNA sola vez) ────────
+  // Las filas 'pending' sin scheduled_at son posts viejos que nunca se
+  // publicaron y que el worker arrastraba en cada tick. Se sacan de la cola
+  // (no del contenido: la fila en publications sobrevive) para que vuelvan al
+  // montón de material y el usuario elija su fecha a mano.
+  //
+  // Esto corre en CADA arranque de initDB(), así que las dos guardas importan:
+  //   a) scheduled_at IS NULL — el Planificador SIEMPRE escribe fecha, así que
+  //      una publicación agendada nunca entra acá. Sin este filtro, un reinicio
+  //      borraría lo que el usuario acaba de programar.
+  //   b) el marcador — aunque la condición (a) ya lo evita, una migración
+  //      destructiva que se repite en cada boot no debe depender de un solo
+  //      predicado. Se marca en publish_config y no vuelve a correr.
+  const rowCfg = db.prepare("SELECT publish_config FROM settings WHERE id = 1").get();
+  let pc = {};
+  try { pc = JSON.parse(rowCfg?.publish_config || '{}'); } catch {}
+
+  if (!pc._agenda_migrated) {
+    const huerfanos = db.prepare(
+      "SELECT id FROM publication_queue WHERE status = 'pending' AND scheduled_at IS NULL"
+    ).all();
+    if (huerfanos.length) {
+      const ids = huerfanos.map(h => h.id);
+      db.prepare(
+        "DELETE FROM publication_queue WHERE status = 'pending' AND scheduled_at IS NULL"
+      ).run();
+      console.log(`[DB] agenda: ${ids.length} publicación(es) pendiente(s) sin fecha devueltas a material`);
+    }
+    pc._agenda_migrated = true;
+  }
+
+  // ── 2b) Destinos que quedaron sin publicación ───────────────────────────
+  // DELETE /publications/:id no cascada a publication_queue, así que borrar un
+  // material deja sus destinos colgando. Un destino pendiente sin publicación
+  // es peor que basura: el worker legado lo agarra igual (su SELECT es un LEFT
+  // JOIN) y publica un post sin texto. Se borran los que NO están publicados;
+  // los publicados se conservan porque son el registro de lo que ya salió, y
+  // many de ellos viene de la cola vieja (publication_id NULL) y no tienen
+  // publicación que las respalde.
+  // Es idempotente por naturaleza: una vez limpio no hay nada que matchee.
+  const huerfanos = db.prepare(`
+    DELETE FROM publication_queue
+    WHERE status <> 'published'
+      AND (publication_id IS NULL
+           OR publication_id NOT IN (SELECT id FROM publications))
+  `).run();
+  if (huerfanos) {
+    console.log(`[DB] agenda: ${huerfanos} destino(s) sin publicación eliminado(s)`);
+  }
+
+  // ── 3) Config: fuera el cooldown, entra el disparador por fecha ─────────
+  const ap = pc.autopublish || {};
+
+  // El cooldown de 4h por grupo se elimina: la separación la pone el usuario
+  // al agendar. Se borra la clave para que no quede un valor muerto.
+  delete ap.cooldown_min;
+
+  // El disparador por fecha es un reloj DISTINTO del worker con límites: sin
+  // cap, sin gap, sin franja y sin cooldown, porque la hora la eligió el
+  // usuario evento por evento. Vive en su propio bloque para que el panel de
+  // ajustes no mezcle las dos cosas.
+  pc.agenda = {
+    auto: pc.agenda?.auto !== false,      // encendido por defecto
+    tick_min: 1,                          // precisión de 1 minuto
+    catchup_hours: 24,                    // pasado esto, no se recupera solo
+    ...(pc.agenda || {}),
+  };
+
+  db.prepare("UPDATE settings SET publish_config = ? WHERE id = 1")
+    .run(JSON.stringify(pc));
+
+  if (convertidas > 0 || normalizadas > 0) {
+    console.log(`[DB] agenda: ${convertidas} fecha(s) local→UTC, ${normalizadas} UTC normalizada(s) a ISO`);
+  }
 }
 
 function migratePromptEngine() {

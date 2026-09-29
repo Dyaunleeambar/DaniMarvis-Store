@@ -7,7 +7,10 @@ import { getDB } from '../db/database.js';
 
 const router = Router();
 
-const MIN_INTERVAL_MS = 4 * 60 * 60 * 1000;
+// Ya no hay MIN_INTERVAL_MS ni cooldown de 4h por grupo: la separación entre
+// publicaciones la fija el usuario al agendar en el calendario. La pestaña de
+// "Temporizadores" que consumía esto también se fue.
+
 // Tope de imágenes por publicación. Facebook no publica un número único y
 // estable: según el tipo de cuenta y la superficie el composer acepta entre 5 y
 // mucho más, y hay reglas por grupo que bajan el límite. Por eso es un tope
@@ -175,32 +178,6 @@ router.delete('/:id', (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Elemento no encontrado' });
   db.prepare('DELETE FROM publication_queue WHERE id = ?').run(req.params.id);
   res.json({ message: 'Eliminado de la cola' });
-});
-
-router.get('/timer', (req, res) => {
-  const db = getDB();
-  const recent = db.prepare(`
-    SELECT group_name, MAX(published_at) as last_published
-    FROM publication_queue
-    WHERE status = 'published' AND published_at IS NOT NULL
-    GROUP BY LOWER(group_name)
-  `).all();
-
-  const now = Date.now();
-  const timers = recent.map(r => {
-    const lastMs = new Date(r.last_published).getTime();
-    const elapsed = now - lastMs;
-    const remaining = Math.max(0, MIN_INTERVAL_MS - elapsed);
-    return {
-      group_name: r.group_name,
-      last_published: r.last_published,
-      remaining_ms: remaining,
-      can_publish: remaining === 0,
-      ready_at: remaining > 0 ? new Date(lastMs + MIN_INTERVAL_MS).toISOString() : null,
-    };
-  });
-
-  res.json({ min_interval_ms: MIN_INTERVAL_MS, timers });
 });
 
 export default router;

@@ -8,8 +8,8 @@ router.get('/status', async (req, res) => {
 });
 
 // Publica/prepara los ítems vencidos de la cola (modo automático respeta
-// franja horaria, cap diario y cooldowns). Con force=true ignora las
-// condiciones naturales (solo rutas manuales de la UI).
+// franja horaria, cap diario y gap). Con force=true ignora esas condiciones
+// naturales (solo rutas manuales de la UI).
 //
 // NO espera al run: devuelve 202 con el runId y el trabajo sigue en background.
 // El poster tiene --max-seconds=300 y entre posts hay 45-135s de separación, así

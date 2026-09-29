@@ -48,7 +48,10 @@ router.post('/', (req, res) => {
 
   const id = uuid();
   const imagesStr = JSON.stringify(images || []);
-  const date = publication_date || new Date().toISOString().slice(0, 19).replace('T', ' ');
+  // UTC ISO, no 'YYYY-MM-DD HH:MM:SS' local: publication_date se compara contra
+  // el reloj del disparador por fecha y contra published_at (que ya es UTC ISO).
+  // El default anterior mezclaba los dos formatos.
+  const date = publication_date || new Date().toISOString();
   const maxOrder = db.prepare('SELECT MAX(sort_order) as m FROM publications').get();
   const sortOrder = (maxOrder?.m ?? -1) + 1;
 

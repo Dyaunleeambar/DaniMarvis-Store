@@ -18,6 +18,7 @@ import importImagesRouter from './routes/images.js';
 import importRouter from './routes/import.js';
 import pubQueueRouter from './routes/pubQueue.js';
 import groupPublishRouter from './routes/groupPublish.js';
+import agendaRouter from './routes/agenda.js';
 import groupsRouter from './routes/groups.js';
 import rankingsRouter from './routes/rankingsRouter.js';
 import promptEngineRouter from './routes/promptEngine.js';
@@ -25,7 +26,7 @@ import providerStylesRouter from './routes/providerStyles.js';
 import warrantyRulesRouter from './routes/warrantyRules.js';
 import { generateCatalogFile } from './lib/catalogGenerator.js';
 import { ensureWebp } from './lib/imageUtils.js';
-import { startGroupPublishScheduler, rescheduleGroupPublish, groupPublishSchedulerState } from './lib/groupPublisher.js';
+import { startGroupPublishScheduler, rescheduleGroupPublish, groupPublishSchedulerState, startAgendaScheduler, rescheduleAgenda, agendaSchedulerState } from './lib/groupPublisher.js';
 import { createBackup } from './scripts/backup.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -104,6 +105,7 @@ app.use('/api/publications', publicationsRouter);
 app.use('/api/exports', exportsRouter);
 app.use('/api/images', importImagesRouter);
 app.use('/api/import', importRouter);
+app.use('/api/agenda', agendaRouter);
 app.use('/api/pub-queue', pubQueueRouter);
 app.use('/api/group-publish', groupPublishRouter);
 app.use('/api/groups', groupsRouter);
@@ -200,6 +202,15 @@ app.put('/api/settings', (req, res) => {
       const wasActive = activeBefore;
       const r = rescheduleGroupPublish({ wasActive });
       if (r.rescheduled) console.log('[settings] temporizador del worker reaplicado sin reiniciar el server');
+    }
+    // El disparador por fecha es un reloj aparte: se rearma con su propia config.
+    // `wasActive` se lee del estado real del timer, no de un campo de la config,
+    // para que apagar el worker no apague (ni encienda) el disparador.
+    if (publish_config && publish_config.agenda) {
+      let agendaWasActive = false;
+      try { agendaWasActive = Boolean(agendaSchedulerState().active); } catch { agendaWasActive = false; }
+      const r = rescheduleAgenda({ wasActive: agendaWasActive });
+      if (r.rescheduled) console.log('[settings] temporizador del disparador por fecha reaplicado sin reiniciar el server');
     }
   }
 
@@ -463,6 +474,12 @@ async function start() {
   // arranca acá (y no dentro del listen) para que quede después de que la BD
   // terminó de cargar en el start() de arriba.
   startGroupPublishScheduler();
+
+  // El disparador por fecha, que es el que hace que "18:00" signifique 18:00.
+  // Es un reloj independiente del worker de arriba y arranca según su propio
+  // interruptor (por defecto encendido). Evencia si auto=false se limita a
+  // tener el timer armado mirando la cola sin publicar nada.
+  startAgendaScheduler();
 }
 
 start();

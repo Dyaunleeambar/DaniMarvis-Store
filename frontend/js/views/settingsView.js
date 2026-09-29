@@ -27,6 +27,7 @@ function renderPage(container, settings, categories, providerStyles) {
   const ai = pc.ai || {};
   const fb = pc.facebook || {};
   const ap = pc.autopublish || {};
+  const ag = pc.agenda || { auto: true, tick_min: 1, catchup_hours: 24 };
   const rk = pc.ranking || {};
 
   container.innerHTML = `
@@ -152,12 +153,53 @@ function renderPage(container, settings, categories, providerStyles) {
           </details>
 
           <details style="margin-top:12px" open>
-            <summary style="cursor:pointer;font-weight:600;font-size:.9rem;color:var(--rose)">🤖 Auto-publicar en grupos (opcional) — ${ap.enabled ? `activo · máx ${ap.daily_cap ?? 6}/día · ${ap.hours_from ?? 8}:00–${ap.hours_to ?? 21}:00 · gap ${ap.min_gap_min ?? 45} min · cada ${ap.tick_min ?? 5} min` : 'apagado'}</summary>
+            <summary style="cursor:pointer;font-weight:600;font-size:.9rem;color:var(--rose)">📅 Disparador por fecha ${ag.auto === false ? '(apagado)' : '(activo)'}</summary>
             <p style="margin:8px 0 12px;font-size:.8rem;color:var(--text-secondary)">
-              El panel deja los posts listos (texto + imagen) en la Cola de Publicaciones y un worker
-              los dispara en los grupos usando tu Chrome (requiere <code>--remote-debugging-port=9222</code>
-              logueado en Facebook), imitando un flujo natural: cap diario, franja horaria, separación
-              entre posts y cooldown por grupo.
+              Es el reloj que publica lo que agendás en <strong>Publicaciones</strong>. Revisa la agenda
+              cada minuto y, cuando llega la hora de un evento, publica en todos sus grupos.
+              No tiene límite de posts, ni franja horaria, ni separación: la hora y los grupos los
+      elegís vos, evento por evento.
+            </p>
+            <div class="form-group">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0">
+                <input type="checkbox" name="ag_auto" value="1" ${ag.auto === false ? '' : 'checked'} style="width:16px;height:16px" />
+                Publicar solo lo que está agendado
+              </label>
+              <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">
+                Apagado, podés seguir agendando: los eventos se acumulan como vencidos y se publican
+                todos juntos cuando lo vuelvas a prender.
+              </small>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Revisar la agenda cada (min)</label>
+                <input type="number" name="ag_tick" class="form-control" min="1" max="15" value="${ag.tick_min ?? 1}" />
+                <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">1 minuto = lo más exacto. Se aplica al guardar, sin reiniciar.</small>
+              </div>
+              <div class="form-group">
+                <label>Recuperar vencidos hasta (h)</label>
+                <input type="number" name="ag_catchup" class="form-control" min="0" max="168" value="${ag.catchup_hours ?? 24}" />
+                <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">
+                  Si el server estuvo apagado, se publica lo que venció dentro de esta ventana. Lo más
+                  viejo que esto queda marcado como <em>Omitida</em>: no se publica solo, para no salir
+                  un post de hace tres días sin que lo veas.
+                </small>
+              </div>
+            </div>
+            <p style="margin:10px 0 0;font-size:.78rem;color:var(--text-secondary)">
+              <strong>Requiere el server encendido.</strong> Este reloj vive en el proceso del backend:
+              si apagás la app, no hay nadie mirando la agenda. Por eso existe la ventana de
+              recuperación de arriba.
+            </p>
+          </details>
+
+          <details style="margin-top:12px" ${ap.enabled ? 'open' : ''}>
+            <summary style="cursor:pointer;font-weight:600;font-size:.9rem;color:var(--text-secondary)">🤖 Worker con límites (opcional) — ${ap.enabled ? `activo · máx ${ap.daily_cap ?? 6}/día · ${ap.hours_from ?? 8}:00–${ap.hours_to ?? 21}:00 · gap ${ap.min_gap_min ?? 45} min · cada ${ap.tick_min ?? 5} min` : 'apagado'}</summary>
+            <p style="margin:8px 0 12px;font-size:.8rem;color:var(--text-secondary)">
+              Es un segundo reloj, más conservador, pensado para publicar sin que vos tengas que agendar
+              nada. Mira lo que quedó en <em>pendiente</em> y lo publica usando tu Chrome
+              (requiere <code>--remote-debugging-port=9222</code> logueado en Facebook), imitando un
+              flujo natural: cap diario, franja horaria y separación entre posts.
             </p>
             <div class="form-group">
               <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0">
@@ -192,24 +234,20 @@ function renderPage(container, settings, categories, providerStyles) {
                 <input type="number" name="ap_min_gap" class="form-control" min="5" max="600" value="${ap.min_gap_min ?? 45}" />
               </div>
               <div class="form-group">
-                <label>Cooldown por grupo (min)</label>
-                <input type="number" name="ap_cooldown" class="form-control" min="30" max="4320" value="${ap.cooldown_min ?? 240}" />
-              </div>
-              <div class="form-group">
                 <label>Posts por tick del worker</label>
                 <input type="number" name="ap_batch" class="form-control" min="1" max="20" value="${ap.worker_batch ?? 3}" />
               </div>
               <div class="form-group">
                 <label>Temporizador: cada cuántos minutos mira la cola</label>
                 <input type="number" name="ap_tick" class="form-control" min="1" max="120" value="${ap.tick_min ?? 5}" />
-                <small style="color:var(--text-secondary);font-size:.72rem">Antes era una constante de 5 minutos y no se podía cambiar. Se aplica al guardar, sin reiniciar.</small>
+                <small style="color:var(--text-secondary);font-size:.72rem">Se aplica al guardar, sin reiniciar.</small>
               </div>
             </div>
             <p style="margin:10px 0 0;font-size:.78rem;color:var(--text-secondary)">
-              <strong>Ojo:</strong> estos límites son los del <em>worker automático</em>. El botón
-              <em>«Correr vencidos»</em> de la cola manda <code>force</code> y se salta el cap diario,
-              la franja horaria, el gap y el cooldown por grupo. Para vaciar la cola con estos
-              límites, activá el worker.
+              <strong>Ojo:</strong> el worker con límites agarra todo lo pendiente, <em>incluido lo que
+              vos agendaste para un momento concreto</em>. Si lo dejás prendido junto con el disparador
+              por fecha, vas a tener dos relojes compitiendo por las mismas filas. Lo normal es usar
+              uno solo: el disparador por fecha, que publica exactamente lo que agendaste.
             </p>
           </details>
 
@@ -402,9 +440,15 @@ function renderPage(container, settings, categories, providerStyles) {
         hours_from: parseInt(fd.get('ap_hours_from'), 10) || 8,
         hours_to: parseInt(fd.get('ap_hours_to'), 10) || 21,
         min_gap_min: parseInt(fd.get('ap_min_gap'), 10) || 45,
-        cooldown_min: parseInt(fd.get('ap_cooldown'), 10) || 240,
+        // Ya no se manda cooldown_min: si se enviara, el backend volvería a
+        // guardarlo en la config y el cooldown reaparecería en el worker.
         worker_batch: parseInt(fd.get('ap_batch'), 10) || 3,
         tick_min: parseInt(fd.get('ap_tick'), 10) || 5
+      },
+      agenda: {
+        auto: fd.get('ag_auto') === '1',
+        tick_min: parseInt(fd.get('ag_tick'), 10) || 1,
+        catchup_hours: Number.isFinite(Number(fd.get('ag_catchup'))) ? Number(fd.get('ag_catchup')) : 24
       },
       ranking: {
         auto_enabled: fd.get('rk_auto_enabled') === '1',

@@ -758,3 +758,339 @@ tr:hover td { background: rgba(201,132,122,.03); }
 .publication-detail-info {
   margin-bottom: 16px;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   AGENDA — reemplaza al grid de tarjetas y a la "Cola de Publicaciones".
+   Inspirado en Meta Business Suite: columnas de día, eventos colocados por
+   hora, y un panel de detalle con el desglose de destinos.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.agenda-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.agenda-nav { display: flex; align-items: center; gap: 4px; }
+.agenda-period {
+  font-size: .95rem;
+  font-weight: 600;
+  min-width: 190px;
+  text-align: center;
+  text-transform: capitalize;
+}
+.agenda-viewtoggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.agenda-viewtoggle button {
+  border: 0;
+  background: var(--bg-card);
+  padding: 6px 14px;
+  font-size: .8rem;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+.agenda-viewtoggle button.on { background: var(--primary); color: #fff; font-weight: 600; }
+.agenda-filters {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.agenda-legend {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+  font-size: .72rem;
+  color: var(--text-secondary);
+}
+.agenda-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.agenda-legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+
+/* ── grilla mes/semana ──────────────────────────────────────────────────── */
+.agenda-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.agenda-dayhead {
+  background: var(--bg-card);
+  padding: 7px 9px;
+  font-size: .72rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+}
+.agenda-day {
+  background: var(--bg-card);
+  min-height: 116px;
+  padding: 5px 6px 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.agenda-day--out { background: var(--bg); }
+.agenda-day--hoy { background: #fffaf7; }
+.agenda-daynum {
+  font-size: .72rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  align-self: flex-start;
+  min-width: 21px;
+  height: 21px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+.agenda-day--hoy .agenda-daynum { background: var(--primary); color: #fff; }
+.agenda-daynum--tenue { color: var(--text-muted); font-weight: 500; }
+
+.agenda-ev {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  border-left: 3px solid var(--text-muted);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  padding: 4px 6px;
+  cursor: pointer;
+  font-size: .7rem;
+  line-height: 1.25;
+}
+.agenda-ev:hover { background: #efe9e4; }
+.agenda-ev--material        { border-left-color: var(--text-muted); }
+.agenda-ev--programada      { border-left-color: var(--info);     background: #eaf4fb; }
+.agenda-ev--vencida         { border-left-color: var(--warning);  background: #fdf1e3; }
+.agenda-ev--publicada       { border-left-color: var(--success);  background: #eaf5ea; }
+.agenda-ev--parcial,
+.agenda-ev--parcial_vencida { border-left-color: #b8860b;         background: #fbf5e2; }
+.agenda-ev--error           { border-left-color: var(--error);    background: #fdeaea; }
+.agenda-ev--omitida,
+.agenda-ev--cancelada       { border-left-color: #9e918d;         background: #f2efed; opacity: .78; }
+.agenda-evtime { font-weight: 700; color: var(--text); }
+.agenda-evtxt  { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agenda-evmeta { font-size: .64rem; color: var(--text-muted); margin-top: 1px; }
+.agenda-more {
+  font-size: .66rem;
+  color: var(--text-muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 1px 4px;
+  text-align: left;
+}
+
+/* ── vista semana: rejilla horaria ─────────────────────────────────────── */
+.agenda-week {
+  display: grid;
+  grid-template-columns: 46px repeat(7, minmax(0,1fr));
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.agenda-hour {
+  background: var(--bg-card);
+  font-size: .64rem;
+  color: var(--text-muted);
+  padding: 2px 4px;
+  text-align: right;
+  border-top: 1px solid #f0ece9;
+}
+.agenda-weekcol { background: var(--bg-card); position: relative; min-height: 44px; border-top: 1px solid #f0ece9; }
+.agenda-weekcol--hoy { background: #fffaf7; }
+.agenda-weekhead {
+  background: var(--bg-card);
+  padding: 5px;
+  text-align: center;
+  font-size: .68rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.agenda-weekslot {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  border-radius: 3px;
+  font-size: .62rem;
+  padding: 1px 3px;
+  overflow: hidden;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  text-align: left;
+  color: var(--text);
+  pointer-events: auto;
+  line-height: 1.25;
+}
+.agenda-weekwrap { position: relative; }
+.agenda-weekoverlay {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 47px;          /* ancho de la columna de horas + el gap de 1px */
+  right: 0;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  pointer-events: none;
+}
+.agenda-weekday { position: relative; }
+
+.agenda-weekhead--hoy { color: var(--primary); }
+
+/* ── panel de detalle ───────────────────────────────────────────────────── */
+.agenda-aviso {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 8px 11px;
+  border-radius: var(--radius-sm);
+  font-size: .78rem;
+  margin-bottom: 12px;
+  border: 1px solid;
+  line-height: 1.4;
+}
+.agenda-aviso--ok   { background: #eaf5ea; border-color: #bfe0bf; color: #1f5c23; }
+.agenda-aviso--warn { background: #fdf1e3; border-color: #f3d3a8; color: #8a4b06; }
+.agenda-aviso--off  { background: #f2efed; border-color: #ddd5d1; color: var(--text-secondary); }
+.agenda-aviso b { display: block; margin-bottom: 2px; }
+
+.agenda-estado-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: .7rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid;
+}
+.agenda-estado-badge--material        { background: #f2efed; border-color: #ddd5d1; color: var(--text-secondary); }
+.agenda-estado-badge--programada      { background: #eaf4fb; border-color: #b8dcf2; color: #01579b; }
+.agenda-estado-badge--vencida         { background: #fdf1e3; border-color: #f3d3a8; color: #8a4b06; }
+.agenda-estado-badge--publicada       { background: #eaf5ea; border-color: #bfe0bf; color: #1f5c23; }
+.agenda-estado-badge--parcial,
+.agenda-estado-badge--parcial_vencida { background: #fbf5e2; border-color: #e8d9a0; color: #7a5c00; }
+.agenda-estado-badge--error           { background: #fdeaea; border-color: #f3bcbc; color: #a11616; }
+.agenda-estado-badge--omitida,
+.agenda-estado-badge--cancelada       { background: #f2efed; border-color: #ddd5d1; color: var(--text-secondary); }
+
+.agenda-destinos { display: flex; flex-direction: column; gap: 7px; }
+.agenda-destino {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  font-size: .8rem;
+}
+.agenda-destino-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; margin-top: 5px; }
+.agenda-destino-dot--pending   { background: var(--info); }
+.agenda-destino-dot--published { background: var(--success); }
+.agenda-destino-dot--error     { background: var(--error); }
+.agenda-destino-dot--cancelled { background: var(--text-muted); }
+.agenda-destino-dot--omitted   { background: #b8860b; }
+.agenda-destino-cuerpo { flex: 1; min-width: 0; }
+.agenda-destino-nombre { font-weight: 600; }
+.agenda-destino-notas {
+  font-size: .72rem;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  line-height: 1.35;
+  word-break: break-word;
+}
+.agenda-destino--aprobacion { color: #8a4b06; font-size: .72rem; font-weight: 600; margin-top: 2px; }
+.agenda-destino-mini { font-size: .68rem; color: var(--text-muted); margin-top: 3px; display: flex; gap: 5px; }
+.agenda-destino-mini img { width: 26px; height: 26px; object-fit: cover; border-radius: 3px; border: 1px solid var(--border); }
+
+.agenda-huerfanos {
+  margin-top: 10px;
+  padding: 9px 11px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  font-size: .76rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+.agenda-huerfanos button { margin-top: 7px; }
+
+.agenda-mas-btn {
+  width: 100%;
+  border: 1px dashed var(--border);
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  padding: 7px;
+  font-size: .78rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  margin-top: 6px;
+}
+.agenda-mas-btn:hover { background: #efe9e4; color: var(--text); }
+
+/* ── planificador ───────────────────────────────────────────────────────── */
+.plan-grupos {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 190px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 9px;
+  background: var(--bg);
+}
+.plan-grupo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: .8rem;
+  cursor: pointer;
+  padding: 2px 3px;
+  border-radius: 3px;
+}
+.plan-grupo:hover { background: #eee7e2; }
+.plan-avisos {
+  margin-top: 10px;
+  padding: 9px 11px;
+  background: #fdf1e3;
+  border: 1px solid #f3d3a8;
+  color: #8a4b06;
+  border-radius: var(--radius-sm);
+  font-size: .76rem;
+  line-height: 1.4;
+}
+.plan-avisos ul { margin: 5px 0 0; padding-left: 17px; }
+.plan-avisos li { margin-bottom: 2px; }
+.plan-preview {
+  margin-top: 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  font-size: .78rem;
+  line-height: 1.45;
+}
+
+@media (max-width: 900px) {
+  .agenda-day { min-height: 84px; padding: 4px; }
+  .agenda-evtxt, .agenda-evmeta { display: none; }
+  .agenda-period { min-width: 130px; font-size: .85rem; }
+}

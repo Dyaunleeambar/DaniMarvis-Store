@@ -108,6 +108,16 @@ export const api = {
   reorderPublications: (order) => request('PATCH', '/publications/reorder', { order }),
   publishPublication: (id, platform = 'facebook', scheduledAt = null) => request('POST', `/publications/${id}/publish`, { platform, scheduled_at: scheduledAt }),
 
+  // Agenda (calendario). Reemplaza a la "Cola de Publicaciones" como pantalla:
+  // publication_queue sigue siendo el registro interno de destinos, lo que se
+  // devuelve acá es el evento con sus N destinos y el estado ya agregado.
+  getAgenda: (from, to) => request('GET', `/agenda${from && to ? `?from=${from}&to=${to}` : ''}`),
+  getAgendaConflicts: (at, groups, windowH = 2, exclude = '') =>
+    request('GET', `/agenda/conflicts?at=${encodeURIComponent(at)}&groups=${encodeURIComponent(groups.join(','))}&window_h=${windowH}&exclude=${exclude}`),
+  runAgendaEvent: (id) => request('POST', `/agenda/${id}/run`),
+  rescheduleAgendaEvent: (id, data) => request('PATCH', `/agenda/${id}`, data),
+  retryAgendaEvent: (id) => request('POST', `/agenda/${id}/retry`),
+
   // AI
   generateDescription: (data) => request('POST', '/generate-description', data),
   generateImage: (data) => request('POST', '/generate-image', data),
@@ -129,13 +139,11 @@ export const api = {
   importAnalyze: (data) => request('POST', '/import/analyze', data),
   importApply: (data) => request('POST', '/import/apply', data),
 
-  // Publication Queue
-  getPubQueue: () => request('GET', '/pub-queue'),
-  getPubQueueDue: () => request('GET', '/pub-queue/due'),
+  // Destinos de una publicación. La cola dejó de ser una pantalla: es el
+  // registro interno que el Planificador escribe (fan-out a N grupos) y que la
+  // agenda lee para saber el estado de cada destino. Solo queda el alta; el
+  // resto de la gestión se hace por /agenda, que trabaja por publicación.
   addToPubQueue: (data) => request('POST', '/pub-queue', data),
-  updatePubQueue: (id, data) => request('PATCH', `/pub-queue/${id}`, data),
-  deletePubQueue: (id) => request('DELETE', `/pub-queue/${id}`),
-  getPubQueueTimer: () => request('GET', '/pub-queue/timer'),
 
   // Auto-publicado en grupos (worker con Chrome)
   getGroupPublishStatus: () => request('GET', '/group-publish/status'),

@@ -1,7 +1,6 @@
 import { api } from '../db/api.js';
 import { openModal, closeModal, setModalCloseGuard, showToast, confirmDialog } from '../core/app.js';
-import { navigate } from '../core/router.js';
-import { formatDate, debounce } from '../utils/utils.js';
+import { formatDate, formatDateTime, formatDateInput, localInputToUtc, debounce } from '../utils/utils.js';
 
 function escHtml(str) {
   return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -10,712 +9,1011 @@ function escAttr(str) {
   return String(str ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 }
 
-let currentContainer = null;
-let allPublications = [];
-let allProducts = [];
+const MAX_IMAGES = 10;
+const DIA_MS = 86400000;
+const HORA_MIN = 6;
+const HORA_MAX = 23;
 
-const FILTERS_KEY = 'danimarvis_pub_filters';
+let container = null;
+let agenda = null;          // respuesta de /api/agenda
+let grupos = [];            // facebook_groups
+let productos = [];         // productos, para el buscador del Planificador
+let vista = 'mes';          // 'mes' | 'semana'
+let ancla = new Date();     // mes o semana que se está mirando
+let cargando = false;
+let filtroEstado = '';
+let filtroGrupo = '';
 
-function loadPubFilters() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(FILTERS_KEY) || '{}');
-    return {
-      search: saved.search || '',
-      category: saved.category || '',
-      provider: saved.provider || '',
-      visibility: saved.visibility || '',
-    };
-  } catch {
-    return { search: '', category: '', provider: '', visibility: '' };
+// ══════════════════════════════ utilidades de fecha ═══════════════════════
+// Todo se calcula en hora LOCAL. La fecha viene del servidor ya resuelta
+// (anio_local/mes_local/dia_local/hora_local) justamente para no repetir el
+// error del desfase de 4h del otro lado del cable.
+const pad2 = n => String(n).padStart(2, '0');
+const ymd = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const mesLabel = d => d.toLocaleDateString('es-CO', { month: 'long', year: 'numeric' });
+const DIAS = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+// La grilla arranca en lunes (ver celdas() y lunesDe), así que los rótulos
+// tienen que ir corridos respecto de DIAS, que arranca el domingo.
+const DIAS_LUNES = ['lun', 'mar', 'mié', 'jue', 'vie', 'sáb', 'dom'];
+
+/** Lunes de la semana que contiene a `d`. */
+function lunesDe(d) {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const dow = (x.getDay() + 6) % 7;   // lunes = 0
+  x.setDate(x.getDate() - dow);
+  return x;
+}
+
+function rangoMes(base) {
+  const primero = new Date(base.getFullYear(), base.getMonth(), 1);
+  const ultimo = new Date(base.getFullYear(), base.getMonth() + 1, 0);
+  return { from: ymd(primero), to: ymd(ultimo) };
+}
+
+function rangoSemana(base) {
+  const lun = lunesDe(base);
+  const dom = new Date(lun); dom.setDate(dom.getDate() + 6);
+  return { from: ymd(lun), to: ymd(dom) };
+}
+
+/** Rango visible: en mes, la semana del 1° al 31; en semana, lunes a domingo. */
+function rangoVisible() {
+  return vista === 'semana' ? rangoSemana(ancla) : rangoMes(ancla);
+}
+
+/** Celdas del calendario: 42 (6 semanas) en mes, 7 en semana. */
+function celdas() {
+  if (vista === 'semana') {
+    const lun = lunesDe(ancla);
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(lun); d.setDate(d.getDate() + i);
+      return d;
+    });
   }
+  const primero = new Date(ancla.getFullYear(), ancla.getMonth(), 1);
+  const dow = (primero.getDay() + 6) % 7;
+  const inicio = new Date(primero); inicio.setDate(inicio.getDate() - dow);
+  return Array.from({ length: 42 }, (_, i) => {
+    const d = new Date(inicio); d.setDate(d.getDate() + i);
+    return d;
+  });
 }
 
-function savePubFilters(filters) {
+function eventosDelDia(d) {
+  if (!agenda) return [];
+  const clave = ymd(d);
+  return agenda.eventos.filter(e => {
+    if (e.fecha) {
+      const f = new Date(e.fecha);
+      return ymd(f) === clave;
+    }
+    // Sin fecha no debería pasar (la migración las rellenó), pero si pasara se
+    // muestra hoy en vez de perderlo: mejor visible que invisible.
+    return false;
+  });
+}
+
+function eventosVisibles(evs) {
+  return evs.filter(e => {
+    if (filtroEstado && e.estado !== filtroEstado) return false;
+    if (filtroGrupo) {
+      const nombres = e.destinos.map(d => (d.group_name || '').toLowerCase());
+      if (!nombres.includes(filtroGrupo.toLowerCase())) return false;
+    }
+    return true;
+  });
+}
+
+// ══════════════════════════════════════════════════ carga ═════════════════
+
+async function cargar() {
+  const { from, to } = rangoVisible();
+  cargando = true;
   try {
-    localStorage.setItem(FILTERS_KEY, JSON.stringify(filters));
-  } catch {}
-}
-
-function truncate(text, len = 120) {
-  if (!text) return '';
-  return text.length > len ? text.slice(0, len) + '...' : text;
-}
-
-function formatDateInput(dateStr) {
-  if (!dateStr) return '';
-  const d = new Date(dateStr);
-  if (isNaN(d)) return dateStr.slice(0, 16);
-  return d.toISOString().slice(0, 16);
-}
-
-function toSqlDatetime(localValue) {
-  if (!localValue) return new Date().toISOString().slice(0, 19).replace('T', ' ');
-  return localValue.replace('T', ' ');
-}
-
-export async function render(container) {
-  currentContainer = container;
-  container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-secondary)">Cargando publicaciones...</div>';
-
-  try {
-    const [publications, products] = await Promise.all([
-      api.getPublications(),
-      api.getProducts({ status: 'active' })
-    ]);
-    allPublications = publications;
-    allProducts = products;
-    renderPage(container);
+    agenda = await api.getAgenda(from, to);
   } catch (err) {
-    container.innerHTML = `<div class="empty-state"><h3>Error</h3><p>${err.message}</p></div>`;
+    agenda = { eventos: [], disparador: null };
+    showToast('No se pudo cargar la agenda: ' + err.message, 'error');
+  } finally {
+    cargando = false;
+    pintar();
   }
 }
 
-function renderPage(container) {
+export async function render(cont) {
+  container = cont;
+  cont.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-secondary)">Cargando agenda...</div>';
+  try {
+    const [gs, ps] = await Promise.all([
+      api.getGroups().catch(() => []),
+      api.getProducts({ status: 'active' }).catch(() => []),
+    ]);
+    grupos = gs;
+    productos = ps;
+  } catch { /* el calendario igual se dibuja */ }
+  await cargar();
+}
+
+function pintar() {
+  if (!container) return;
+  const evs = agenda?.eventos || [];
+  const visibles = eventosVisibles(evs);
+  const cuenta = (estado) => evs.filter(e => e.estado === estado).length;
+
   container.innerHTML = `
     <div class="page">
       <div class="page-header">
         <div>
           <h1>Publicaciones</h1>
-          <p>${allPublications.length} publicación(es)</p>
+          <p>${evs.length} evento(s) · ${visibles.length} visible(s)</p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button class="btn btn--secondary" onclick="window._agendaHoy()">Hoy</button>
+          <button class="btn btn--primary" onclick="window._abrirPlanificador()">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="vertical-align:-2px;margin-right:5px"><path d="M12 5v14M5 12h14"/></svg>
+            Planificador
+          </button>
         </div>
       </div>
 
-      <div class="publications-grid" id="publications-grid">
-        ${allPublications.length === 0
-          ? '<div class="empty-state" style="grid-column:1/-1;padding:48px"><h3>No hay publicaciones</h3><p>Creá tu primera publicación para comenzar</p></div>'
-          : allPublications.map((p, idx) => `
-            <div class="card publication-card" draggable="true" data-id="${p.id}" data-idx="${idx}">
-              <div class="publication-card-drag" title="Arrastrar para reordenar">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>
-              </div>
-              ${p.images?.[0]
-                ? `<div class="publication-card-img">
-                    <img src="${escAttr(p.images[0])}" alt="" />
-                  </div>`
-                : `<div class="publication-card-img publication-card-img--empty">
-                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
-                  </div>`
-              }
-              <div class="publication-card-body">
-                <div class="publication-card-title">${escHtml(p.product_name || 'Sin producto')}</div>
-                <div class="publication-card-date">${formatDate(p.publication_date || p.created_at)}</div>
-                <div class="publication-card-text">${escHtml(truncate(p.publish_text))}</div>
-                <div class="publication-card-actions">
-                  <button class="btn btn--sm btn--ghost" onclick="window._viewPublication('${p.id}')" title="Ver">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                    Ver
-                  </button>
-                  <button class="btn btn--sm btn--ghost" onclick="window._editPublication('${p.id}')" title="Editar">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                  </button>
-                  <button class="btn btn--sm btn--ghost" onclick="window._copyPublication('${p.id}')" title="Copiar texto">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                  </button>
-                  <button class="btn btn--sm btn--ghost" onclick="window._publishPublication('${p.id}', 'facebook')" title="Publicar en Facebook" style="color:var(--primary)">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"/></svg>
-                  </button>
-                  <button class="btn btn--sm btn--ghost" onclick="window._deletePublication('${p.id}')" title="Eliminar" style="color:var(--error)">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                  </button>
-                </div>
-              </div>
-            </div>
-          `).join('')
-        }
+      ${bannerDisparador()}
+      ${bannerHuerfanos()}
+
+      <div class="agenda-toolbar">
+        <div class="agenda-nav">
+          <button class="btn btn--sm btn--ghost" onclick="window._agendaNav(-1)" title="Anterior">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          <div class="agenda-period">${etiquetaPeriodo()}</div>
+          <button class="btn btn--sm btn--ghost" onclick="window._agendaNav(1)" title="Siguiente">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+        </div>
+        <div class="agenda-viewtoggle">
+          <button class="${vista === 'mes' ? 'on' : ''}" onclick="window._agendaVista('mes')">Mes</button>
+          <button class="${vista === 'semana' ? 'on' : ''}" onclick="window._agendaVista('semana')">Semana</button>
+        </div>
+        <div class="agenda-filters">
+          <select class="form-control form-control--small" style="max-width:170px" onchange="window._agendaFiltroEstado(this.value)">
+            <option value="">Todos los estados</option>
+            ${['material', 'programada', 'vencida', 'parcial', 'parcial_vencida', 'publicada', 'error', 'omitida', 'cancelada']
+              .map(s => `<option value="${s}" ${filtroEstado === s ? 'selected' : ''}>${etiquetaEstado(s)}</option>`).join('')}
+          </select>
+          <select class="form-control form-control--small" style="max-width:180px" onchange="window._agendaFiltroGrupo(this.value)">
+            <option value="">Todos los grupos</option>
+            ${grupos.map(g => `<option value="${escAttr(g.name)}" ${filtroGrupo === g.name ? 'selected' : ''}>${escHtml(g.name)}</option>`).join('')}
+          </select>
+        </div>
       </div>
-      <button class="btn btn--primary btn--fab" onclick="window._openPublicationForm(null)" title="Nueva publicación">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      </button>
+
+      <div class="agenda-legend">
+        <span><i style="background:#9e918d"></i> Material</span>
+        <span><i style="background:#0288d1"></i> Programada</span>
+        <span><i style="background:#ed6c02"></i> Vencida</span>
+        <span><i style="background:#b8860b"></i> Parcial</span>
+        <span><i style="background:#2e7d32"></i> Publicada</span>
+        <span><i style="background:#d32f2f"></i> Error</span>
+        <span><i style="background:#b8860b"></i> Omitida</span>
+      </div>
+
+      ${cargando ? '<div style="padding:30px;text-align:center;color:var(--text-secondary)">Cargando...</div>'
+        : vista === 'semana' ? pintarSemana() : pintarMes()}
+
+      ${huerfanos()}
     </div>
   `;
-
-  initDragAndDrop();
 }
 
-function initDragAndDrop() {
-  const grid = document.getElementById('publications-grid');
-  if (!grid) return;
-  let dragId = null;
-
-  grid.querySelectorAll('.publication-card').forEach(card => {
-    card.addEventListener('dragstart', (e) => {
-      dragId = card.dataset.id;
-      card.classList.add('dragging');
-      e.dataTransfer.effectAllowed = 'move';
-    });
-    card.addEventListener('dragend', () => {
-      dragId = null;
-      card.classList.remove('dragging');
-      grid.querySelectorAll('.publication-card').forEach(c => c.classList.remove('drag-over'));
-    });
-    card.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      card.classList.add('drag-over');
-    });
-    card.addEventListener('dragleave', () => {
-      card.classList.remove('drag-over');
-    });
-    card.addEventListener('drop', async (e) => {
-      e.preventDefault();
-      card.classList.remove('drag-over');
-      if (!dragId || dragId === card.dataset.id) return;
-      const fromIdx = allPublications.findIndex(p => p.id === dragId);
-      const toIdx = allPublications.findIndex(p => p.id === card.dataset.id);
-      if (fromIdx === -1 || toIdx === -1) return;
-      const [moved] = allPublications.splice(fromIdx, 1);
-      allPublications.splice(toIdx, 0, moved);
-      renderPage(currentContainer);
-      try {
-        await api.reorderPublications(allPublications.map(p => p.id));
-      } catch (err) {
-        showToast('Error al reordenar: ' + err.message, 'error');
-      }
-    });
-  });
+function etiquetaPeriodo() {
+  if (vista === 'semana') {
+    const lun = lunesDe(ancla);
+    const dom = new Date(lun); dom.setDate(dom.getDate() + 6);
+    const f = lun.toLocaleDateString('es-CO', { day: 'numeric', month: 'short' });
+    const t = dom.toLocaleDateString('es-CO', { day: 'numeric', month: 'short' });
+    return `${f} – ${t} ${dom.getFullYear()}`;
+  }
+  return mesLabel(ancla);
 }
 
-function categoryOptions(selected = '') {
-  const cats = [...new Set(allProducts.map(p => p.category).filter(Boolean))].sort();
-  return cats.map(c =>
-    `<option value="${escAttr(c)}" ${selected === c ? 'selected' : ''}>${escHtml(c)}</option>`
-  ).join('');
+function etiquetaEstado(s) {
+  return ({
+    material: 'Material', programada: 'Programada', vencida: 'Vencida',
+    parcial: 'Parcial', parcial_vencida: 'Parcial · vencida', publicada: 'Publicada',
+    error: 'Error', omitida: 'Omitida', cancelada: 'Cancelada',
+  })[s] || s;
 }
 
-function providerOptions(selected = '') {
-  const providers = [...new Map(allProducts.filter(p => p.provider_id).map(p => [p.provider_id, { id: p.provider_id, name: p.provider_name }])).values()].sort((a, b) => a.name.localeCompare(b.name));
-  return providers.map(p =>
-    `<option value="${escAttr(p.id)}" ${selected === p.id ? 'selected' : ''}>${escHtml(p.name)}</option>`
-  ).join('');
+function bannerDisparador() {
+  const d = agenda?.disparador;
+  if (!d) return '';
+  if (d.auto === false) {
+    return `<div class="agenda-aviso agenda-aviso--off">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex:none;margin-top:2px"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+      <div><b>El disparador por fecha está apagado.</b>
+      Podés agendar todo lo que quieras, pero nada se publicará solo hasta que lo prendas en Configuración.</div>
+    </div>`;
+  }
+  if (d.due > 0) {
+    return `<div class="agenda-aviso agenda-aviso--warn">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex:none;margin-top:2px"><circle cx="12" cy="12" r="10"/><path d="M12 7v5l3 2"/></svg>
+      <div><b>${d.due} publicación(es) vencida(s) esperando.</b>
+      El disparador corre cada ${Math.round((d.interval_ms || 60000) / 60000)} min. Se publican solas salvo que ya haya una corrida en curso.</div>
+    </div>`;
+  }
+  if (d.next_due_at) {
+    const f = formatDateTime(d.next_due_at);
+    return `<div class="agenda-aviso agenda-aviso--ok">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex:none;margin-top:2px"><path d="M20 6 9 17l-5-5"/></svg>
+      <div><b>Disparador activo.</b> Próxima publicación programada: ${escHtml(f)}.</div>
+    </div>`;
+  }
+  return '';
 }
 
-window._openPublicationForm = function(pub) {
-  const isEdit = !!pub;
-  const productOptions = allProducts.map(pr =>
-    `<option value="${pr.id}" ${pub?.product_id === pr.id ? 'selected' : ''}>${escHtml(pr.name)}</option>`
-  ).join('');
+function bannerHuerfanos() {
+  const n = agenda?.huerfanos || 0;
+  if (!n) return '';
+  return `<div class="agenda-aviso agenda-aviso--warn">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex:none;margin-top:2px"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    <div><b>${n} destino(s) sin publicación.</b>
+    Quedaron apuntando a una publicación que ya no existe (típicamente al borrar
+    una publicación con destinos agendados). No los publica el disparador por
+    fecha, pero el worker legado sí los agarra: si querés, reiniciá el server
+    y se limpian solos.</div>
+  </div>`;
+}
 
-  const currentDate = pub?.publication_date
-    ? formatDateInput(pub.publication_date)
-    : new Date().toISOString().slice(0, 16);
+// ══════════════════════════════════ vista mes ═══════════════════════════
+
+function pintarMes() {
+  const lista = celdas();
+  const mesActual = ancla.getMonth();
+  const hoy = ymd(new Date());
+  let html = '<div class="agenda-grid">';
+  for (const d of DIAS_LUNES) html += `<div class="agenda-dayhead">${d}</div>`;
+  for (const dia of lista) {
+    const evs = eventosVisibles(eventosDelDia(dia));
+    const out = dia.getMonth() !== mesActual;
+    const esHoy = ymd(dia) === hoy;
+    html += `<div class="agenda-day ${out ? 'agenda-day--out' : ''} ${esHoy ? 'agenda-day--hoy' : ''}">`;
+    html += `<span class="agenda-daynum ${out ? 'agenda-daynum--tenue' : ''}">${dia.getDate()}</span>`;
+    html += evs.slice(0, 3).map(tarjetaEvento).join('');
+    if (evs.length > 3) {
+      html += `<button class="agenda-more" onclick="window._agendaVerDia('${ymd(dia)}')">+${evs.length - 3} más</button>`;
+    }
+    html += '</div>';
+  }
+  return html + '</div>';
+}
+
+function tarjetaEvento(e) {
+  const meta = e.total_destinos > 0 ? `${e.total_destinos} grupo${e.total_destinos === 1 ? '' : 's'}` : 'sin agendar';
+  return `<button class="agenda-ev agenda-ev--${e.estado}" onclick="window._agendaDetalle('${e.id}')" title="${escAttr(e.product_name || 'Sin producto')} — ${escAttr(etiquetaEstado(e.estado))}">
+    <div class="agenda-evtime">${e.hora_local || '—:—'}</div>
+    <div class="agenda-evtxt">${escHtml(e.product_name || truncate(e.publish_text, 34))}</div>
+    <div class="agenda-evmeta">${escHtml(etiquetaEstado(e.estado))}${e.total_destinos ? ' · ' + meta : ''}</div>
+  </button>`;
+}
+
+function truncate(text, len = 90) {
+  if (!text) return '';
+  return text.length > len ? text.slice(0, len) + '…' : text;
+}
+
+// ═════════════════════════════════ vista semana ══════════════════════════
+
+function pintarSemana() {
+  const lista = celdas();
+  const hoy = ymd(new Date());
+  const horas = [];
+  for (let h = HORA_MIN; h <= HORA_MAX; h++) horas.push(h);
+  const ALTO = 44;                       // alto de cada franja horaria (px)
+  const altoTotal = horas.length * ALTO;
+
+  // ── capa 1: la grilla de fondo (etiquetas de hora + celdas vacías) ──
+  let html = '<div class="agenda-weekwrap">';
+  html += '<div class="agenda-week"><div class="agenda-weekhead"></div>';
+  for (const dia of lista) {
+    const esHoy = ymd(dia) === hoy;
+    html += `<div class="agenda-weekhead ${esHoy ? 'agenda-weekhead--hoy' : ''}">${DIAS[(dia.getDay() + 6) % 7]} ${dia.getDate()}</div>`;
+  }
+  for (const h of horas) {
+    html += `<div class="agenda-hour">${pad2(h)}:00</div>`;
+    for (const dia of lista) {
+      const esHoy = ymd(dia) === hoy;
+      html += `<div class="agenda-weekcol ${esHoy ? 'agenda-weekcol--hoy' : ''}"></div>`;
+    }
+  }
+  html += '</div>';
+
+  // ── capa 2: los eventos, posicionados sobre la grilla ──
+  // Van en un overlay porque en la grilla cada celda mide una sola hora y un
+  // evento a las 14:30 necesita medio slice de las 15:00. El overlay es un
+  // div por día, de altura completa, y cada evento se ancla a su hora real.
+  html += `<div class="agenda-weekoverlay" style="height:${altoTotal}px">`;
+  for (const dia of lista) {
+    html += '<div class="agenda-weekday">';
+    for (const ev of repartirEnCarriles(eventosVisibles(eventosDelDia(dia)))) {
+      const hh = Number((ev.hora_local || '00:00').slice(0, 2));
+      const mm = Number((ev.hora_local || '00:00').slice(3, 5));
+      if (hh < HORA_MIN || hh > HORA_MAX) continue;
+      const top = (hh - HORA_MIN + mm / 60) * ALTO;
+      const w = 100 / ev.__carriles;
+      html += `<button class="agenda-weekslot agenda-ev--${ev.estado}" style="top:${top}px;left:calc(${ev.__carril * w}% + 2px);width:calc(${w}% - 4px)"
+        onclick="window._agendaDetalle('${ev.id}')" title="${escAttr((ev.hora_local || '') + ' · ' + (ev.product_name || truncate(ev.publish_text, 40)) + ' — ' + etiquetaEstado(ev.estado))}">
+        <b>${e(ev)}</b>
+      </button>`;
+    }
+    html += '</div>';
+  }
+  return html + '</div></div>';
+}
+
+function e(ev) {
+  return escHtml((ev.hora_local || '').slice(0, 5) + ' ' + truncate(ev.product_name || ev.publish_text, 14));
+}
+
+/**
+ * Reparte en carriles los eventos que se pisan en el mismo día, para que dos
+ * publicaciones a la misma hora no queden una encima de la otra. Greedy: cada
+ * evento toma el primer carril cuyo último evento ya terminó.
+ */
+function repartirEnCarriles(evs) {
+  const orden = evs.slice().sort((a, b) => (a.hora_local || '').localeCompare(b.hora_local || ''));
+  const finCarril = [];
+  for (const ev of orden) {
+    const ini = Number((ev.hora_local || '00:00').slice(0, 2)) * 60 + Number((ev.hora_local || '00:00').slice(3, 5));
+    let carril = finCarril.findIndex(f => f <= ini);
+    if (carril === -1) { carril = finCarril.length; finCarril.push(0); }
+    finCarril[carril] = ini + 30;   // altura mínima de un bloque: media hora
+    ev.__carril = carril;
+    ev.__carriles = 0;               // se completa abajo
+  }
+  const total = finCarril.length || 1;
+  for (const ev of orden) ev.__carriles = total;
+  return orden;
+}
+
+function huerfanos() {
+  const evs = agenda?.eventos || [];
+  const sinDestino = evs.filter(e => e.total_destinos === 0);
+  if (!sinDestino.length) return '';
+  return `<div class="agenda-huerfanos">
+    <b>${sinDestino.length} publicación(es) sin agendar.</b> Están en la biblioteca como material: tienen texto e imágenes, pero ningún grupo ni fecha de publicación, así que no se van a publicar solas.
+    Abrilas con el Planificador cuando quieras decidirlas.
+  </div>`;
+}
+
+// ══════════════════════════════ detalle del evento ══════════════════════
+
+const DEST_ICON = {
+  pending: 'Programada', published: 'Publicada', error: 'Falló',
+  cancelled: 'Cancelada', omitted: 'Omitida', prepared: 'Preparada', 'dry-run': 'Simulada',
+};
+
+async function detalle(id) {
+  const ev = (agenda?.eventos || []).find(e => e.id === id);
+  if (!ev) { showToast('Ese evento no está en el rango visible', 'warning'); return; }
+
+  const tienePendientes = ev.destinos.some(d => d.status === 'pending');
+  const tieneFallos = ev.destinos.some(d => d.status === 'error' || d.status === 'omitted');
 
   openModal(`
     <div class="modal-header">
-      <h2>${isEdit ? 'Editar publicación' : 'Nueva publicación'}</h2>
+      <h2>${escHtml(ev.product_name || 'Publicación')}</h2>
       <button class="modal-close" onclick="closeModal()">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg>
       </button>
     </div>
-    <form id="publication-form">
-      <input type="hidden" name="id" value="${pub?.id || ''}" />
-      <div class="form-row" style="grid-template-columns:1fr 1fr">
-        <div class="form-group" style="grid-column:1/-1">
-          <label>Producto asociado</label>
-          <div style="display:flex;gap:8px;margin-bottom:6px">
-            <input type="text" id="pub-product-search" class="form-control" placeholder="Buscar producto..." style="flex:1" />
-            <select id="pub-product-provider" class="form-control form-control--small" style="max-width:160px">
-              <option value="">Todos los proveedores</option>
-              ${providerOptions('')}
-            </select>
-            <select id="pub-product-visibility" class="form-control form-control--small" style="max-width:150px">
-              <option value="">Todos</option>
-              <option value="1">Visibles</option>
-              <option value="0">Ocultos</option>
-            </select>
-            <select id="pub-product-category" class="form-control form-control--small" style="max-width:160px">
-              <option value="">Todas las categorías</option>
-              ${categoryOptions('')}
-            </select>
+    <div class="modal-body">
+      <div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
+        <span class="agenda-estado-badge agenda-estado-badge--${ev.estado}">${escHtml(ev.estado_label)}</span>
+        <span style="font-size:.82rem;color:var(--text-secondary)">${escHtml(formatDateTime(ev.fecha))}</span>
+        ${ev.total_destinos ? `<span style="font-size:.8rem;color:var(--text-muted)">· ${ev.total_destinos} destino(s)</span>` : ''}
+      </div>
+
+      ${ev.total_destinos === 0 ? `<div class="agenda-aviso agenda-aviso--off">
+        <div><b>Sin agendar.</b> Esta publicación es material de la biblioteca: no tiene grupos ni hora de publicación, así que no se publica sola.
+        Abrí el Planificador para decidir cuándo y a dónde va.</div>
+      </div>` : ''}
+
+      ${ev.images?.length ? `<div class="publication-detail-gallery">
+        ${ev.images.slice(0, MAX_IMAGES).map(u => `<img src="${escAttr(u)}" alt="" class="publication-detail-img" />`).join('')}
+      </div>` : ''}
+
+      <div class="publish-text-section">
+        <div class="publish-text-label">Texto de publicación</div>
+        <div class="publish-text-content" style="white-space:pre-wrap">${escHtml(ev.publish_text)}</div>
+      </div>
+
+      ${ev.total_destinos ? `<div style="margin-top:16px">
+        <div class="publish-text-label" style="margin-bottom:8px">Destinos</div>
+        <div class="agenda-destinos">
+          ${ev.destinos.map(destinoHTML).join('')}
+        </div>
+      </div>` : ''}
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn btn--secondary" onclick="closeModal()">Cerrar</button>
+      ${tieneFallos ? '<button type="button" class="btn btn--secondary" id="ev-retry">Reintentar fallidas</button>' : ''}
+      <button type="button" class="btn btn--secondary" id="ev-editar">Editar</button>
+      ${tienePendientes ? '<button type="button" class="btn btn--primary" id="ev-run">Publicar ahora</button>' : ''}
+    </div>
+  `);
+  setModalCloseGuard(null);
+
+  document.getElementById('ev-run')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = 'Publicando…';
+    try {
+      await api.runAgendaEvent(id);
+      showToast('Corrida iniciada. Seguí el progreso en Configuración.', 'success');
+      closeModal(true);
+      setTimeout(cargar, 1500);
+    } catch (err) {
+      showToast(err.message, 'error');
+      btn.disabled = false;
+      btn.textContent = 'Publicar ahora';
+    }
+  });
+
+  document.getElementById('ev-retry')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      const r = await api.retryAgendaEvent(id);
+      showToast(`${r.requeued} destino(s) volvieron a la cola`, 'success');
+      closeModal(true);
+      await cargar();
+      detalle(id);
+    } catch (err) {
+      showToast(err.message, 'error');
+      btn.disabled = false;
+    }
+  });
+
+  document.getElementById('ev-editar')?.addEventListener('click', () => {
+    closeModal(true);
+    abrirPlanificador(ev);
+  });
+}
+
+function destinoHTML(d) {
+  const notas = d.notes || '';
+  const imgs = d.images?.length
+    ? `<div class="agenda-destino-mini">${d.images.slice(0, 4).map(u => `<img src="${escAttr(u)}" alt="" />`).join('')}
+       ${d.images.length > 4 ? `<span>+${d.images.length - 4}</span>` : ''}</div>`
+    : '';
+  const cuando = d.published_at
+    ? `publicado ${escHtml(formatDateTime(d.published_at))}`
+    : d.scheduled_at ? `para ${escHtml(formatDateTime(d.scheduled_at))}` : '';
+  return `<div class="agenda-destino">
+    <span class="agenda-destino-dot agenda-destino-dot--${d.status}"></span>
+    <div class="agenda-destino-cuerpo">
+      <div class="agenda-destino-nombre">${escHtml(d.group_name || 'Grupo')}</div>
+      <div class="agenda-destino-notas">
+        <b>${escHtml(DEST_ICON[d.status] || d.status)}</b>${cuando ? ' · ' + cuando : ''}
+        ${notas ? '<br>' + escHtml(notas) : ''}
+      </div>
+      ${d.pending_approval ? '<div class="agenda-destino--aprobacion">Queda esperando al administrador del grupo</div>' : ''}
+      ${imgs}
+    </div>
+  </div>`;
+}
+
+function verDia(fecha) {
+  const evs = eventosVisibles(agenda?.eventos || []).filter(e => e.fecha && ymd(new Date(e.fecha)) === fecha);
+  if (!evs.length) { showToast('No hay eventos ese día', 'info'); return; }
+  openModal(`
+    <div class="modal-header">
+      <h2>${escHtml(formatDate(fecha))}</h2>
+      <button class="modal-close" onclick="closeModal()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="agenda-destinos">
+        ${evs.map(e => `<button class="agenda-destino" style="cursor:pointer;text-align:left;width:100%" onclick="closeModal(true);window._agendaDetalle('${e.id}')">
+          <span class="agenda-destino-dot agenda-destino-dot--${e.estado}"></span>
+          <div class="agenda-destino-cuerpo">
+            <div class="agenda-destino-nombre">${escHtml(e.hora_local || '')} · ${escHtml(e.product_name || truncate(e.publish_text, 40))}</div>
+            <div class="agenda-destino-notas">${escHtml(etiquetaEstado(e.estado))}${e.total_destinos ? ' · ' + e.total_destinos + ' grupo(s)' : ' · sin agendar'}</div>
           </div>
-          <select name="product_id" class="form-control" id="pub-product-select">
-            <option value="">Sin producto</option>
-            ${productOptions}
+        </button>`).join('')}
+      </div>
+    </div>
+    <div class="form-actions"><button type="button" class="btn btn--secondary" onclick="closeModal()">Cerrar</button></div>
+  `);
+  setModalCloseGuard(null);
+}
+
+// ══════════════════════════════════════ PLANIFICADOR ═════════════════════
+
+/**
+ * El Planificador reemplaza a la "Cola de Publicaciones" (pestañas Agregar y
+ * Pendientes) y al modal de publicar. hace las dos cosas que hacían por
+ * separado: guardar el contenido y agendarlo a grupos con una fecha/hora.
+ *
+ * `ev` = evento existente (editar). Sin argumento = crear uno nuevo.
+ */
+function abrirPlanificador(ev = null) {
+  const esEdicion = !!ev;
+
+  // Las imágenes arrancan con las del evento; al guardar se copian a la cola
+  // por destino, igual que siempre.
+  const imgs = ev?.images ? [...ev.images] : [];
+
+  // En la UI se muestra el NOMBRE del grupo, pero la cola guarda `group_id`
+  // (y el endpoint /pub-queue resuelve nombre+url desde facebook_groups). Por
+  // eso los checkbox llevan el id y el nombre se busca en `grupos`.
+  const nombreDe = id => grupos.find(g => g.id === id)?.name || '';
+  const idDeNombre = nombre => grupos.find(g => g.name === nombre)?.id;
+  const destinosPendientes = esEdicion ? ev.destinos.filter(d => d.status === 'pending') : [];
+  // Al editar se preseleccionan los grupos que ya están agendados (por nombre,
+  // porque las filas viejas pueden no tener group_id guardado).
+  const gruposPrevistos = destinosPendientes
+    .map(d => d.group_id || idDeNombre(d.group_name))
+    .filter(Boolean);
+
+  const fechaDefecto = esEdicion && ev.fecha
+    ? formatDateInput(ev.fecha)
+    : (() => { const d = new Date(Date.now() + 3600000); d.setMinutes(0, 0, 0); return formatDateInput(d.toISOString()); })();
+
+  openModal(`
+    <div class="modal-header">
+      <h2>${esEdicion ? 'Editar publicación' : 'Planificador'}</h2>
+      <button class="modal-close" onclick="closeModal()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg>
+      </button>
+    </div>
+    <form id="plan-form">
+      ${esEdicion ? `<input type="hidden" name="id" value="${ev.id}" />` : ''}
+
+      <div class="form-group">
+        <label>Producto asociado</label>
+        <div style="display:flex;gap:8px;margin-bottom:6px;flex-wrap:wrap">
+          <input type="text" id="plan-buscar" class="form-control" placeholder="Buscar producto..." style="flex:1;min-width:150px" />
+          <select id="plan-prov" class="form-control form-control--small" style="max-width:160px">
+            <option value="">Todos los proveedores</option>
+          </select>
+          <select id="plan-cat" class="form-control form-control--small" style="max-width:150px">
+            <option value="">Todas las categorías</option>
           </select>
         </div>
-        <div class="form-group">
-          <label>Fecha de publicación</label>
-          <input type="datetime-local" name="publication_date" class="form-control" value="${currentDate}" />
-          <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">Elegí la fecha para organizar tus publicaciones</small>
-        </div>
+        <select name="product_id" class="form-control" id="plan-prod">
+          <option value="">Sin producto</option>
+        </select>
       </div>
+
       <div class="form-group">
         <label>Texto de publicación</label>
-        <textarea name="publish_text" class="form-control" id="pub-publish-text" style="min-height:150px">${escHtml(pub?.publish_text || '')}</textarea>
+        <textarea name="publish_text" class="form-control" id="plan-texto" style="min-height:130px">${escHtml(ev?.publish_text || '')}</textarea>
         <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
-          <button type="button" class="btn btn--sm btn--secondary" id="pub-btn-generate">
-            Generar desde producto
-          </button>
-          <button type="button" class="btn btn--sm btn--ghost" id="pub-btn-copy">
-            Copiar
-          </button>
+          <button type="button" class="btn btn--sm btn--secondary" id="plan-generar">Generar desde producto</button>
+          <button type="button" class="btn btn--sm btn--ghost" id="plan-copiar">Copiar</button>
         </div>
       </div>
+
       <div class="form-group">
-        <label>Imágenes de publicación</label>
-        <div id="pub-images-thumbs" class="image-thumbnails">
-          ${((pub?.images) || []).map(url =>
-            `<div class="img-thumb" data-url="${escAttr(url)}">
-              <img src="${escAttr(url)}" alt="" />
-              <button type="button" class="img-thumb-remove" data-url="${escAttr(url)}">&times;</button>
-            </div>`
-          ).join('')}
+        <label>Imágenes <small style="color:var(--text-muted);font-weight:400">(máx. ${MAX_IMAGES})</small></label>
+        <div id="plan-thumbs" class="image-thumbnails">
+          ${imgs.map(u => `<div class="img-thumb" data-url="${escAttr(u)}"><img src="${escAttr(u)}" alt="" /><button type="button" class="img-thumb-remove" data-url="${escAttr(u)}">&times;</button></div>`).join('')}
         </div>
         <div class="image-input-row">
-          <input type="text" id="pub-image-url-input" class="form-control" placeholder="https://..." />
-          <button type="button" class="btn btn--secondary btn--sm" id="pub-btn-add-url">Agregar URL</button>
+          <input type="text" id="plan-url" class="form-control" placeholder="https://..." />
+          <button type="button" class="btn btn--secondary btn--sm" id="plan-addurl">Agregar URL</button>
           <label class="btn btn--secondary btn--sm" style="cursor:pointer;margin:0">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            Subir
-            <input type="file" accept="image/*" id="pub-image-file" style="display:none" />
+            <span id="plan-file-label">Subir</span>
+            <input type="file" accept="image/*" multiple id="plan-file" style="display:none" />
           </label>
         </div>
-        <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">Agregá URLs o subí archivos. La primera será la portada.</small>
       </div>
-      <div class="form-actions">
+
+      <div class="form-row" style="grid-template-columns:1fr 1fr">
+        <div class="form-group">
+          <label>Fecha y hora de publicación</label>
+          <input type="datetime-local" name="scheduled_at" class="form-control" id="plan-fecha" value="${fechaDefecto}" />
+          <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">
+            Es el momento exacto en que sale. El disparador revisa cada minuto.
+          </small>
+        </div>
+        <div class="form-group">
+          <label>Grupos de Facebook</label>
+          <div class="plan-grupos" id="plan-grupos">
+            ${grupos.length ? grupos.map(g => {
+              const on = gruposPrevistos.includes(g.id);
+              return `<label class="plan-grupo"><input type="checkbox" class="plan-gc" value="${escAttr(g.id)}" data-name="${escAttr(g.name)}" ${on ? 'checked' : ''}/> ${escHtml(g.name)}</label>`;
+            }).join('') : '<span style="font-size:.78rem;color:var(--text-muted)">No hay grupos registrados.</span>'}
+          </div>
+          ${grupos.length ? `<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+            <button type="button" class="btn btn--sm btn--ghost" id="plan-todos">Todos</button>
+            <button type="button" class="btn btn--sm btn--ghost" id="plan-ninguno">Ninguno</button>
+            <button type="button" class="btn btn--sm btn--secondary" id="plan-gestionar">Gestionar grupos</button>
+          </div>` : `<div style="margin-top:6px"><button type="button" class="btn btn--sm btn--secondary" id="plan-gestionar">Gestionar grupos</button></div>`}
+        </div>
+      </div>
+
+      <div id="plan-avisos"></div>
+      <div id="plan-preview"></div>
+
+      <div class="form-actions" style="flex-wrap:wrap;gap:8px">
         <button type="button" class="btn btn--secondary" onclick="closeModal()">Cancelar</button>
-        <button type="submit" class="btn btn--primary">${isEdit ? 'Guardar cambios' : 'Crear publicación'}</button>
+        ${destinosPendientes.length
+          ? '<button type="button" class="btn btn--secondary" id="plan-cancelar">Desarmar publicación</button>' : ''}
+        ${destinosPendientes.length ? '' : `<button type="button" class="btn btn--secondary" id="plan-material">${esEdicion ? 'Guardar cambios' : 'Guardar como material'}</button>`}
+        <button type="submit" class="btn btn--primary" id="plan-agendar">${esEdicion ? 'Guardar y agendar' : 'Agendar publicación'}</button>
       </div>
     </form>
   `);
 
-  const form = document.getElementById('publication-form');
-  const initialSnapshot = snapshotForm(form);
+  const form = document.getElementById('plan-form');
+  const init = JSON.stringify({ imgs, g: gruposPrevistos });
   setModalCloseGuard(async () => {
-    if (snapshotForm(form) === initialSnapshot) return true;
+    const ahora = JSON.stringify({ imgs: imgs.slice().sort(), g: [...document.querySelectorAll('.plan-gc:checked')].map(c => c.value).sort() });
+    if (ahora === init) return true;
     return confirmDialog('¿Descartar los cambios sin guardar?', {
-      title: 'Cambios sin guardar',
-      confirmText: 'Descartar',
-      danger: true
+      title: 'Cambios sin guardar', confirmText: 'Descartar', danger: true,
     });
   });
 
-  const pubImages = pub?.images ? [...pub.images] : [];
-  const thumbsContainer = document.getElementById('pub-images-thumbs');
-  const fileInput = document.getElementById('pub-image-file');
-  const urlInput = document.getElementById('pub-image-url-input');
-  const addUrlBtn = document.getElementById('pub-btn-add-url');
+  // ── filtros de producto ──
+  const selProd = document.getElementById('plan-prod');
+  const selProv = document.getElementById('plan-prov');
+  const selCat = document.getElementById('plan-cat');
+  const inpBus = document.getElementById('plan-buscar');
 
-  const searchInput = document.getElementById('pub-product-search');
-  const catSelect = document.getElementById('pub-product-category');
-  const providerSelect = document.getElementById('pub-product-provider');
-  const visibilitySelect = document.getElementById('pub-product-visibility');
-  const productSelect = document.getElementById('pub-product-select');
+  const proveedores = [...new Map(productos.filter(p => p.provider_id).map(p => [p.provider_id, p.provider_name || p.provider_id])).entries()];
+  selProv.innerHTML = '<option value="">Todos los proveedores</option>' +
+    proveedores.map(([id, n]) => `<option value="${escAttr(id)}">${escHtml(n)}</option>`).join('');
+  const cats = [...new Set(productos.map(p => p.category).filter(Boolean))].sort();
+  selCat.innerHTML = '<option value="">Todas las categorías</option>' +
+    cats.map(c => `<option value="${escAttr(c)}">${escHtml(c)}</option>`).join('');
 
-  if (!isEdit) {
-    const saved = loadPubFilters();
-    searchInput.value = saved.search;
-    if (saved.category) catSelect.value = saved.category;
-    if (saved.provider) providerSelect.value = saved.provider;
-    if (saved.visibility !== '') visibilitySelect.value = saved.visibility;
-  }
-
-  function saveFilters() {
-    savePubFilters({
-      search: searchInput.value,
-      category: catSelect.value,
-      provider: providerSelect.value,
-      visibility: visibilitySelect.value,
-    });
-  }
-
-  function renderProductSelect() {
-    const q = searchInput.value.toLowerCase();
-    const cat = catSelect.value;
-    const prov = providerSelect.value;
-    const vis = visibilitySelect.value;
-    const currentVal = productSelect.value;
-    const filtered = allProducts.filter(p => {
-      if (cat && p.category !== cat) return false;
-      if (prov && p.provider_id !== prov) return false;
-      if (vis !== '' && String(p.catalog_visible) !== vis) return false;
-      if (q && !p.name.toLowerCase().includes(q)) return false;
+  function pintarProductos() {
+    const q = (inpBus.value || '').toLowerCase();
+    const cv = selProd.value;
+    const filt = productos.filter(p => {
+      if (selProv.value && p.provider_id !== selProv.value) return false;
+      if (selCat.value && p.category !== selCat.value) return false;
+      if (q && !(p.name || '').toLowerCase().includes(q)) return false;
       return true;
     });
-    productSelect.innerHTML = '<option value="">Sin producto</option>' +
-      filtered.map(pr =>
-        `<option value="${pr.id}" ${pr.id === currentVal ? 'selected' : ''}>${escHtml(pr.name)}</option>`
-      ).join('');
+    selProd.innerHTML = '<option value="">Sin producto</option>' +
+      filt.map(p => `<option value="${escAttr(p.id)}" ${p.id === cv ? 'selected' : ''}>${escHtml(p.name)}</option>`).join('');
   }
+  if (esEdicion && ev.product_id) selProd.value = ev.product_id;
+  pintarProductos();
+  const deb = debounce(pintarProductos, 200);
+  inpBus.addEventListener('input', deb);
+  selProv.addEventListener('change', pintarProductos);
+  selCat.addEventListener('change', pintarProductos);
 
-  const debouncedRender = debounce(renderProductSelect, 200);
-  searchInput.addEventListener('input', () => {
-    debouncedRender();
-    saveFilters();
-  });
-  catSelect.addEventListener('change', () => {
-    renderProductSelect();
-    saveFilters();
-  });
-  providerSelect.addEventListener('change', () => {
-    renderProductSelect();
-    saveFilters();
-  });
-  visibilitySelect.addEventListener('change', () => {
-    renderProductSelect();
-    saveFilters();
-  });
+  // ── imágenes ──
+  const thumbs = document.getElementById('plan-thumbs');
+  const fileIn = document.getElementById('plan-file');
+  const urlIn = document.getElementById('plan-url');
 
-  renderProductSelect();
-
-  function renderThumbs() {
-    thumbsContainer.innerHTML = pubImages.map((url, i) =>
-      `<div class="img-thumb" data-url="${escAttr(url)}">
-        <img src="${escAttr(url)}" alt="" />
-        <button type="button" class="img-thumb-remove" data-url="${escAttr(url)}">&times;</button>
-      </div>`
+  function pintarThumbs() {
+    thumbs.innerHTML = imgs.map(u =>
+      `<div class="img-thumb" data-url="${escAttr(u)}"><img src="${escAttr(u)}" alt="" /><button type="button" class="img-thumb-remove" data-url="${escAttr(u)}">&times;</button></div>`
     ).join('');
-    thumbsContainer.querySelectorAll('.img-thumb-remove').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const idx = pubImages.indexOf(btn.dataset.url);
-        if (idx !== -1) pubImages.splice(idx, 1);
-        renderThumbs();
-      });
-    });
+    thumbs.querySelectorAll('.img-thumb-remove').forEach(b => b.addEventListener('click', () => {
+      const i = imgs.indexOf(b.dataset.url);
+      if (i !== -1) imgs.splice(i, 1);
+      pintarThumbs();
+    }));
   }
 
-  addUrlBtn?.addEventListener('click', () => {
-    const url = urlInput.value.trim();
-    if (!url) return;
-    pubImages.push(url);
-    urlInput.value = '';
-    renderThumbs();
+  document.getElementById('plan-addurl').addEventListener('click', () => {
+    const u = urlIn.value.trim();
+    if (!u) return;
+    if (imgs.length >= MAX_IMAGES) return showToast(`Máximo ${MAX_IMAGES} imágenes`, 'warning');
+    imgs.push(u); urlIn.value = ''; pintarThumbs();
   });
+  urlIn.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); document.getElementById('plan-addurl').click(); } });
 
-  urlInput?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      addUrlBtn?.click();
-    }
-  });
+  fileIn.addEventListener('change', async () => {
+    // Se limpia el input antes de procesar nada: si no, volver a elegir el
+    // mismo archivo no dispara 'change' y el usuario cree que no funciona.
+    const files = [...(fileIn.files || [])];
+    fileIn.value = '';
+    if (!files.length) return;
 
-  fileInput?.addEventListener('change', async () => {
-    const file = fileInput.files?.[0];
-    if (!file) return;
-    try {
-      fileInput.disabled = true;
-      const res = await api.uploadImage(file);
-      pubImages.push(res.url);
-      renderThumbs();
-      showToast('Imagen subida', 'success');
-    } catch (err) {
-      showToast(err.message, 'error');
-    } finally {
-      fileInput.disabled = false;
-      fileInput.value = '';
-    }
-  });
+    // `accept` es solo una sugerencia para el diálogo del sistema: el usuario
+    // puede elegir "todos los archivos". El filtro real va acá.
+    const imagenes = files.filter(f => f.type.startsWith('image/'));
+    const noImagenes = files.length - imagenes.length;
 
-  document.getElementById('pub-btn-generate')?.addEventListener('click', async () => {
-    const select = document.getElementById('pub-product-select');
-    const productId = select.value;
-    if (!productId) {
-      showToast('Seleccioná un producto primero', 'warning');
-      return;
-    }
-    try {
-      const product = await api.getProduct(productId);
-      const textarea = document.getElementById('pub-publish-text');
-      if (product.publish_text) {
-        textarea.value = product.publish_text;
-      } else {
-        showToast('El producto no tiene texto de publicación. Usá la IA en Productos.', 'warning');
-      }
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
+    const espacio = MAX_IMAGES - imgs.length;
+    if (espacio <= 0) return showToast(`Máximo ${MAX_IMAGES} imágenes`, 'warning');
 
-  document.getElementById('pub-btn-copy')?.addEventListener('click', async () => {
-    const text = document.getElementById('pub-publish-text')?.value;
-    if (!text) {
-      showToast('No hay texto para copiar', 'warning');
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(text);
-      showToast('Copiado al portapapeles', 'success');
-    } catch {
-      showToast('No se pudo copiar', 'error');
-    }
-  });
+    const lote = imagenes.slice(0, espacio);
+    const rebasadas = imagenes.length - lote.length;
 
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const fd = new FormData(e.target);
-    const data = Object.fromEntries(fd);
-    data.images = pubImages;
-    data.publication_date = toSqlDatetime(data.publication_date);
+    const label = document.getElementById('plan-file-label');
+    const textoLabel = label?.textContent;
+    const fallidas = [];
+    let ok = 0;
 
-    if (!data.publish_text?.trim()) {
-      showToast('El texto de publicación es obligatorio', 'error');
-      return;
-    }
-
-    try {
-      if (pub) {
-        await api.updatePublication(pub.id, data);
-        showToast('Publicación actualizada', 'success');
-      } else {
-        await api.createPublication(data);
-        showToast('Publicación creada', 'success');
-      }
-      closeModal(true);
-      render(currentContainer);
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
-};
-
-window._viewPublication = async function(id) {
-  try {
-    const p = await api.getPublication(id);
-    const images = p.images?.length ? p.images : [];
-    openModal(`
-      <div class="modal-header">
-        <h2>${escHtml(p.product_name || 'Publicación')}</h2>
-        <button class="modal-close" onclick="closeModal()">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        </button>
-      </div>
-      ${images.length > 0 ? `
-        <div class="publication-detail-gallery">
-          ${images.map(url =>
-            `<img src="${escAttr(url)}" alt="" class="publication-detail-img" />`
-          ).join('')}
-        </div>
-      ` : ''}
-      <div class="publication-detail-info">
-        <div class="detail-row">
-          <span class="detail-label">Producto</span>
-          <span class="detail-value">${escHtml(p.product_name || '—')}</span>
-        </div>
-        <div class="detail-row">
-          <span class="detail-label">Fecha</span>
-          <span class="detail-value">${formatDate(p.publication_date || p.created_at)}</span>
-        </div>
-      </div>
-      <div class="publish-text-section">
-        <div class="publish-text-label">Texto de publicación</div>
-        <div class="publish-text-content" style="white-space:pre-wrap">${escHtml(p.publish_text)}</div>
-      </div>
-      <div class="form-actions">
-        <button type="button" class="btn btn--secondary" onclick="closeModal()">Cerrar</button>
-        <button type="button" class="btn btn--primary" id="view-copy-btn">Copiar texto</button>
-        <button type="button" class="btn btn--primary" id="view-fb-btn" style="background:#1877f2">Publicar en Facebook</button>
-      </div>
-    `);
-    setModalCloseGuard(null);
-    document.getElementById('view-copy-btn')?.addEventListener('click', async () => {
+    // Secuencial a propósito: /upload es local pero cada request abre streams y
+    // escribe a disco. Diez en paralelo solo hace que una falle y perdamos la
+    // trazabilidad de cuál fue. El label va avanzando para que no parezca colgado.
+    for (let i = 0; i < lote.length; i++) {
+      if (label) label.textContent = `Subiendo ${i + 1}/${lote.length}…`;
       try {
-        await navigator.clipboard.writeText(p.publish_text);
-        showToast('Texto copiado', 'success');
-      } catch { showToast('No se pudo copiar', 'error'); }
-    });
-    document.getElementById('view-fb-btn')?.addEventListener('click', () => {
+        const r = await api.uploadImage(lote[i]);
+        imgs.push(r.url);
+        ok++;
+        pintarThumbs();          // se ve avanzar, en vez de saltar al final
+      } catch (err) {
+        fallidas.push(`${lote[i].name} (${err.message})`);
+      }
+    }
+    if (label) label.textContent = textoLabel;
+
+    // Un solo aviso con todo lo que pasó, para no encadenar toasts.
+    const avisos = [];
+    if (ok) avisos.push(`${ok} imagen${ok === 1 ? '' : 'es'} subida${ok === 1 ? '' : 's'}`);
+    if (fallidas.length) avisos.push(`fallaron ${fallidas.length}: ${fallidas.join(', ')}`);
+    if (noImagenes) avisos.push(`${noImagenes} archivo(s) no eran imágenes y se omitieron`);
+    if (rebasadas) avisos.push(`${rebasadas} omitida(s) por el máximo de ${MAX_IMAGES}`);
+
+    if (fallidas.length) showToast(avisos.join(' · '), 'error');
+    else if (rebasadas || noImagenes) showToast(avisos.join(' · '), 'warning');
+    else showToast(avisos.join(' · '), 'success');
+  });
+
+  document.getElementById('plan-generar').addEventListener('click', async () => {
+    const pid = selProd.value;
+    if (!pid) return showToast('Seleccioná un producto primero', 'warning');
+    try {
+      const p = await api.getProduct(pid);
+      if (p.publish_text) document.getElementById('plan-texto').value = p.publish_text;
+      else showToast('El producto no tiene texto de publicación. Usá la IA en Productos.', 'warning');
+    } catch (err) { showToast(err.message, 'error'); }
+  });
+
+  document.getElementById('plan-copiar').addEventListener('click', async () => {
+    const t = document.getElementById('plan-texto')?.value;
+    if (!t) return showToast('No hay texto para copiar', 'warning');
+    try { await navigator.clipboard.writeText(t); showToast('Copiado al portapapeles', 'success'); }
+    catch { showToast('No se pudo copiar', 'error'); }
+  });
+
+  document.getElementById('plan-todos')?.addEventListener('click', () => {
+    document.querySelectorAll('.plan-gc').forEach(c => { c.checked = true; });
+  });
+  document.getElementById('plan-ninguno')?.addEventListener('click', () => {
+    document.querySelectorAll('.plan-gc').forEach(c => { c.checked = false; });
+  });
+  document.getElementById('plan-gestionar').addEventListener('click', () => {
+    closeModal(true);
+    gestionarGrupos();
+  });
+
+  // ── avisos de separación: informa, NO bloquea ──
+  const selFecha = document.getElementById('plan-fecha');
+  const cajaAvisos = document.getElementById('plan-avisos');
+  const cajaPreview = document.getElementById('plan-preview');
+
+  const avisosDeb = debounce(async () => {
+    // /agenda/conflicts compara por NOMBRE de grupo (es lo que guarda la cola),
+    // así que se le pasan los data-name, no los ids.
+    const gs = [...document.querySelectorAll('.plan-gc:checked')].map(c => c.dataset.name || '');
+    const f = selFecha.value;
+    if (!f) { cajaAvisos.innerHTML = ''; return; }
+    const iso = localInputToUtc(f);
+    if (!gs.length) {
+      cajaAvisos.innerHTML = '<div class="plan-avisos plan-avisos--vacio">Sin grupos: esto se va a guardar como material y no se publicará solo.</div>';
+      cajaPreview.innerHTML = '';
+      return;
+    }
+    try {
+      const r = await api.getAgendaConflicts(iso, gs, 2, ev?.id || '');
+      if (r.avisos?.length) {
+        cajaAvisos.innerHTML = `<div class="plan-avisos">
+          <b>Vas a publicar cerca de otro post en el mismo grupo.</b>
+          <span style="display:block;margin-top:2px">No hay cooldown, así que esto NO te va a detener: es solo para que lo sepas.</span>
+          <ul>${r.avisos.slice(0, 6).map(a => `<li><b>${escHtml(a.group_name)}</b> — ${escHtml(a.product_name || 'sin producto')} ${a.minutos_de_diferencia === 0 ? 'a la misma hora' : `a ${a.minutos_de_diferencia} min de diferencia`}</li>`).join('')}</ul>
+        </div>`;
+      } else {
+        cajaAvisos.innerHTML = '';
+      }
+      cajaPreview.innerHTML = `<div class="plan-preview">
+        <b>Se publicará el ${escHtml(formatDateTime(iso))}</b> en ${gs.length} grupo(s): ${escHtml(gs.join(', '))}.
+        <br><span style="color:var(--text-muted);font-size:.74rem">${imgs.length} de ${MAX_IMAGES} imagen(es). Podés elegir varias a la vez. El disparador corre cada minuto, así que puede salir hasta ~1 min después de esa hora.</span>
+      </div>`;
+    } catch { /* los avisos son un extra: si fallan, se sigue */ }
+  }, 400);
+
+  selFecha.addEventListener('change', avisosDeb);
+  selFecha.addEventListener('input', avisosDeb);
+  document.querySelectorAll('.plan-gc').forEach(c => c.addEventListener('change', avisosDeb));
+
+  // ── guardado ──
+  async function guardar({ agendar }) {
+    const fd = new FormData(form);
+    const texto = String(fd.get('publish_text') || '').trim();
+    if (!texto) { showToast('El texto de publicación es obligatorio', 'error'); return; }
+
+    const selIds = [...document.querySelectorAll('.plan-gc:checked')].map(c => c.value);
+    const selNombres = selIds.map(nombreDe).filter(Boolean);
+    const fechaRaw = String(fd.get('scheduled_at') || '');
+    if (agendar) {
+      if (!selIds.length) return showToast('Elegí al menos un grupo para agendar', 'warning');
+      if (!fechaRaw) return showToast('Poné la fecha y la hora de publicación', 'warning');
+    }
+
+    const btn = document.getElementById(agendar ? 'plan-agendar' : 'plan-material');
+    const txtBtn = btn?.textContent;
+    if (btn) { btn.disabled = true; btn.textContent = 'Guardando…'; }
+
+    try {
+      // 1) El contenido vive en `publications` (la biblioteca). La fecha se
+      //    guarda SIEMPRE, también como material: así el calendario puede
+      //    colocarlo en su día aunque todavía no tenga grupos.
+      const isoFecha = fechaRaw ? localInputToUtc(fechaRaw) : new Date().toISOString();
+      const payload = {
+        product_id: fd.get('product_id') || null,
+        publish_text: texto,
+        images: imgs,
+        publication_date: isoFecha,
+      };
+
+      let pubId = ev?.id;
+      if (pubId) await api.updatePublication(pubId, payload);
+      else {
+        const creado = await api.createPublication(payload);
+        pubId = creado.id;
+      }
+
+      if (agendar) {
+        // Al re-agendar un evento ya agendado se desarman sus destinos
+        // pendientes primero: si no, cada guardado dejaría filas duplicadas
+        // para el mismo grupo y se publicaría dos veces. Lo ya publicado no
+        // se toca.
+        if (destinosPendientes.length) {
+          await api.rescheduleAgendaEvent(pubId, { status: 'cancelled' });
+        }
+        // 2) Los destinos van a `publication_queue`, uno por grupo, TODOS con
+        //    la misma hora. Ese es el momento único de publicación.
+        await api.addToPubQueue({
+          publication_id: pubId,
+          group_ids: selIds,
+          scheduled_at: isoFecha,
+          images: imgs,
+        });
+      }
+
+      showToast(agendar
+        ? `Programada para ${formatDateTime(isoFecha)} en ${selNombres.length} grupo(s)`
+        : 'Guardado como material', 'success');
       closeModal(true);
-      window._publishPublication(p.id, 'facebook');
-    });
-  } catch (err) {
-    showToast(err.message, 'error');
+      await cargar();
+    } catch (err) {
+      showToast(err.message, 'error');
+      if (btn) { btn.disabled = false; btn.textContent = txtBtn; }
+    }
   }
-};
 
-window._editPublication = async function(id) {
-  try {
-    const pub = await api.getPublication(id);
-    window._openPublicationForm(pub);
-  } catch (err) {
-    showToast('Error al cargar publicación', 'error');
-  }
-};
+  form.addEventListener('submit', e => { e.preventDefault(); guardar({ agendar: true }); });
+  document.getElementById('plan-material')?.addEventListener('click', () => guardar({ agendar: false }));
 
-window._publishPublication = async function(id, platform = 'facebook') {
-  const isIg = platform === 'instagram';
+  document.getElementById('plan-cancelar')?.addEventListener('click', async () => {
+    const ok = await confirmDialog(
+      'Desarmar desmarca los destinos pendientes de este evento: deja de publicarse solo y vuelve a ser material. Lo ya publicado no se toca.',
+      { title: 'Desarmar publicación', confirmText: 'Desarmar', danger: true }
+    );
+    if (!ok) return;
+    try {
+      await api.rescheduleAgendaEvent(ev.id, { status: 'cancelled' });
+      showToast('Publicación desarmada', 'success');
+      closeModal(true);
+      await cargar();
+    } catch (err) { showToast(err.message, 'error'); }
+  });
 
-  let publications = [];
-  let groups = [];
-  let settings = null;
-  try {
-    publications = await api.getPublications();
-  } catch { /* continúa con lista vacía */ }
-  try {
-    groups = await api.getGroups();
-  } catch {}
-  try {
-    settings = await api.getSettings();
-  } catch {}
+  avisosDeb();
+}
 
-  const defaultPubId = id || publications[0]?.id || '';
-  const fbConfig = settings?.publish_config?.facebook || {};
-
+// ═══════════════════════════ gestionar grupos ════════════════════════════
+// La pestaña "Grupos" vivía dentro de la Cola de Publicaciones. Al sacar esa
+// sección, la gestión de grupos se abre desde el Planificador.
+async function gestionarGrupos() {
+  const gs = await api.getGroups().catch(() => []);
   openModal(`
     <div class="modal-header">
-      <h2>${isIg ? 'Publicar en Instagram' : 'Publicar en Facebook'}</h2>
+      <h2>Gestionar grupos</h2>
       <button class="modal-close" onclick="closeModal()">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg>
       </button>
     </div>
     <div class="modal-body">
-      <div class="form-group">
-        <label>Publicación</label>
-        <select id="pubx-select" class="form-control">
-          ${publications.length ? publications.map(p =>
-            `<option value="${p.id}" ${p.id === defaultPubId ? 'selected' : ''}>${escHtml(p.product_name || 'Sin producto')} — ${formatDate(p.publication_date || p.created_at)}</option>`
-          ).join('') : '<option value="">Sin publicaciones</option>'}
-        </select>
+      <div class="agenda-destinos" id="gr-lista">
+        ${gs.length ? gs.map(g => `
+          <div class="agenda-destino" data-id="${escAttr(g.id)}">
+            <div class="agenda-destino-cuerpo">
+              <div class="agenda-destino-nombre" id="gr-nom-${escAttr(g.id)}">${escHtml(g.name)}</div>
+              <div class="agenda-destino-notas" id="gr-url-${escAttr(g.id)}">${escHtml(g.url || '')}</div>
+            </div>
+            <button class="btn btn--sm btn--ghost" style="color:var(--error)" onclick="window._borrarGrupo('${escAttr(g.id)}')">Eliminar</button>
+          </div>`).join('')
+          : '<div class="empty-state"><h3>No hay grupos</h3><p>Agregá el primero con el formulario de abajo</p></div>'}
       </div>
-
-      ${isIg ? '' : `
-      <div class="form-group">
-        <label>Grupos de Facebook</label>
-        <div id="pubx-groups" style="display:flex;flex-direction:column;gap:6px;max-height:220px;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:10px;background:var(--bg)">
-          ${groups.length ? groups.map(g =>
-            `<label style="display:flex;align-items:center;gap:8px;font-size:.82rem;cursor:pointer">
-              <input type="checkbox" value="${g.id}" class="pubx-group-cb" /> ${escHtml(g.name)}
-            </label>`
-          ).join('') : '<span style="font-size:.78rem;color:var(--text-muted)">No hay grupos registrados. Agregalos en "Gestionar grupos".</span>'}
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+        <div class="form-group">
+          <label>Nuevo grupo</label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input type="text" id="gr-nombre" class="form-control" placeholder="Nombre del grupo" style="flex:1;min-width:140px" />
+            <input type="text" id="gr-url" class="form-control" placeholder="https://facebook.com/groups/..." style="flex:1.4;min-width:190px" />
+            <button type="button" class="btn btn--primary btn--sm" id="gr-agregar">Agregar</button>
+          </div>
+          <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:5px">
+            La URL es la que se abre en Chrome para publicar.
+          </small>
         </div>
-        ${groups.length ? `
-        <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
-          <button type="button" class="btn btn--sm btn--ghost" id="pubx-select-all">Todos</button>
-          <button type="button" class="btn btn--sm btn--ghost" id="pubx-select-none">Ninguno</button>
-          <button type="button" class="btn btn--sm btn--secondary" id="pubx-manage-groups">Gestionar grupos</button>
-        </div>` : `
-        <div style="margin-top:6px">
-          <button type="button" class="btn btn--sm btn--secondary" id="pubx-manage-groups">Gestionar grupos</button>
-        </div>`}
-        <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:6px">
-          Se agenda la publicación en cada grupo elegido. Cuando llegue la hora quedará "Listo para publicar" en la Cola de Publicaciones.
-        </small>
       </div>
-      `}
-
-      <div class="form-group">
-        <label>Programar para (opcional)</label>
-        <input type="datetime-local" id="pubx-sched" class="form-control" />
-        <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">
-          Vacío = los grupos quedan listos ya y la Página se publica de inmediato. Mínimo 10 minutos para programar.
-        </small>
-      </div>
-
-      ${!isIg ? `
-      <div class="form-group">
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:.85rem">
-          <input type="checkbox" id="pubx-page" /> Publicar también en mi Página (API)
-        </label>
-        ${fbConfig.page_id && fbConfig.access_token
-          ? `<small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">
-              La publicación sale por API a tu Página (${escHtml(fbConfig.page_id)}). Si programás, la publica Meta solo.
-            </small>`
-          : `<small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">
-              Aún no configuraste tu Página. Publicar solo ahí requiere el Page ID y el Access Token.
-              <a href="#" id="pubx-go-settings">Configurar en Ajustes</a>.
-            </small>`}
-      </div>
-      ` : ''}
     </div>
-    <div class="form-actions">
-      <button type="button" class="btn btn--secondary" onclick="closeModal()">Cancelar</button>
-      <button type="button" class="btn btn--primary" id="pubx-submit">${isIg ? 'Publicar' : 'Agendar / Publicar'}</button>
-    </div>
+    <div class="form-actions"><button type="button" class="btn btn--secondary" onclick="closeModal()">Cerrar</button></div>
   `);
+  setModalCloseGuard(null);
 
-  const selectEl = document.getElementById('pubx-select');
-  const schedEl = document.getElementById('pubx-sched');
-  const submitBtn = document.getElementById('pubx-submit');
-
-  document.getElementById('pubx-select-all')?.addEventListener('click', () => {
-    document.querySelectorAll('.pubx-group-cb').forEach(cb => { cb.checked = true; });
-  });
-  document.getElementById('pubx-select-none')?.addEventListener('click', () => {
-    document.querySelectorAll('.pubx-group-cb').forEach(cb => { cb.checked = false; });
-  });
-  document.getElementById('pubx-manage-groups')?.addEventListener('click', () => {
-    closeModal(true);
-    navigate('#/pub-queue?tab=groups');
-  });
-  document.getElementById('pubx-go-settings')?.addEventListener('click', (e) => {
-    e.preventDefault();
-    closeModal(true);
-    navigate('#/settings');
-  });
-
-  submitBtn?.addEventListener('click', async () => {
-    if (submitBtn.disabled) return;
-    const pubId = selectEl?.value;
-    if (!pubId || !publications.some(p => p.id === pubId)) {
-      showToast('Elegí una publicación', 'warning');
-      return;
-    }
-
-    const sched = schedEl?.value || '';
-    const iso = sched ? new Date(sched).toISOString() : null;
-    const groupIds = [...document.querySelectorAll('.pubx-group-cb:checked')].map(cb => cb.value);
-    const doPage = !!document.getElementById('pubx-page')?.checked;
-    const hasPageConfig = !!(fbConfig.page_id && fbConfig.access_token);
-
-    if (doPage && !hasPageConfig) {
-      showToast('Configurá tu Page ID y Access Token en Ajustes para publicar en la Página', 'warning');
-      return;
-    }
-
-    if (!groupIds.length && !doPage && !isIg) {
-      showToast(hasPageConfig
-        ? 'Elegí al menos un grupo, o marcá "Publicar también en mi Página"'
-        : 'Elegí al menos un grupo, o configurá tu Página en Ajustes para publicar solo ahí', 'warning');
-      return;
-    }
-
-    submitBtn.disabled = true;
+  document.getElementById('gr-agregar').addEventListener('click', async () => {
+    const nombre = document.getElementById('gr-nombre').value.trim();
+    const url = document.getElementById('gr-url').value.trim();
+    if (!nombre) return showToast('Falta el nombre del grupo', 'warning');
     try {
-      if (groupIds.length) {
-        await api.addToPubQueue({
-          publication_id: pubId,
-          group_ids: groupIds,
-          scheduled_at: iso ? iso.slice(0, 19).replace('T', ' ') : null,
-        });
-        showToast(sched ? `${groupIds.length} grupo(s) agendado(s) para ${new Date(sched).toLocaleString()}` : `${groupIds.length} grupo(s) listos para publicar`, 'success');
-      }
-      if (doPage) {
-        const result = await api.publishPublication(pubId, 'facebook', iso);
-        showToast(sched ? 'Página: publicación programada en Meta' : 'Página: publicación realizada', 'success');
-        if (result.post_url && !sched) {
-          const openIt = await confirmDialog('¿Abrir la publicación?', { title: 'Publicado', confirmText: 'Abrir', danger: false });
-          if (openIt) window.open(result.post_url, '_blank');
-        }
-      }
+      const r = await api.createGroup({ name: nombre, url });
+      showToast('Grupo agregado', 'success');
+      grupos = await api.getGroups().catch(() => grupos);
       closeModal(true);
-      render(currentContainer);
-    } catch (err) {
-      showToast(err.message, 'error');
-      submitBtn.disabled = false;
-    }
+      gestionarGrupos();
+    } catch (err) { showToast(err.message, 'error'); }
   });
-};
+}
 
-window._copyPublication = async function(id) {
-  try {
-    const pub = await api.getPublication(id);
-    await navigator.clipboard.writeText(pub.publish_text);
-    showToast('Texto copiado al portapapeles', 'success');
-  } catch (err) {
-    showToast(err.message, 'error');
-  }
-};
-
-window._deletePublication = async function(id) {
-  const ok = await confirmDialog('¿Eliminar esta publicación? Esta acción no se puede deshacer.');
+window._borrarGrupo = async function (id) {
+  const ok = await confirmDialog('¿Eliminar este grupo de la lista?', { title: 'Eliminar grupo', danger: true });
   if (!ok) return;
   try {
-    await api.deletePublication(id);
-    showToast('Publicación eliminada', 'success');
-    render(currentContainer);
-  } catch (err) {
-    showToast(err.message, 'error');
-  }
+    await api.deleteGroup(id);
+    showToast('Grupo eliminado', 'success');
+    grupos = await api.getGroups().catch(() => grupos);
+    closeModal(true);
+    gestionarGrupos();
+  } catch (err) { showToast(err.message, 'error'); }
 };
 
-function snapshotForm(form) {
-  return JSON.stringify(Object.fromEntries(new FormData(form)));
-}
+// ════════════════════════════ navegación del calendario ═════════════════
+
+window._agendaNav = function (delta) {
+  if (vista === 'semana') ancla.setDate(ancla.getDate() + 7 * delta);
+  else ancla = new Date(ancla.getFullYear(), ancla.getMonth() + delta, 1);
+  cargar();
+};
+
+window._agendaHoy = function () {
+  ancla = new Date();
+  cargar();
+};
+
+window._agendaVista = function (v) {
+  vista = v === 'semana' ? 'semana' : 'mes';
+  pintar();
+};
+
+window._agendaFiltroEstado = function (v) {
+  filtroEstado = v || '';
+  pintar();
+};
+
+window._agendaFiltroGrupo = function (v) {
+  filtroGrupo = v || '';
+  pintar();
+};
+
+window._agendaDetalle = detalle;
+window._agendaVerDia = verDia;
+window._abrirPlanificador = function (ev) { abrirPlanificador(ev || null); };
