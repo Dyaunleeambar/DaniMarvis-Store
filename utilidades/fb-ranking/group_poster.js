@@ -938,6 +938,15 @@ async function processGroup(browser, groupUrl, label) {
   const page = await browser.newPage();
   await page.setViewport({ width: 1600, height: 960 });
   await page.bringToFront();
+  // La pestaña se cierra SIEMPRE en el finally, salvo en modo prepare, que
+  // existe justamente para dejarle el post armado al usuario. Antes el cierre
+  // estaba pegado al return de éxito: las otras 8 salidas (compositor no
+  // encontrado, sin sesión, texto que no entró, botón Publicar ausente, error
+  // inesperado) dejaban la pestaña abierta, y cada una se acumulaba con su
+  // diálogo "Crear publicación" vivo. Con varias pestañas viejas, la corrida
+  // siguiente encuentra diálogos ajenos y falla ella también: bola de nieve
+  // que se veía como "el grupo está cerrado" cuando el grupo estaba bien.
+  let dejarPestana = false;
   try {
     await page.goto(groupUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
     await sleep(rand(5000, 8000));
@@ -993,6 +1002,7 @@ async function processGroup(browser, groupUrl, label) {
 
     if (MODE === 'prepare') {
       console.log(`[${label}] post listo en pestaña (modo preparar).`);
+      dejarPestana = true;   // acá NO se cierra: el usuario publica a mano
       // Si se pidieron imágenes y no hay ninguna en el contenedor de adjuntos,
       // avisar: el texto está pero la foto NO se adjuntó (FB la rechazó).
       const aviso = imgs.images > 0 && imgs.attached === 0
@@ -1115,9 +1125,7 @@ async function processGroup(browser, groupUrl, label) {
       console.error('[FRESH] ' + JSON.stringify(fresh));
       await page.screenshot({ path: require('path').join(require('os').tmpdir(), 'danimarvis_published_check.png') }).catch(() => {});
     } catch (_) {}
-    // en modo publish cerramos la pestaña (ya no hace falta)
     const postUrl = await grabPostUrl(page);
-    await page.close().catch(() => {});
     return out({
       group_url: groupUrl, ok: true, status: 'published',
       message: 'Publicado en el grupo.'
@@ -1135,6 +1143,8 @@ async function processGroup(browser, groupUrl, label) {
     });
   } catch (err) {
     return out({ group_url: groupUrl, ok: false, status: 'error', message: (err.message || '').slice(0, 200) });
+  } finally {
+    if (!dejarPestana) await page.close().catch(() => {});
   }
 }
 

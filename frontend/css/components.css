@@ -1017,6 +1017,7 @@ tr:hover td { background: rgba(201,132,122,.03); }
   word-break: break-word;
 }
 .agenda-destino--aprobacion { color: #8a4b06; font-size: .72rem; font-weight: 600; margin-top: 2px; }
+.agenda-destino-pista { color: #8a4b06; font-size: .73rem; margin-top: 3px; line-height: 1.35; }
 .agenda-destino-mini { font-size: .68rem; color: var(--text-muted); margin-top: 3px; display: flex; gap: 5px; }
 .agenda-destino-mini img { width: 26px; height: 26px; object-fit: cover; border-radius: 3px; border: 1px solid var(--border); }
 

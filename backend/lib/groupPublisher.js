@@ -415,12 +415,28 @@ async function deleteTempFiles(files) {
  *  - 'noBrowser': no hay Chrome escuchando en 9222
  *  - 'sesion':    el perfil de Facebook venció y hay muro de login
  */
+/**
+ * Pista accionable según la causa. Sin esto la UI muestra el mensaje crudo del
+ * poster y el usuario no tiene ni idea de si reintentar sirve.
+ */
+export const CAUSAS = {
+  noBrowser: 'No se pudo abrir Chrome. Prendé el navegador con depuración en el puerto 9222.',
+  sesion: 'La sesión de Facebook venció o cambió. Entrá de nuevo y reintentá.',
+  compositor: 'El compositor de Facebook no apareció, o el post no confirmó. Suele ser Facebook lento o un diálogo viejo tapándolo, no el grupo. Reintentá en un rato.',
+};
+
 function classifyFailure(message) {
   const m = String(message || '');
   if (/no se pudo conectar a chrome|puerto 9222|localhost:9222|failed to fetch browser websocket|econnrefused|could not connect to chrome/i.test(m)) return 'noBrowser';
   if (/sesi[oó]n de facebook requerida|sesi[oó]n (expirada|venci[oó]da)|\/login|checkpoint|cookie_consent/i.test(m)) return 'sesion';
+  // El poster no comprueba si el grupo está cerrado: solo que no halló el
+  // compositor. Sin esta línea la UI lo muestra como "Error" pelado y el
+  // usuario no tiene ni idea de que reintentar a ciegas no va a servir.
+  if (/no se encontr[oó] el compositor|no se encontr[oó] el bot[oó]n publicar|el texto no qued[oó] en el compositor|pero el post no se envi[oó]|sigue en el compositor/i.test(m)) return 'compositor';
   return null;
 }
+
+export { classifyFailure };
 
 /**
  * Trabajo real de la corrida. NO await-ear desde una ruta: usar

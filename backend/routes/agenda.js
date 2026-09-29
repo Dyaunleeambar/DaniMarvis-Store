@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { getDB } from '../db/database.js';
-import { startGroupPublish, agendaSchedulerState } from '../lib/groupPublisher.js';
+import { startGroupPublish, agendaSchedulerState, classifyFailure, CAUSAS } from '../lib/groupPublisher.js';
 
 const router = Router();
 
@@ -155,19 +155,28 @@ router.get('/', (req, res) => {
       publicados: destinos.filter(x => x.status === 'published').length,
       errores: destinos.filter(x => x.status === 'error').length,
       omitidos: destinos.filter(x => x.status === 'omitted').length,
-      destinos: destinos.map(x => ({
-        id: x.id,
-        group_name: x.group_name,
-        group_url: x.group_url,
-        status: x.status,
-        scheduled_at: x.scheduled_at,
-        published_at: x.published_at,
-        notes: x.notes || '',
-        images: x.images,
-        variant_text: x.variant_text || '',
-        pending_approval: !!x.pending_approval,
-        updated_at: x.updated_at,
-      })),
+      destinos: destinos.map(x => {
+        // La nota guarda el mensaje crudo del poster. Para los destinos que
+        // quedaron en error, se agrega una pista con la causa conocida, para
+        // que el detalle no muestre "Error" sin más: el usuario tiene que poder
+        // distinguir "reintentá" de "prendé Chrome" de "logueate de nuevo".
+        const causa = x.status === 'error' ? classifyFailure(x.notes || '') : null;
+        return {
+          id: x.id,
+          group_name: x.group_name,
+          group_url: x.group_url,
+          status: x.status,
+          scheduled_at: x.scheduled_at,
+          published_at: x.published_at,
+          notes: x.notes || '',
+          causa,
+          pista: causa ? CAUSAS[causa] : null,
+          images: parseImages(x.images),
+          variant_text: x.variant_text || '',
+          pending_approval: !!x.pending_approval,
+          updated_at: x.updated_at,
+        };
+      }),
     };
   });
 
