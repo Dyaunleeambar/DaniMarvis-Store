@@ -824,6 +824,20 @@ async function clickPublish(page, dryRun) {
 // Tilda `n` grupos del diálogo "Añadir grupos", arrancando después de `desde`
 // y dando la vuelta al llegar al final. Devuelve los nombres efectivamente
 // tildados para que el backend registre a dónde fue.
+async function probeEtapa(page, tag) {
+  try {
+    const info = await page.evaluate(() => {
+      const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none'; };
+      const norm = (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      const editors = Array.from(document.querySelectorAll('[contenteditable="true"]')).filter(vis).map(el => ({ len: (el.innerText || '').trim().length, txt: (el.innerText || '').slice(0, 24).replace(/\n/g, ' ') }));
+      const dialogs = Array.from(document.querySelectorAll('[role="dialog"]')).filter(e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; }).map(d => ({ t: (d.innerText || '').replace(/\s+/g, ' ').slice(0, 55) }));
+      const pubs = Array.from(document.querySelectorAll('div[role="button"],span[role="button"],button')).filter(e => vis(e) && (norm(e.getAttribute('aria-label')) === 'publicar' || norm(e.innerText) === 'publicar')).map(e => ({ dis: e.getAttribute('aria-disabled'), t: (e.innerText || '').trim().slice(0, 8) }));
+      return { editors, dialogs, pubs };
+    });
+    console.log('[PROBE] ' + tag + ' ' + JSON.stringify(info));
+  } catch (e) { console.log('[PROBE] ' + tag + ' error: ' + e.message); }
+}
+
 async function seleccionarLoteGrupos(page, { n, desde } = {}) {
   const cuantos = Math.max(1, Math.min(30, Number(n) || 9));
   if (cuantos <= 1) return { seleccionados: [], total: 0, sinBoton: false };
@@ -855,6 +869,8 @@ async function seleccionarLoteGrupos(page, { n, desde } = {}) {
     await page.evaluate((x, y) => { const el = document.elementFromPoint(x, y); if (el) el.click(); }, btn.x, btn.y);
   }
   await sleep(rand(2000, 3000));
+
+  if (DEBUG) await probeEtapa(page, 'picker-abierto');
 
   // 2) cargar la lista entera. Es LAZY: arranca con 20 checkables y cada scroll
   //    al fondo del div interno agrega 20 más. Scrollear la ventana no hace
@@ -950,7 +966,40 @@ async function seleccionarLoteGrupos(page, { n, desde } = {}) {
     return idxs.map(i => (chk[i] && chk[i].checked) ? i : -1).filter(i => i >= 0);
   }, pedidos);
 
-  return { seleccionados: verificado.map(i => items[i]), total, cargados, sinBoton: false };
+  // 6) cerrar el diálogo con "Atrás", que es como lo cierra una persona. El
+  //    picker es un modal ENCIMA del compositor: mientras está abierto, el
+  //    editor de la página queda vacío en el DOM y su botón Publicar sale
+  //    deshabilitado (habia botones con aria-disabled=true en todas las
+  //    corridas). Cerrarlo devuelve el post al compositor con los grupos
+  //    ya aplicados. "Atrás" es el botón del pie del diálogo (aria-label
+  //    "Atrás"); también hay un botón "Cerrar cuadro de diálogo del editor",
+  //    pero el usuario confirmó que el flujo real cierra con Atrás.
+  const cerrado = await page.evaluate(() => {
+    const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    const dialogs = Array.from(document.querySelectorAll('[role="dialog"]')).filter(vis);
+    const picker = dialogs.find(d => (d.innerText || '').includes('Añadir grupos'));
+    if (!picker) return { modo: 'sin-dialogo' };
+    const btn = Array.from(picker.querySelectorAll('div[role="button"], button'))
+      .find(e => vis(e) && /^atr[aá]s/i.test((e.getAttribute('aria-label') || e.innerText || '').trim()));
+    if (!btn) return { modo: 'sin-atra' };
+    const r = btn.getBoundingClientRect();
+    return { modo: 'atras', x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+  });
+  if (cerrado.modo === 'atras') {
+    const btnXY = { x: cerrado.x, y: cerrado.y };
+    try {
+      await page.mouse.move(btnXY.x, btnXY.y);
+      await sleep(rand(150, 320));
+      await page.mouse.click(btnXY.x, btnXY.y, { button: 'left', delay: rand(60, 160) });
+    } catch (_) {
+      await page.evaluate((x, y) => { const el = document.elementFromPoint(x, y); if (el) el.click(); }, btnXY.x, btnXY.y);
+    }
+    await sleep(rand(2200, 3200));
+  }
+
+  if (DEBUG) await probeEtapa(page, 'picker-final');
+
+  return { seleccionados: verificado.map(i => items[i]), total, cargados, sinBoton: false, picker_cierre: cerrado.modo };
 }
 
 async function grabPostUrl(page) {
