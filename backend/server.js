@@ -26,6 +26,7 @@ import providerStylesRouter from './routes/providerStyles.js';
 import warrantyRulesRouter from './routes/warrantyRules.js';
 import { generateCatalogFile } from './lib/catalogGenerator.js';
 import { ensureWebp } from './lib/imageUtils.js';
+import { getWarrantyReminders } from './lib/warranty.js';
 import { startGroupPublishScheduler, rescheduleGroupPublish, groupPublishSchedulerState, startAgendaScheduler, rescheduleAgenda, agendaSchedulerState } from './lib/groupPublisher.js';
 import { createBackup } from './scripts/backup.js';
 
@@ -384,7 +385,8 @@ app.get('/api/dashboard', (req, res) => {
   `).all();
 
   const settings = db.prepare('SELECT exchange_rate FROM settings WHERE id = 1').get();
-  res.json({ stats, monthlySales, topProducts, recentSales, exchange_rate: settings.exchange_rate });
+  const warrantyReminders = getWarrantyReminders(db);
+  res.json({ stats, monthlySales, topProducts, recentSales, exchange_rate: settings.exchange_rate, warrantyReminders });
 });
 
 app.post('/api/login', loginLimiter, (req, res) => {

@@ -33,6 +33,8 @@ function countdown(target) {
 function renderDashboard(container, data, scheduledLogs = []) {
   const { stats, monthlySales, topProducts, recentSales, exchange_rate } = data;
   const rate = exchange_rate || 61000;
+  const wr = data.warrantyReminders || { expiringNow: [], recentlyExpired: [], count: 0 };
+  const hasReminders = wr.expiringNow.length > 0 || wr.recentlyExpired.length > 0;
 
   container.innerHTML = `
     <div class="page">
@@ -42,6 +44,58 @@ function renderDashboard(container, data, scheduledLogs = []) {
           <p>Resumen general de tu negocio</p>
         </div>
       </div>
+
+      ${hasReminders ? `
+      <!-- Recordatorio de garantías -->
+      <div class="card" style="margin-bottom:24px;border-left:4px solid ${wr.count > 0 ? 'var(--warning)' : 'var(--success)'}">
+        <div class="card-header">
+          <h3>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-3px;margin-right:6px;color:${wr.count > 0 ? 'var(--warning)' : 'var(--success)'}"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            Recordatorio de garantías
+            ${wr.count > 0 ? `<span class="badge badge--unpaid">${wr.count} por vencer</span>` : ''}
+          </h3>
+          <a href="#/sales" class="btn btn--sm btn--ghost">Ver ventas</a>
+        </div>
+
+        ${wr.expiringNow.length > 0 ? `
+        <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:${wr.recentlyExpired.length ? '16px' : '0'}">
+          ${wr.expiringNow.map(r => `
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;background:${r.days_until === 0 ? '#fff7ed' : 'var(--bg)'};padding:10px 12px;border-radius:10px">
+              <div style="min-width:0">
+                <div style="font-weight:500;font-size:.85rem">${escHtml(r.product_name)}</div>
+                <div style="font-size:.78rem;color:var(--text-secondary)">
+                  ${escHtml(r.client_name || 'Cliente sin nombre')}
+                  ${r.product_warranty ? `<span style="color:var(--text-muted)"> · ${escHtml(r.product_warranty)}</span>` : ''}
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                ${r.client_phone ? `<a href="tel:${escHtml(r.client_phone)}" class="btn btn--sm btn--primary">${escHtml(r.client_phone)}</a>` : ''}
+                <span class="badge ${r.days_until === 0 ? 'badge--unpaid' : 'badge--pending'}">Vence ${r.expires_label}</span>
+                <span style="font-size:.78rem;color:var(--text-muted);white-space:nowrap">${formatDate(r.warranty_end)}</span>
+              </div>
+            </div>
+          `).join('')}
+        </div>` : ''}
+
+        ${wr.recentlyExpired.length > 0 ? `
+        <div style="font-size:.75rem;color:var(--text-muted);margin-bottom:6px">Vencidas hace poco (14 días)</div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          ${wr.recentlyExpired.map(r => `
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;font-size:.8rem">
+              <div style="min-width:0">
+                <span style="font-weight:500">${escHtml(r.product_name)}</span>
+                <span style="color:var(--text-secondary)"> · ${escHtml(r.client_name || 'Cliente sin nombre')}</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                ${r.client_phone ? `<a href="tel:${escHtml(r.client_phone)}" class="btn btn--sm btn--ghost">${escHtml(r.client_phone)}</a>` : ''}
+                <span class="badge badge--archived">Vencida</span>
+                <span style="color:var(--text-muted);white-space:nowrap">${formatDate(r.warranty_end)}</span>
+              </div>
+            </div>
+          `).join('')}
+        </div>` : ''}
+      </div>
+      ` : ''}
 
       <!-- Stats -->
       <div class="grid-4" style="margin-bottom:24px">

@@ -1,13 +1,14 @@
 import { Router } from 'express';
 import { v4 as uuid } from 'uuid';
 import { getDB } from '../db/database.js';
+import { computeWarrantyEndDate } from '../lib/warranty.js';
 
 const router = Router();
 
 router.get('/', (req, res) => {
   const db = getDB();
   const { delivery_status, provider_id, start_date, end_date } = req.query;
-  let sql = `SELECT s.*, p.name as product_name, pr.name as provider_name
+  let sql = `SELECT s.*, p.name as product_name, p.warranty as product_warranty, pr.name as provider_name
              FROM sales s
              LEFT JOIN products p ON p.id = s.product_id
              LEFT JOIN providers pr ON pr.id = s.provider_id`;
@@ -28,7 +29,7 @@ router.get('/', (req, res) => {
 
 router.get('/:id', (req, res) => {
   const db = getDB();
-  const sale = db.prepare(`SELECT s.*, p.name as product_name, pr.name as provider_name
+  const sale = db.prepare(`SELECT s.*, p.name as product_name, p.warranty as product_warranty, pr.name as provider_name
     FROM sales s
     LEFT JOIN products p ON p.id = s.product_id
     LEFT JOIN providers pr ON pr.id = s.provider_id
@@ -62,6 +63,13 @@ router.post('/', (req, res) => {
   const unitPrice = parseFloat(unit_price) || product.price;
   const total = Math.round(qty * unitPrice * 100) / 100;
   const commissionAmount = calcCommission(product, qty);
+  const saleDate = sale_date || new Date().toISOString();
+
+  // El vencimiento se congela acá. El modal puede mandarlo explícito (campo
+  // "Fin de garantía"); si no, se deriva de la garantía del producto vendido.
+  const warrantyEnd = req.body.warranty_end !== undefined
+    ? String(req.body.warranty_end || '').trim()
+    : (computeWarrantyEndDate(saleDate, product.warranty) || '');
 
   const sale = {
     id, product_id, provider_id: provider_id || product.provider_id || null,
@@ -72,18 +80,18 @@ router.post('/', (req, res) => {
     commission_currency: product.commission_currency || 'USD',
     exchange_rate: settings.exchange_rate,
     delivery_method: delivery_method || '', delivery_status: delivery_status || 'pending',
-    notes: notes || '', sale_date: sale_date || new Date().toISOString()
+    notes: notes || '', sale_date: saleDate, warranty_end: warrantyEnd
   };
 
   db.prepare(`INSERT INTO sales (id, product_id, provider_id, client_name, client_phone,
     client_address, quantity, unit_price, total_amount, commission_amount,
-    commission_paid, commission_currency, exchange_rate, delivery_method, delivery_status, notes, sale_date)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    commission_paid, commission_currency, exchange_rate, delivery_method, delivery_status, notes, sale_date, warranty_end)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     sale.id, sale.product_id, sale.provider_id, sale.client_name,
     sale.client_phone, sale.client_address, sale.quantity, sale.unit_price,
     sale.total_amount, sale.commission_amount, sale.commission_paid,
     sale.commission_currency, sale.exchange_rate,
-    sale.delivery_method, sale.delivery_status, sale.notes, sale.sale_date
+    sale.delivery_method, sale.delivery_status, sale.notes, sale.sale_date, sale.warranty_end
   );
 
   res.status(201).json(sale);
@@ -105,6 +113,23 @@ router.put('/:id', (req, res) => {
   const product = db.prepare('SELECT * FROM products WHERE id = ?').get(existing.product_id);
   commission_amount = calcCommission(product || existing, quantity);
 
+  // Vencimiento de garantía. Prioridades:
+  //  1) el usuario lo mandó explícito (campo del modal) → se usa tal cual ('' = sin vencimiento)
+  //  2) cambió la fecha de la venta → se recalcula con la nueva fecha
+  //  3) quedaba vacío (venta vieja) → se rellena ahora
+  //  4) ya tenía valor → se conserva la instantánea original
+  let warrantyEnd;
+  const effSaleDate = (req.body.sale_date !== undefined ? req.body.sale_date : existing.sale_date) || existing.sale_date;
+  if (req.body.warranty_end !== undefined) {
+    warrantyEnd = String(req.body.warranty_end || '').trim();
+  } else if (req.body.sale_date !== undefined && req.body.sale_date !== existing.sale_date) {
+    warrantyEnd = computeWarrantyEndDate(effSaleDate, product?.warranty) || '';
+  } else if (!existing.warranty_end) {
+    warrantyEnd = computeWarrantyEndDate(effSaleDate, product?.warranty) || '';
+  } else {
+    warrantyEnd = existing.warranty_end;
+  }
+
   db.prepare(`UPDATE sales SET
     client_name = COALESCE(?, client_name), client_phone = COALESCE(?, client_phone),
     client_address = COALESCE(?, client_address),
@@ -116,6 +141,7 @@ router.put('/:id', (req, res) => {
     delivery_method = COALESCE(?, delivery_method),
     delivery_status = COALESCE(?, delivery_status),
     notes = COALESCE(?, notes), sale_date = COALESCE(?, sale_date),
+    warranty_end = ?,
     updated_at = datetime('now')
     WHERE id = ?`).run(
     client_name, client_phone, client_address,
@@ -123,6 +149,7 @@ router.put('/:id', (req, res) => {
     product ? product.commission_currency : null,
     commission_paid, delivery_method,
     delivery_status, notes, sale_date,
+    warrantyEnd,
     req.params.id
   );
 

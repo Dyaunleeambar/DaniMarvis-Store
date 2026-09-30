@@ -12,6 +12,58 @@ function escHtml(str) {
   return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+/** Días calendario (locales) desde hoy hasta una fecha "YYYY-MM-DD". Hoy = 0, mañana = 1. */
+function daysUntil(dateStr) {
+  if (!dateStr) return null;
+  const end = new Date(String(dateStr).slice(0, 10) + 'T00:00:00');
+  if (isNaN(end.getTime())) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((end.getTime() - today.getTime()) / 86400000);
+}
+
+/** Celdas de la columna Garantía: texto del producto + vencimiento + badge si está cerca. */
+function renderWarrantyCell(s) {
+  const days = daysUntil(s.warranty_end);
+  const badge = days === 0
+    ? '<span class="badge badge--unpaid">Vence hoy</span>'
+    : days === 1
+      ? '<span class="badge badge--pending">Vence mañana</span>'
+      : days < 0
+        ? '<span class="badge badge--archived">Vencida</span>'
+        : '';
+  return `
+    <div style="font-size:.82rem">${badge ? badge + ' ' : ''}${formatDate(s.warranty_end)}</div>
+    ${s.product_warranty ? `<div style="font-size:.7rem;color:var(--text-muted)">${escHtml(s.product_warranty)}</div>` : ''}
+  `;
+}
+
+/** Vencimiento ("YYYY-MM-DD") para el modal, desde fecha de venta + texto de garantía. */
+function warrantyEndFrom(saleDateValue, warranty) {
+  if (!saleDateValue || !warranty) return '';
+  const m = String(warranty).trim().toLowerCase().match(/^(\d+(?:\.\d+)?)\s*([a-zñáéíóú]+)$/);
+  if (!m) return '';
+  const num = parseFloat(m[1]);
+  const unit = m[2];
+  const d = new Date(String(saleDateValue).slice(0, 16));
+  if (isNaN(d.getTime())) return '';
+  if (/^mes(es)?$/.test(unit)) {
+    const origDay = d.getDate();
+    d.setDate(1);
+    d.setMonth(d.getMonth() + num);
+    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    d.setDate(Math.min(origDay, lastDay));
+  } else if (/^a[nñ]o(s)?$/.test(unit)) {
+    d.setFullYear(d.getFullYear() + num);
+  } else if (/^d[ií]a(s)?$/.test(unit)) {
+    d.setDate(d.getDate() + num);
+  } else if (/^semanas?$/.test(unit)) {
+    d.setDate(d.getDate() + num * 7);
+  }
+  const pad2 = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
 export async function render(container) {
   currentContainer = container;
   container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-secondary)">Cargando ventas...</div>';
@@ -118,12 +170,13 @@ function renderTable(container, sales) {
                 <th>Pagada</th>
                 <th>Entrega</th>
                 <th>Fecha</th>
+                <th>Garantía</th>
                 <th style="width:80px"></th>
               </tr>
             </thead>
             <tbody>
               ${sales.length === 0
-                ? `<tr><td colspan="8"><div class="empty-state" style="padding:32px"><h3>No hay ventas</h3><p>Registra tu primera venta</p></div></td></tr>`
+                ? `<tr><td colspan="9"><div class="empty-state" style="padding:32px"><h3>No hay ventas</h3><p>Registra tu primera venta</p></div></td></tr>`
                 : sales.map(s => `
                   <tr>
                     <td><span style="font-weight:500;font-size:.85rem">${escHtml(s.product_name || '—')}</span></td>
@@ -136,6 +189,9 @@ function renderTable(container, sales) {
                     <td><span class="badge badge--${s.commission_paid ? 'paid' : 'unpaid'}">${s.commission_paid ? 'Pagada' : 'Pendiente'}</span></td>
                     <td><span class="badge badge--${s.delivery_status === 'delivered' ? 'delivered' : s.delivery_status === 'shipped' ? 'shipped' : 'pending'}">${s.delivery_status || 'pending'}</span></td>
                     <td style="font-size:.82rem;color:var(--text-secondary);white-space:nowrap">${formatDate(s.sale_date)}</td>
+                    <td style="white-space:nowrap">
+                      ${s.warranty_end ? renderWarrantyCell(s) : `<span style="font-size:.72rem;color:var(--text-muted)">${s.product_warranty ? escHtml(s.product_warranty) : 'Sin garantía'}</span>`}
+                    </td>
                     <td>
                       <div class="actions-cell">
                         <button class="btn btn--sm btn--ghost" onclick="window._editSale('${s.id}')" title="Editar">
@@ -199,7 +255,7 @@ window._openSaleForm = function(sale) {
           <select name="product_id" class="form-control" id="sale-product" required>
             <option value="">Seleccionar producto</option>
             ${currentProducts.map(p =>
-              `<option value="${escHtml(p.id)}" data-price="${p.price}" data-commission="${p.commission_value}" data-currency="${p.commission_currency || 'USD'}" data-provider="${p.provider_id || ''}" ${sale?.product_id === p.id ? 'selected' : ''}>${escHtml(p.name)} — ${formatUSD(p.price)}</option>`
+              `<option value="${escHtml(p.id)}" data-price="${p.price}" data-commission="${p.commission_value}" data-currency="${p.commission_currency || 'USD'}" data-provider="${p.provider_id || ''}" data-warranty="${escHtml(p.warranty || '')}" ${sale?.product_id === p.id ? 'selected' : ''}>${escHtml(p.name)} — ${formatUSD(p.price)}</option>`
             ).join('')}
           </select>
         </div>
@@ -266,8 +322,15 @@ window._openSaleForm = function(sale) {
       <div class="form-row">
         <div class="form-group">
           <label>Fecha de venta</label>
-          <input type="datetime-local" name="sale_date" class="form-control" value="${sale?.sale_date ? sale.sale_date.slice(0,16) : new Date().toISOString().slice(0,16)}" />
+          <input type="datetime-local" name="sale_date" class="form-control" id="sale-date" value="${sale?.sale_date ? sale.sale_date.slice(0,16) : new Date().toISOString().slice(0,16)}" />
         </div>
+        <div class="form-group">
+          <label>Fin de garantía</label>
+          <input type="date" name="warranty_end" class="form-control" id="sale-warranty-end" value="${sale?.warranty_end ? sale.warranty_end.slice(0,10) : ''}" />
+          <small id="warranty-source" style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:2px">—</small>
+        </div>
+      </div>
+      <div class="form-row">
         <div class="form-group">
           <label style="display:flex;align-items:center;gap:6px;padding-top:20px">
             <input type="checkbox" name="commission_paid" value="1" ${sale?.commission_paid ? 'checked' : ''} />
@@ -293,6 +356,8 @@ window._openSaleForm = function(sale) {
   const priceInput = document.getElementById('sale-price');
   const totalInput = document.getElementById('sale-total');
   const commissionInput = document.getElementById('sale-commission');
+  const saleDateInput = document.getElementById('sale-date');
+  const warrantyEndInput = document.getElementById('sale-warranty-end');
 
   function calcTotals() {
     const qty = parseInt(qtyInput.value) || 1;
@@ -317,17 +382,51 @@ window._openSaleForm = function(sale) {
     }
   }
 
+  function updateWarrantySource(selected) {
+    const label = document.getElementById('warranty-source');
+    if (!label) return;
+    const w = (selected?.dataset.warranty || '').trim();
+    label.textContent = w
+      ? `Garantía del producto: ${w} · calculada automáticamente`
+      : 'Sin garantía registrada en el producto';
+  }
+
+  // Valor que sirvió para autocompletar el fin de garantía: si el usuario lo
+  // edita a mano, los cambios de fecha dejan de pisarle el campo.
+  let lastAutoEnd = warrantyEndInput.value;
+
   productSelect.addEventListener('change', () => {
     const selected = productSelect.options[productSelect.selectedIndex];
     if (selected && selected.value) {
       priceInput.value = selected.dataset.price;
     }
     calcTotals();
+    // Al cambiar de producto la base de la garantía es otra: recalcula siempre.
+    warrantyEndInput.value = warrantyEndFrom(saleDateInput.value, selected?.dataset.warranty || '');
+    lastAutoEnd = warrantyEndInput.value;
+    updateWarrantySource(selected);
   });
 
   qtyInput.addEventListener('input', calcTotals);
   priceInput.addEventListener('input', calcTotals);
   if (sale) calcTotals();
+
+  const warrantySource = document.getElementById('warranty-source');
+  if (warrantySource) {
+    const sel = productSelect.options[productSelect.selectedIndex];
+    warrantySource.textContent = (sel?.dataset.warranty || '').trim()
+      ? `Garantía del producto: ${sel.dataset.warranty} · calculada automáticamente`
+      : 'Sin garantía registrada en el producto';
+  }
+
+  saleDateInput.addEventListener('change', () => {
+    const selected = productSelect.options[productSelect.selectedIndex];
+    const auto = warrantyEndFrom(saleDateInput.value, selected?.dataset.warranty || '');
+    if (warrantyEndInput.value === lastAutoEnd) {
+      warrantyEndInput.value = auto;
+      lastAutoEnd = auto;
+    }
+  });
 
   document.getElementById('sale-form').addEventListener('submit', async (e) => {
     e.preventDefault();

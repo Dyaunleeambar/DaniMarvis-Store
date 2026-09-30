@@ -4,6 +4,7 @@ import { v4 as uuid } from 'uuid';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'crypto';
+import { computeWarrantyEndDate } from '../lib/warranty.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -89,6 +90,7 @@ export async function initDB() {
   migrateProviderStyleCode();
   migrateProviderStyles();
   migrateWarrantyRules();
+  migrateWarrantyEnd();
   migrateFacebookGroups();
   migrateRankingSnapshots();
   migrateRankingHistory();
@@ -748,6 +750,33 @@ function migrateWarrantyRules() {
       FOREIGN KEY (provider_id) REFERENCES providers(id)
     );
   `);
+}
+
+// El vencimiento de garantía se congela por venta en sales.warranty_end. Se
+// calcula en el alta/edición desde la fecha de la venta + la garantía del
+// producto en ese momento. Esta migración solo rellena las ventas históricas
+// (las que quedaron sin valor), así el recordatorio funciona con lo ya vendido.
+function migrateWarrantyEnd() {
+  try {
+    db.exec("ALTER TABLE sales ADD COLUMN warranty_end TEXT");
+  } catch (_) {}
+  const pendientes = db.prepare(`
+    SELECT s.id, s.sale_date, s.delivery_status, p.warranty
+    FROM sales s
+    LEFT JOIN products p ON p.id = s.product_id
+    WHERE (s.warranty_end IS NULL OR s.warranty_end = '')
+  `).all();
+  let rellenadas = 0;
+  for (const s of pendientes) {
+    if (s.delivery_status === 'cancelled') continue;
+    const end = computeWarrantyEndDate(s.sale_date, s.warranty);
+    if (!end) continue;
+    db.prepare('UPDATE sales SET warranty_end = ? WHERE id = ?').run(end, s.id);
+    rellenadas++;
+  }
+  if (rellenadas > 0) {
+    console.log(`[DB] garantía: ${rellenadas} venta(s) histórica(s) con vencimiento calculado`);
+  }
 }
 
 // Secreto de servidor para firmar tokens de sesión. Se genera una vez y se
