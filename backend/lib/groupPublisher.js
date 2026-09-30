@@ -475,6 +475,10 @@ export { classifyFailure };
  */
 async function runGroupPublish({ runId = null, auto = false, force = false, ids = [], mode = null, debug = false, runNow = false } = {}) {
   const cfg = getAutopublishConfig();
+  // El lote va en el reloj de agenda, no en el worker con límites. `grupos_por_post`
+  // y `lote_desde` son del disparador por fecha; usarlos del autopublish daba
+  // undefined, la condición `loteN > 1` era falsa y el lote nunca se pedía.
+  const agendaCfg = getAgendaConfig();
   const effectiveMode = mode || cfg.mode;
   const startedAt = toIsoUtc(new Date()).slice(0, 19);
   currentRun = {
@@ -532,15 +536,15 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
         mode: effectiveMode,
         label: item.group_name,
         debug,
-        loteN: cfg.grupos_por_post,
-        loteDesde: cfg.lote_desde,
+        loteN: agendaCfg.grupos_por_post,
+        loteDesde: agendaCfg.lote_desde,
       });
       // El cursor avanza SOLO si el lote se tildó de verdad. Si el botón no
       // apareció, o si no se pudo tildar nada, se deja donde estaba: avanzar a
       // ciegas saltaría 9 grupos y el reparto perdería ese tramo para siempre.
       if (Array.isArray(result.lote_grupos) && result.lote_grupos.length) {
         setLoteCursor(result.lote_grupos[result.lote_grupos.length - 1]);
-        cfg.lote_desde = result.lote_grupos[result.lote_grupos.length - 1];
+        agendaCfg.lote_desde = result.lote_grupos[result.lote_grupos.length - 1];
       }
       updateQueue(item, result, effectiveMode);
       const avisos = Array.isArray(result.warnings) && result.warnings.length
