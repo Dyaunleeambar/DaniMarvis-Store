@@ -28,6 +28,7 @@ function renderPage(container, settings, categories, providerStyles) {
   const fb = pc.facebook || {};
   const ap = pc.autopublish || {};
   const ag = pc.agenda || { auto: true, tick_min: 1, catchup_hours: 24 };
+  const ms = pc.master || { on: true };
   const rk = pc.ranking || {};
 
   container.innerHTML = `
@@ -149,6 +150,24 @@ function renderPage(container, settings, categories, providerStyles) {
                   Los tokens de página duran 60 días. Guardá la fecha de vencimiento para que el panel te avise en Rutinas de Página.
                 </small>
               </div>
+            </div>
+          </details>
+
+          <details open style="margin-top:12px;border:1px solid ${ms.on ? 'var(--success)' : 'var(--danger, #dc3545)'};border-radius:12px;padding:16px;background:${ms.on ? 'rgba(40,199,111,.05)' : 'rgba(220,53,69,.05)'}">
+            <summary style="cursor:pointer;font-weight:700;font-size:.95rem;color:${ms.on ? 'var(--success)' : 'var(--danger, #dc3545)'}">🔌 Interruptor maestro del publicador</summary>
+            <p style="margin:8px 0 12px;font-size:.8rem;color:var(--text-secondary)">
+              Es la llave general de <strong>todo</strong> el publicador: el disparador por fecha, el
+              worker automático y hasta el botón "Publicar ahora". Apagado, el sistema no publica
+              nada aunque haya publicaciones pendientes o vencidas; quedan esperando en la cola y
+              salen cuando lo prendas de nuevo.
+            </p>
+            <div class="form-group" style="margin:0">
+              <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:8px 0;font-size:.9rem">
+                <input type="checkbox" name="ms_on" value="1" ${ms.on === false ? '' : 'checked'} style="width:18px;height:18px" />
+                ${ms.on === false
+                  ? '<strong style="color:var(--danger, #dc3545)">Publicador APAGADO — no se publica nada hasta que lo prendas</strong>'
+                  : '<strong style="color:var(--success)">Publicador ENCENDIDO</strong>'}
+              </label>
             </div>
           </details>
 
@@ -418,6 +437,9 @@ function renderPage(container, settings, categories, providerStyles) {
 
     const publish_config = {
       template: fd.get('template') || '',
+      master: {
+        on: fd.get('ms_on') === '1'
+      },
       ai: {
         enabled: fd.get('ai_enabled') === '1',
         api_url: fd.get('ai_api_url') || '',
@@ -465,6 +487,7 @@ function renderPage(container, settings, categories, providerStyles) {
       });
       currentSettings = res;
       showToast('Plantilla de publicación guardada', 'success');
+      render(container);
     } catch (err) {
       showToast(err.message, 'error');
     }

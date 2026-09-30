@@ -41,6 +41,20 @@ export const DEFAULT_AGENDA = {
   lote_desde: '',      // cursor: el último grupo del lote anterior ('' = desde el 0)
 };
 
+// Interruptor MAESTRO del publicador. Es una puerta aparte de autopublish.enabled
+// y agenda.auto: mientras `on` sea false NO arranca NINGUNA corrida, ni del
+// worker, ni del disparador por fecha, ni manual — sin importar cuántos ítems
+// queden pendientes. Le da al usuario el control total de "el sistema sigue o
+// no", exactamente para los periodos en que no quiere que salga nada.
+//
+// Está separado a propósito de los otros dos interruptores: apagar "auto" solo
+// congela el disparador por fecha (los vencidos se acumulan), y apagar
+// "enabled" solo congela el worker con límites. Este corta TODOS los caminos a
+// la vez, manuales incluidos, como una sola llave general.
+export const DEFAULT_MASTER = {
+  on: true,
+};
+
 let running = false;
 let lastResult = null;
 // Progreso en vivo de la corrida en curso. Las rutas ya no esperan al run (el
@@ -108,6 +122,16 @@ export function setLoteCursor(nombreGrupo) {
  * dos relojes con propósitos distintos y mezclarlos hacía que guardar un ajuste
  * del worker moviera el otro.
  */
+export function getMasterConfig() {
+  const db = getDB();
+  const row = db.prepare('SELECT publish_config FROM settings WHERE id = 1').get();
+  let pc = {};
+  try { pc = JSON.parse(row?.publish_config || '{}'); } catch {}
+  const cfg = { ...DEFAULT_MASTER, ...(pc.master || {}) };
+  cfg.on = cfg.on !== false;
+  return cfg;
+}
+
 export function getAgendaConfig() {
   const db = getDB();
   const row = db.prepare('SELECT publish_config FROM settings WHERE id = 1').get();
@@ -522,7 +546,17 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
     currentRun.phase = 'publishing';
     const results = [];
     const temps = [];
+    let pausedByMaster = false;
     for (const item of items) {
+      // Corte a mitad de corrida: si el usuario apagó el interruptor mientras
+      // corría, NO se procesa el siguiente ítem. Entre post y post hay 45-135s
+      // de separación, así que el corte es casi inmediato en la práctica. Lo que
+      // queda sin procesar NO se toca: sigue en 'pending' y se publica cuando se
+      // prende de nuevo.
+      if (!getMasterConfig().on) {
+        pausedByMaster = true;
+        break;
+      }
       currentRun.current_group = item.group_name;
       const groupUrl = resolveGroupUrl(item);
       const imageFiles = await resolveImages(item.images);
@@ -592,6 +626,11 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
       results,
       started: startedAt,
     };
+    if (pausedByMaster) {
+      r.pausado_por_interruptor = true;
+      r.restantes = items.length - results.length;
+      r.message = `Se apagó el interruptor maestro a mitad de corrida. Quedan ${r.restantes} pendiente(s) en la cola, sin tocar.`;
+    }
     lastResult = r;
     currentRun.phase = 'done';
     currentRun.finished = toIsoUtc(new Date()).slice(0, 19);
@@ -617,6 +656,16 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
  * quedaba en "Corriendo..." sin que nadie supiera si colgó o estaba trabajando.
  */
 export function startGroupPublish({ auto, force = false, ids = [], mode = null, debug = false, runNow = false } = {}) {
+  // Interruptor maestro: llave general de todo el publicador. Si está apagado
+  // no arranca NADA, ni lo automático ni un clic en "Publicar ahora": esa es la
+  // gracia del interruptor (decidir periodos en que el sistema no funciona).
+  // Se chequea ANTES de `running` para que apagar no dé una falsa sensación de
+  // "estaba corriendo": la razón es clara y el estado no se ensucia.
+  let master;
+  try { master = getMasterConfig(); } catch { master = { on: true }; }
+  if (!master.on) {
+    return { accepted: false, skipped: true, reason: 'interruptor maestro apagado' };
+  }
   if (running) {
     return { accepted: false, skipped: true, reason: 'Ya hay una corrida de publicador en curso', current: currentRun, lastResult };
   }
@@ -693,6 +742,13 @@ export function runSchedulerTick() {
   }
   if (!cfg.enabled) return skip('auto-publicado deshabilitado');
 
+  // Interruptor maestro: corta ANTES de mirar la cola o abrir Chrome.
+  try {
+    if (!getMasterConfig().on) return skip('interruptor maestro apagado');
+  } catch (err) {
+    return skip(`no se pudo leer el interruptor: ${err.message.slice(0, 120)}`);
+  }
+
   // Clave: NO arrancar la corrida "a ciegas". runGroupPublish() llama a
   // ensureDebugChrome({launch:true}) al principio, así que sin este chequeo el
   // worker abriría Chrome cada 5 minutos aunque no haya nada que publicar.
@@ -721,6 +777,9 @@ export async function groupPublishStatus() {
   const cfg = getAutopublishConfig();
   return {
     running,
+    // Llave general: la UI puede pintar "apagado" arriba, por encima de auto y
+    // del worker, porque este manda sobre ambos.
+    master: getMasterConfig(),
     // antes esto era null salvo que el ÚLTIMO run hubiera fallado por 9222, así
     // que la UI no podía anticipar "no hay navegador". Ahora es un sondeo real.
     chrome: await debugChromeReachable(),
@@ -923,6 +982,10 @@ export function agendaSchedulerState() {
   return {
     active: Boolean(agendaTimer),
     auto: cfg ? cfg.auto : null,
+    // El estado del interruptor maestro viaja en la respuesta de la agenda para
+    // que el calendario pueda avisar "apagado" sin una segunda peticion: es tan
+    // importante como auto, y manda sobre él.
+    master_on: (() => { try { return getMasterConfig().on; } catch { return null; } })(),
     interval_ms: agendaIntervalMs(),
     catchup_hours: cfg ? cfg.catchup_hours : null,
     due: proximos,
@@ -956,6 +1019,14 @@ export function runAgendaTick() {
   catch (err) { return skip(`config ilegible: ${err.message.slice(0, 120)}`); }
 
   if (!cfg.auto) return skip('disparador por fecha apagado');
+
+  // Interruptor maestro: mismo criterio que el worker. Corta sin mirar la cola,
+  // así los vencidos se siguen acumulando en 'pending' para cuando se prenda.
+  try {
+    if (!getMasterConfig().on) return skip('interruptor maestro apagado');
+  } catch (err) {
+    return skip(`no se pudo leer el interruptor: ${err.message.slice(0, 120)}`);
+  }
 
   const { vencidos, ilegibles } = dueAgendaItems();
   for (const r of ilegibles) {

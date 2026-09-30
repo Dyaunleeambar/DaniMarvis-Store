@@ -226,6 +226,13 @@ function etiquetaEstado(s) {
 function bannerDisparador() {
   const d = agenda?.disparador;
   if (!d) return '';
+  if (d.master_on === false) {
+    return `<div class="agenda-aviso agenda-aviso--off">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style="flex:none;margin-top:2px"><path d="M18.36 6.64a9 9 0 1 1-12.73 0 9 9 0 0 1 12.73 0zm-4.95 4.95H10.6l1.2-1.2v-3h1.2zm-5.06-5.06a9 9 0 0 1 12.73 0z" opacity=".9"/></svg>
+      <div><b>El publicador está APAGADO (interruptor maestro).</b>
+      Podés agendar todo lo que quieras y habrá vencidos esperando, pero nada se publicará — ni solo ni con "Publicar ahora" — hasta que lo prendas en Configuración.</div>
+    </div>`;
+  }
   if (d.auto === false) {
     return `<div class="agenda-aviso agenda-aviso--off">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex:none;margin-top:2px"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
