@@ -36,7 +36,9 @@ export const DEFAULT_AUTO_PUBLISH = {
 export const DEFAULT_AGENDA = {
   auto: true,          // arranca encendido: el usuario pidió disparo automático
   tick_min: 1,
-  catchup_hours: 24,   // vencido hace más que esto NO se recupera solo
+  catchup_hours: 24,   // vencido hace más de esto NO se recupera solo
+  grupos_por_post: 9,  // cuántos grupos se tildan por publicación en Facebook
+  lote_desde: '',      // cursor: el último grupo del lote anterior ('' = desde el 0)
 };
 
 let running = false;
@@ -85,6 +87,22 @@ function getAutopublishConfig() {
   return cfg;
 }
 
+// El cursor del lote se guarda acá, y no en la cola. Razón: la cola tiene una
+// fila por grupo CON estado, y el lote es un concepto de Facebook (posarse en
+// 9 grupos a la vez) que no encaja en ella. Meter el cursor en la cola
+// obligaría a inventar filas sintéticas, y cualquier consulta de "qué falta
+// publicar" empezaría a devolver basura.
+export function setLoteCursor(nombreGrupo) {
+  const db = getDB();
+  const row = db.prepare('SELECT publish_config FROM settings WHERE id = 1').get();
+  let pc = {};
+  try { pc = JSON.parse(row?.publish_config || '{}'); } catch {}
+  pc.agenda = { ...(pc.agenda || {}), lote_desde: typeof nombreGrupo === 'string' ? nombreGrupo : '' };
+  db.prepare("UPDATE settings SET publish_config = ?, updated_at = datetime('now') WHERE id = 1")
+    .run(JSON.stringify(pc));
+  return pc.agenda.lote_desde;
+}
+
 /**
  * Config del disparador por fecha. Vive aparte de `autopublish` a propósito: son
  * dos relojes con propósitos distintos y mezclarlos hacía que guardar un ajuste
@@ -103,6 +121,12 @@ export function getAgendaConfig() {
   // quedaba en NaN ms y el reloj publicaba en bucle o directamente no
   // publicaba. El `||` sí cubre NaN.
   cfg.catchup_hours = Math.max(0, Math.min(168, Number(cfg.catchup_hours) || DEFAULT_AGENDA.catchup_hours));
+  // El cursor viene del texto de un nombre de grupo, así que puede llegar
+  // cualquier cosa del JSON. Se fuerza a string: un null o un número sueltos
+  // romperían el execFile de abajo y el lote entero dejaría de publicarse en
+  // silencio, sin error en ninguna parte.
+  cfg.grupos_por_post = Math.max(1, Math.min(30, Number(cfg.grupos_por_post) || DEFAULT_AGENDA.grupos_por_post));
+  cfg.lote_desde = typeof cfg.lote_desde === 'string' ? cfg.lote_desde : '';
   return cfg;
 }
 
@@ -333,7 +357,7 @@ export function parsePosterOutput(stdout, { err = null, allText = '' } = {}) {
   };
 }
 
-function spawnPoster({ groupUrl, messageFile, imageFiles, mode, label, debug = false }) {
+function spawnPoster({ groupUrl, messageFile, imageFiles, mode, label, debug = false, loteN = 0, loteDesde = '' }) {
   return new Promise((resolve) => {
     const args = [
       '--no-sandbox',
@@ -345,6 +369,12 @@ function spawnPoster({ groupUrl, messageFile, imageFiles, mode, label, debug = f
     ];
     if (debug) args.push('--debug=1');
     if (imageFiles.length) args.push('--images=' + imageFiles.join(';'));
+    // El lote solo se pide si hay imágenes que adjuntar: "Añadir grupos" no
+    // existe en el compositor con texto solo, y el poster lo comprueba igual.
+    if (loteN > 1) {
+      args.push('--lote-n=' + loteN);
+      if (loteDesde) args.push('--lote-desde=' + loteDesde);
+    }
     execFile(process.execPath, [POSTER_JS, ...args], { timeout: 280000 }, (err, stdout, stderr) => {
       resolve(parsePosterOutput(stdout, { err, allText: `${stdout || ''}\n${stderr || ''}` }));
     });
@@ -502,7 +532,16 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
         mode: effectiveMode,
         label: item.group_name,
         debug,
+        loteN: cfg.grupos_por_post,
+        loteDesde: cfg.lote_desde,
       });
+      // El cursor avanza SOLO si el lote se tildó de verdad. Si el botón no
+      // apareció, o si no se pudo tildar nada, se deja donde estaba: avanzar a
+      // ciegas saltaría 9 grupos y el reparto perdería ese tramo para siempre.
+      if (Array.isArray(result.lote_grupos) && result.lote_grupos.length) {
+        setLoteCursor(result.lote_grupos[result.lote_grupos.length - 1]);
+        cfg.lote_desde = result.lote_grupos[result.lote_grupos.length - 1];
+      }
       updateQueue(item, result, effectiveMode);
       const avisos = Array.isArray(result.warnings) && result.warnings.length
         ? result.warnings.join('; ') : '';

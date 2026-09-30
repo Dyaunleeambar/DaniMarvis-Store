@@ -24,6 +24,7 @@
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
 const path = require('path');
+const { elegirIndicesLote } = require('./lote_grupos.js');
 
 const DEBUG_PORT = 9222;
 
@@ -43,6 +44,12 @@ const MODE = (val(args, '--mode') || 'publish').toLowerCase();
 const LABEL = val(args, '--label') || '';
 const MAX_SECONDS = parseInt(val(args, '--max-seconds') || '300', 10) || 300;
 const DEBUG = !!val(args, '--debug');
+// Lote de grupos: cuántos tildar en "Añadir grupos" y desde dónde arrancar.
+// El cursor es el NOMBRE del último grupo del lote anterior, no un índice:
+// Facebook reordena la lista, y un índice guardaría una posición que ya no
+// apunta al mismo grupo.
+const LOTE_N = parseInt(val(args, '--lote-n') || '0', 10) || 0;
+const LOTE_DESDE = val(args, '--lote-desde') || '';
 
 const splitList = (raw, sep = ';') => String(raw || '').split(sep).map(s => s.trim()).filter(Boolean);
 const groups = splitList(GROUPS_RAW, ';');
@@ -814,6 +821,138 @@ async function clickPublish(page, dryRun) {
   return { clicked: true, tooltip: tooltipClicked, label: btn.label, aria: btn.aria };
 }
 
+// Tilda `n` grupos del diálogo "Añadir grupos", arrancando después de `desde`
+// y dando la vuelta al llegar al final. Devuelve los nombres efectivamente
+// tildados para que el backend registre a dónde fue.
+async function seleccionarLoteGrupos(page, { n, desde } = {}) {
+  const cuantos = Math.max(1, Math.min(30, Number(n) || 9));
+  if (cuantos <= 1) return { seleccionados: [], total: 0, sinBoton: false };
+
+  // 1) el botón "Añadir grupos". Solo existe con al menos una imagen adjunta,
+  //    y no trae aria-label: el texto es la única ancla estable. Las clases de
+  //    sus ancestros son hashes de Facebook y cambian con cada rediseño.
+  const btn = await page.evaluate(() => {
+    const vis = (el) => {
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return false;
+      const cs = getComputedStyle(el);
+      return cs.visibility !== 'hidden' && cs.display !== 'none' && cs.opacity !== '0';
+    };
+    const el = Array.from(document.querySelectorAll('div[role="button"]'))
+      .filter(vis)
+      .find(x => (x.textContent || '').trim() === 'Añadir grupos');
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+  });
+  if (!btn) return { seleccionados: [], total: 0, sinBoton: true };
+
+  try {
+    await page.mouse.move(btn.x, btn.y);
+    await sleep(rand(120, 300));
+    await page.mouse.click(btn.x, btn.y, { button: 'left', delay: rand(60, 160) });
+  } catch (_) {
+    await page.evaluate((x, y) => { const el = document.elementFromPoint(x, y); if (el) el.click(); }, btn.x, btn.y);
+  }
+  await sleep(rand(2000, 3000));
+
+  // 2) cargar la lista entera. Es LAZY: arranca con 20 checkables y cada scroll
+  //    al fondo del div interno agrega 20 más. Scrollear la ventana no hace
+  //    nada (mismo error que en el scanner de grupos), así que se baja el div.
+  //    Se corta cuando 3 scrolls seguidos no suman ninguno, igual que el scanner.
+  let cargados = 0, scrollsSinNovedad = 0;
+  for (let i = 0; i < 40 && scrollsSinNovedad < 3; i++) {
+    const n0 = await page.evaluate(() => {
+      const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+      const chk = Array.from(document.querySelectorAll('[role="dialog"] input[type=checkbox]')).filter(vis);
+      if (!chk.length) return 0;
+      let n = chk[0], cont = null;
+      while (n && n !== document.body) {
+        const cs = getComputedStyle(n);
+        if (/(auto|scroll)/.test(cs.overflowY) && n.scrollHeight > n.clientHeight + 20) { cont = n; break; }
+        n = n.parentElement;
+      }
+      if (!cont) return chk.length;
+      cont.scrollTop = cont.scrollHeight;
+      cont.dispatchEvent(new Event('scroll', { bubbles: true }));
+      return chk.length;
+    });
+    await sleep(rand(1100, 1900));
+    const n1 = await page.evaluate(() => {
+      const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+      return Array.from(document.querySelectorAll('[role="dialog"] input[type=checkbox]')).filter(vis).length;
+    });
+    if (n1 > n0) { scrollsSinNovedad = 0; cargados = n1; } else scrollsSinNovedad++;
+    if (!n1) break;
+  }
+
+  // 3) nombres en orden de Facebook, que es el orden del DOM
+  const items = await page.evaluate(() => {
+    const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    const chk = Array.from(document.querySelectorAll('[role="dialog"] input[type=checkbox]')).filter(vis);
+    return chk.map(c => {
+      // el checkbox no trae nombre en ningún atributo: hay que subir hasta el
+      // contenedor que lo envuelve. Se corta el sufijo de "Última visita: ..."
+      // que Facebook le pega a cada fila.
+      let n = c, mejor = '';
+      for (let i = 0; i < 7 && n; i++) {
+        const t = (n.innerText || '').replace(/Última visita:.*/s, '').trim().replace(/\s+/g, ' ');
+        if (t.length > mejor.length && t.length < 120) mejor = t;
+        n = n.parentElement;
+      }
+      return mejor;
+    });
+  });
+  const total = items.length;
+  if (!total) return { seleccionados: [], total: 0, sinBoton: false };
+
+  // 4) desde dónde arrancar. Con 121 grupos y lotes de 9, el último lote siempre
+  //    termina en el final de la lista: se toman los que falten y se vuelve del
+  //    principio, como pidió el usuario.
+  const pedidos = elegirIndicesLote(items, cuantos, desde);
+
+  // 5) tildar. Se hace con click de DOM y se verifica el.checked: si React no
+  //    reacciona al click sintético, se cae a un click real por elemento.
+  const hechos = await page.evaluate((idxs) => {
+    const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    const chk = Array.from(document.querySelectorAll('[role="dialog"] input[type=checkbox]')).filter(vis);
+    const out = [];
+    for (const i of idxs) {
+      const c = chk[i];
+      if (!c) continue;
+      if (!c.checked) c.click();
+      out.push({ i, ok: c.checked });
+    }
+    return { out, marcados: chk.filter(c => c.checked).length };
+  }, pedidos);
+
+  const fallidos = hechos.out.filter(x => !x.ok).map(x => x.i);
+  if (fallidos.length) {
+    for (const i of fallidos) {
+      try {
+        const r = await page.evaluate((idx) => {
+          const vis = (el) => { const b = el.getBoundingClientRect(); return b.width > 0 && b.height > 0; };
+          const chk = Array.from(document.querySelectorAll('[role="dialog"] input[type=checkbox]')).filter(vis);
+          const c = chk[idx]; if (!c) return null;
+          c.scrollIntoView({ block: 'center' });
+          const b = c.getBoundingClientRect();
+          return { x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2) };
+        }, i);
+        if (r) await page.mouse.click(r.x, r.y, { button: 'left', delay: rand(40, 110) });
+      } catch (_) { /* si ni con click real se puede, se deja como está */ }
+    }
+    await sleep(rand(600, 1200));
+  }
+
+  const verificado = await page.evaluate((idxs) => {
+    const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    const chk = Array.from(document.querySelectorAll('[role="dialog"] input[type=checkbox]')).filter(vis);
+    return idxs.map(i => (chk[i] && chk[i].checked) ? i : -1).filter(i => i >= 0);
+  }, pedidos);
+
+  return { seleccionados: verificado.map(i => items[i]), total, cargados, sinBoton: false };
+}
+
 async function grabPostUrl(page) {
   const snippet = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 40);
   return page.evaluate((snippet) => {
@@ -1000,6 +1139,27 @@ async function processGroup(browser, groupUrl, label) {
     await debugMediaDump(page, 'after_attach', mediaCtx.rect);
     await sleep(rand(1200, 2400));
 
+    // Lote de grupos. Va ACÁ, después de adjuntar y antes del botón Publicar,
+    // porque "Añadir grupos" solo existe cuando hay al menos una imagen puesta:
+    // con el texto solo, Facebook no lo muestra. En prepare deja los 9 ya
+    // tildados para que el usuario solo tenga que darle Publicar, y en
+    // dry-run los reporta sin publicar nada.
+    let lote = { seleccionados: [], total: 0, sinBoton: false };
+    if (LOTE_N > 1 && imgs.images > 0) {
+      lote = await seleccionarLoteGrupos(page, { n: LOTE_N, desde: LOTE_DESDE });
+      if (lote.sinBoton) {
+        console.log(`[${label}] el boton "Añadir grupos" no apareció.`);
+      } else if (!lote.seleccionados.length) {
+        console.log(`[${label}] no se pudo tildar ningún grupo.`);
+      } else {
+        console.log(`[${label}] LOTE (${lote.seleccionados.length}/${lote.total}): ${lote.seleccionados.join(' | ')}`);
+      }
+      await sleep(rand(800, 1600));
+    }
+    const loteTexto = lote.seleccionados.length
+      ? ` Lote de ${lote.seleccionados.length} grupo(s) tildado(s).`
+      : '';
+
     if (MODE === 'prepare') {
       console.log(`[${label}] post listo en pestaña (modo preparar).`);
       dejarPestana = true;   // acá NO se cierra: el usuario publica a mano
@@ -1008,10 +1168,10 @@ async function processGroup(browser, groupUrl, label) {
       const aviso = imgs.images > 0 && imgs.attached === 0
         ? ` ATENCIÓN: se pidieron ${imgs.images} imagen(es) y NO se adjuntó ninguna.`
         : '';
-      return out({ group_url: groupUrl, ok: true, status: 'prepared', message: 'Post preparado en pestaña (revisar y publicar manualmente).' + aviso, imagen_adjunta: imgs.attached, imagenes_pedidas: imgs.images, texto_digits: lenBefore });
+      return out({ group_url: groupUrl, ok: true, status: 'prepared', message: 'Post preparado en pestaña (revisar y publicar manualmente).' + aviso + loteTexto, imagen_adjunta: imgs.attached, imagenes_pedidas: imgs.images, texto_digits: lenBefore, lote_grupos: lote.seleccionados, grupos_en_lista: lote.total });
     }
     if (MODE === 'dry-run') {
-      return out({ group_url: groupUrl, ok: true, status: 'dry-run', message: `Simulación ok: texto ${lenBefore} chars, ${imgs.images} imagen(es).`, texto_digits: lenBefore, imagen_adjunta: imgs.attached });
+      return out({ group_url: groupUrl, ok: true, status: 'dry-run', message: `Simulación ok: texto ${lenBefore} chars, ${imgs.images} imagen(es).${loteTexto}`, texto_digits: lenBefore, imagen_adjunta: imgs.attached, lote_grupos: lote.seleccionados, grupos_en_lista: lote.total });
     }
 
     // Damos a FB su tiempo para terminar de procesar los adjuntos y PUBLICAMOS
@@ -1086,7 +1246,8 @@ async function processGroup(browser, groupUrl, label) {
       const otra = await currentComposerLen(page);
       if (otra === 0) {
         return out({ group_url: groupUrl, ok: true, status: 'published',
-          message: 'Publicado (el compositor se vació, la primera lectura llegó tarde).',
+          message: 'Publicado (el compositor se vació, la primera lectura llegó tarde).' + loteTexto,
+          lote_grupos: lote.seleccionados, grupos_en_lista: lote.total,
           post_url: '', imagen_adjunta: imgs.attached, imagenes_pedidas: imgs.images,
           adjuntos_confirmados: confirmados ? 1 : 0, texto_digits: lenBefore, toral_ms: Date.now() - t0 });
       }
@@ -1132,8 +1293,11 @@ async function processGroup(browser, groupUrl, label) {
         + (imgs.images === 0 ? '' : (confirmados
             ? ` (FB tomó los ${imgs.images} adjunto(s); el conteo exacto no se pudo verificar).`
             : ` ATENCIÓN: se pidieron ${imgs.images} imagen(es) y FB no mostró los controles de quitar foto, o sea que probablemente no las tomó.`))
-        + (needsApproval ? ' Queda pendiente de aprobación del administrador.' : ''),
+        + (needsApproval ? ' Queda pendiente de aprobación del administrador.' : '')
+        + loteTexto,
       post_url: postUrl,
+      lote_grupos: lote.seleccionados,
+      grupos_en_lista: lote.total,
       imagen_adjunta: imgs.attached,
       imagenes_pedidas: imgs.images,
       adjuntos_confirmados: confirmados ? 1 : 0,
