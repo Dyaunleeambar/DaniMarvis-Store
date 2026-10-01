@@ -396,6 +396,7 @@ function huerfanos() {
 const DEST_ICON = {
   pending: 'Programada', published: 'Publicada', error: 'Falló',
   cancelled: 'Cancelada', omitted: 'Omitida', prepared: 'Preparada', 'dry-run': 'Simulada',
+  archived: 'Publicada (histórica)',
 };
 
 async function detalle(id) {
@@ -404,6 +405,8 @@ async function detalle(id) {
 
   const tienePendientes = ev.destinos.some(d => d.status === 'pending');
   const tieneFallos = ev.destinos.some(d => d.status === 'error' || d.status === 'omitted');
+  const actuales = ev.destinos.filter(d => d.status !== 'archived');
+  const historicos = ev.destinos.filter(d => d.status === 'archived');
 
   openModal(`
     <div class="modal-header">
@@ -417,9 +420,10 @@ async function detalle(id) {
         <span class="agenda-estado-badge agenda-estado-badge--${ev.estado}">${escHtml(ev.estado_label)}</span>
         <span style="font-size:.82rem;color:var(--text-secondary)">${escHtml(formatDateTime(ev.fecha))}</span>
         ${ev.total_destinos ? `<span style="font-size:.8rem;color:var(--text-muted)">· ${ev.total_destinos} destino(s)</span>` : ''}
+        ${ev.historial ? `<span style="font-size:.8rem;color:var(--text-muted)">· ${ev.historial} histórico(s)</span>` : ''}
       </div>
 
-      ${ev.total_destinos === 0 ? `<div class="agenda-aviso agenda-aviso--off">
+      ${ev.total_destinos === 0 && !ev.historial ? `<div class="agenda-aviso agenda-aviso--off">
         <div><b>Sin agendar.</b> Esta publicación es material de la biblioteca: no tiene grupos ni hora de publicación, así que no se publica sola.
         Abrí el Planificador para decidir cuándo y a dónde va.</div>
       </div>` : ''}
@@ -433,10 +437,17 @@ async function detalle(id) {
         <div class="publish-text-content" style="white-space:pre-wrap">${escHtml(ev.publish_text)}</div>
       </div>
 
-      ${ev.total_destinos ? `<div style="margin-top:16px">
+      ${actuales.length ? `<div style="margin-top:16px">
         <div class="publish-text-label" style="margin-bottom:8px">Destinos</div>
         <div class="agenda-destinos">
-          ${ev.destinos.map(destinoHTML).join('')}
+          ${actuales.map(destinoHTML).join('')}
+        </div>
+      </div>` : ''}
+
+      ${historicos.length ? `<div style="margin-top:16px">
+        <div class="publish-text-label" style="margin-bottom:8px">Histórico (planificaciones anteriores)</div>
+        <div class="agenda-destinos">
+          ${historicos.map(destinoHTML).join('')}
         </div>
       </div>` : ''}
     </div>
@@ -522,19 +533,143 @@ function verDia(fecha) {
     </div>
     <div class="modal-body">
       <div class="agenda-destinos">
-        ${evs.map(e => `<button class="agenda-destino" style="cursor:pointer;text-align:left;width:100%" onclick="closeModal(true);window._agendaDetalle('${e.id}')">
-          <span class="agenda-destino-dot agenda-destino-dot--${e.estado}"></span>
-          <div class="agenda-destino-cuerpo">
-            <div class="agenda-destino-nombre">${escHtml(e.hora_local || '')} · ${escHtml(e.product_name || truncate(e.publish_text, 40))}</div>
-            <div class="agenda-destino-notas">${escHtml(etiquetaEstado(e.estado))}${e.total_destinos ? ' · ' + e.total_destinos + ' grupo(s)' : ' · sin agendar'}</div>
-          </div>
-        </button>`).join('')}
+        ${evs.map(e => {
+          const fechaActual = e.fecha ? formatDateInput(e.fecha) : '';
+          const thumb = e.images?.length
+            ? `<img src="${escAttr(e.images[0])}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:8px;flex:0 0 56px;align-self:center" />`
+            : '';
+          const accion = (onclick, title, colorClass, svg) =>
+            `<button type="button" class="btn btn--sm ${colorClass}" title="${title}" onclick="${onclick}" style="padding:5px;display:flex;align-items:center;justify-content:center">${svg}</button>`;
+          const acciones = `
+            <div style="display:flex;gap:5px;align-items:center;justify-content:flex-end;flex:0 0 auto">
+              ${accion(`window._agendaPublicarAhora('${e.id}')`, 'Publicar ahora', 'btn--primary',
+                `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>`)}
+              ${accion(`window._agendaReprogramar('${e.id}', '${escAttr(fechaActual)}')`, 'Reprogramar', 'btn--secondary',
+                `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`)}
+              ${accion(`window._agendaEditar('${e.id}')`, 'Editar', 'btn--ghost',
+                `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>`)}
+              ${accion(`window._agendaDesarmar('${e.id}')`, 'Desarmar', 'btn--ghost',
+                `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>`)}
+              ${accion(`window._agendaEliminar('${e.id}')`, 'Eliminar publicación', 'btn--danger',
+                `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`)}
+            </div>`;
+          return `<div class="agenda-destino" style="align-items:stretch">
+            <span class="agenda-dia-dot agenda-dia-dot--${e.estado}" title="${escAttr(etiquetaEstado(e.estado))}"></span>
+            ${thumb}
+            <button class="agenda-destino-cuerpo" style="cursor:pointer;text-align:left;border:0;background:none;padding:0;font:inherit;color:inherit"
+              title="Ver detalle" onclick="closeModal(true);window._agendaDetalle('${e.id}')">
+              <div class="agenda-destino-nombre">${escHtml(e.hora_local || '')} · ${escHtml(e.product_name || truncate(e.publish_text, 40))}</div>
+              <div class="agenda-destino-notas">${escHtml(etiquetaEstado(e.estado))}${e.total_destinos ? ' · ' + e.total_destinos + ' grupo(s)' : ' · sin agendar'}</div>
+              <span style="font-size:.72rem;color:var(--rose);text-decoration:underline">Ver detalle →</span>
+            </button>
+            ${acciones}
+          </div>`;
+        }).join('')}
       </div>
     </div>
     <div class="form-actions"><button type="button" class="btn btn--secondary" onclick="closeModal()">Cerrar</button></div>
   `);
   setModalCloseGuard(null);
 }
+
+window._agendaReprogramar = function (id, actual) {
+  closeModal(true);
+  const inputId = 'replan-fecha';
+  openModal(`
+    <div class="modal-header">
+      <h2>Reprogramar publicación</h2>
+      <button class="modal-close" onclick="closeModal()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Nueva fecha y hora de publicación</label>
+        <input type="datetime-local" id="${inputId}" class="form-control" value="${escAttr(actual)}" />
+        <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">
+          Mueve la publicación y sus destinos todavía pendientes; los ya publicados quedan como historial.
+        </small>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn btn--secondary" onclick="closeModal()">Cancelar</button>
+      <button type="button" class="btn btn--primary" id="replan-guardar">Reprogramar</button>
+    </div>
+  `);
+  setModalCloseGuard(null);
+  document.getElementById('replan-guardar').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    const val = document.getElementById(inputId)?.value;
+    if (!val) { showToast('Poné la fecha y la hora de publicación', 'warning'); return; }
+    btn.disabled = true;
+    btn.textContent = 'Guardando…';
+    try {
+      await api.rescheduleAgendaEvent(id, { scheduled_at: localInputToUtc(val) });
+      showToast('Publicación reprogramada', 'success');
+      closeModal(true);
+      await cargar();
+    } catch (err) {
+      showToast(err.message, 'error');
+      btn.disabled = false;
+      btn.textContent = 'Reprogramar';
+    }
+  });
+};
+
+window._agendaPublicarAhora = async function (id) {
+  const ok = await confirmDialog(
+    'Se publica de inmediato en los grupos pendientes de esta publicación, sin esperar la hora agendada. La corrida puede tardar unos minutos.',
+    { title: 'Publicar ahora', confirmText: 'Publicar ahora', danger: false }
+  );
+  if (!ok) return;
+  try {
+    await api.runAgendaEvent(id);
+    showToast('Corrida iniciada. Seguí el progreso en Configuración.', 'success');
+    closeModal(true);
+    setTimeout(cargar, 1500);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+};
+
+window._agendaEditar = function (id) {
+  const ev = (agenda?.eventos || []).find(e => e.id === id);
+  if (!ev) { showToast('Ese evento no está disponible', 'warning'); return; }
+  closeModal(true);
+  abrirPlanificador(ev);
+};
+
+window._agendaDesarmar = async function (id) {
+  const ok = await confirmDialog(
+    'Se cancelan los destinos pendientes y la publicación vuelve a ser material de la biblioteca: ya no se publicará, pero su texto e imágenes se conservan.',
+    { title: 'Desarmar publicación', confirmText: 'Desarmar' }
+  );
+  if (!ok) return;
+  try {
+    await api.rescheduleAgendaEvent(id, { status: 'cancelled' });
+    showToast('Publicación desarmada', 'success');
+    closeModal(true);
+    await cargar();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+};
+
+window._agendaEliminar = async function (id) {
+  const ok = await confirmDialog(
+    'Se elimina la publicación de forma permanente: texto, imágenes, destinos e historial de publicación. Esta acción no se puede deshacer.',
+    { title: 'Eliminar publicación', confirmText: 'Eliminar' }
+  );
+  if (!ok) return;
+  try {
+    await api.deletePublication(id);
+    showToast('Publicación eliminada', 'success');
+    closeModal(true);
+    await cargar();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+};
 
 // ══════════════════════════════════════ PLANIFICADOR ═════════════════════
 

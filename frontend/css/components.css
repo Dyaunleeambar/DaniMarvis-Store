@@ -1008,6 +1008,16 @@ tr:hover td { background: rgba(201,132,122,.03); }
 .agenda-destino-dot--cancelled { background: var(--text-muted); }
 .agenda-destino-dot--omitted   { background: #b8860b; }
 .agenda-destino-cuerpo { flex: 1; min-width: 0; }
+.agenda-dia-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; align-self: center; }
+.agenda-dia-dot--material { background: #9e918d; }
+.agenda-dia-dot--programada { background: #0288d1; }
+.agenda-dia-dot--vencida { background: #ed6c02; }
+.agenda-dia-dot--parcial,
+.agenda-dia-dot--parcial_vencida { background: #b8860b; }
+.agenda-dia-dot--publicada { background: #2e7d32; }
+.agenda-dia-dot--error { background: #d32f2f; }
+.agenda-dia-dot--omitida,
+.agenda-dia-dot--cancelada { background: #9e918d; }
 .agenda-destino-nombre { font-weight: 600; }
 .agenda-destino-notas {
   font-size: .72rem;

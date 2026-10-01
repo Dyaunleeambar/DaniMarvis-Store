@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { v4 as uuid } from 'uuid';
 import { getDB } from '../db/database.js';
 import { startGroupPublish, agendaSchedulerState, classifyFailure, CAUSAS } from '../lib/groupPublisher.js';
 
@@ -42,12 +43,14 @@ function aggregateEstado(destinos, nowMs) {
   const errores = destinos.filter(d => d.status === 'error');
   const canceladas = destinos.filter(d => d.status === 'cancelled');
   const omitidas = destinos.filter(d => d.status === 'omitted');
+  const archivadas = destinos.filter(d => d.status === 'archived');
 
   if (destinos.length === 0) return { estado: 'material', etiqueta: 'Material' };
 
   // Una publicación que se desarmó deja de contar, pero se muestra como tal.
   if (pendientes.length === 0 && publicadas.length === 0) {
     if (omitidas.length) return { estado: 'omitida', etiqueta: 'Omitida' };
+    if (archivadas.length) return { estado: 'cancelada', etiqueta: 'Histórico' };
     if (canceladas.length) return { estado: 'cancelada', etiqueta: 'Cancelada' };
   }
 
@@ -131,6 +134,10 @@ router.get('/', (req, res) => {
     const destinos = destinosPorPub.get(p.id) || [];
     const { estado, etiqueta } = aggregateEstado(destinos, nowMs);
     const activos = destinos.filter(x => ACTIVE_STATUSES.includes(x.status));
+    // `total_destinos` cuenta SOLO la planificación actual: lo que quedó
+    // archivado (reprogramado como nueva planificación) es histórico y se
+    // muestra aparte en el detalle.
+    const historico = destinos.filter(x => x.status === 'archived').length;
 
     return {
       id: p.id,
@@ -150,7 +157,8 @@ router.get('/', (req, res) => {
         : null,
       estado,
       estado_label: etiqueta,
-      total_destinos: destinos.length,
+      total_destinos: destinos.length - historico,
+      historial: historico,
       destinos_activos: activos.length,
       publicados: destinos.filter(x => x.status === 'published').length,
       errores: destinos.filter(x => x.status === 'error').length,
@@ -325,6 +333,34 @@ router.patch('/:id', (req, res) => {
       SET scheduled_at = ?, updated_at = datetime('now')
       WHERE publication_id = ? AND status = 'pending'
     `).run(iso, pubId);
+
+    // Reprogramar algo que ya se publicó lo convierte en UNA NUEVA
+    // planificación: lo publicado pasa a `archived` (se conserva como
+    // histórico en el detalle) y se vuelve a comprometer la publicación en la
+    // fecha nueva para esos mismos grupos. Así el evento vuelve a "Programada"
+    // (azul) sin borrar el historial anterior.
+    const publicados = db.prepare(`
+      SELECT group_name, group_url, variant_index, variant_text, images
+      FROM publication_queue
+      WHERE publication_id = ? AND status = 'published'
+    `).all(pubId);
+    if (publicados.length) {
+      db.prepare(`
+        UPDATE publication_queue
+        SET status = 'archived', updated_at = datetime('now')
+        WHERE publication_id = ? AND status = 'published'
+      `).run(pubId);
+      for (const g of publicados) {
+        // La sentencia se prepara en cada vuelta: Statement.run() libera el
+        // statement al terminar, así que reutilizar uno fallaría.
+        db.prepare(`
+          INSERT INTO publication_queue (id, publication_id, group_name, group_url,
+            variant_index, variant_text, scheduled_at, images)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(uuid(), pubId, g.group_name, g.group_url,
+          g.variant_index, g.variant_text || '', iso, g.images || '[]');
+      }
+    }
   }
 
   if (status !== undefined) {

@@ -165,6 +165,9 @@ router.delete('/:id', (req, res) => {
   const existing = db.prepare('SELECT id FROM publications WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Publicación no encontrada' });
 
+  // Los destinos se borran junto con la publicación: si quedaran en la cola,
+  // el worker legado los tomaría igual y publicaría un post huérfano.
+  db.prepare('DELETE FROM publication_queue WHERE publication_id = ?').run(req.params.id);
   db.prepare('DELETE FROM publications WHERE id = ?').run(req.params.id);
   res.json({ message: 'Publicación eliminada' });
 });
