@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { v4 as uuid } from 'uuid';
 import { getDB } from '../db/database.js';
 import { publishToFacebook, publishToInstagram } from '../lib/facebook.js';
+import { registrarPlan } from '../lib/plans.js';
 
 const router = Router();
 
@@ -92,6 +93,9 @@ router.put('/:id', (req, res) => {
   }
 
   if (publication_date !== undefined) {
+    // Cambiar la fecha acá también es un reprogramado: el horario anterior se
+    // archiva para que el usuario no lo pierda de vista.
+    registrarPlan(db, req.params.id, publication_date, 'editar');
     db.prepare("UPDATE publications SET publication_date = ?, updated_at = datetime('now') WHERE id = ?")
       .run(publication_date, req.params.id);
   }
@@ -160,6 +164,119 @@ router.post('/:id/publish', async (req, res) => {
   }
 });
 
+/**
+ * Duplicar una publicación: crea una copia INDEPENDIENTE (mismo texto, imágenes y
+ * producto) pero SIN grupos ni fecha, o sea como material de la biblioteca.
+ *
+ * Se guarda sin agendar a propósito: si la copia naciera con los mismos grupos y
+ * la misma hora que la original, el disparador publicaría el mismo texto dos
+ * veces en el mismo grupo, que es justo lo que Facebook penaliza. Así el usuario
+ * abre el Planificador sobre la copia, le elige hora y grupos, y decide cuál de
+ * las dos se queda.
+ */
+router.post('/:id/duplicate', (req, res) => {
+  const db = getDB();
+  const orig = db.prepare('SELECT * FROM publications WHERE id = ?').get(req.params.id);
+  if (!orig) return res.status(404).json({ error: 'Publicación no encontrada' });
+
+  const id = uuid();
+  db.prepare(`
+    INSERT INTO publications (id, product_id, product_name, publish_text, images, publication_date)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(id, orig.product_id, orig.product_name, orig.publish_text,
+    orig.images || '[]', new Date().toISOString());
+
+  const copy = db.prepare('SELECT * FROM publications WHERE id = ?').get(id);
+  try { copy.images = JSON.parse(copy.images || '[]'); } catch { copy.images = []; }
+  res.status(201).json(copy);
+});
+
+/**
+ * Planificar una publicación en una franja: crea una COPIA agendada, con sus
+ * propios destinos, y deja la original exactamente como estaba.
+ *
+ * Esto es lo que usa "Distribuir en el día". Antes esa acción movía la
+ * publicación con un UPDATE, así que al repetirla pisaba la distribución
+ * anterior y el usuario perdía de vista los horarios que ya había probado.
+ *
+ * Con un clon por distribución cada franja queda como un evento propio del
+ * calendario: se ven todas a la vez, se pueden publicar por separado y la que
+ * no sirva se borra con el ícono de papelera. Igual que con Duplicar, el
+ * contenido va a los mismos grupos, así que el usuario decide cuál se queda.
+ *
+ * Los destinos que se copian son los VIVOS de la original (pending y
+ * published). Los que fallaron, se cancelaron o se archivaron no se arrastran:
+ * quedaron atrás a propósito y el usuario los sigue teniendo a la vista en el
+ * detalle de la original.
+ */
+router.post('/:id/planificar', (req, res) => {
+  const db = getDB();
+  const orig = db.prepare('SELECT * FROM publications WHERE id = ?').get(req.params.id);
+  if (!orig) return res.status(404).json({ error: 'Publicación no encontrada' });
+
+  const fecha = new Date(String(req.body?.fecha || ''));
+  if (Number.isNaN(fecha.getTime())) {
+    return res.status(400).json({ error: 'La fecha de la franja no es válida' });
+  }
+  const iso = fecha.toISOString();
+
+  // Modo rotación: la copia va a UN solo grupo del catálogo, elegido por el
+  // frontend (GET /api/agenda/rotacion-grupos). Así cada copia de la franja cae
+  // en un grupo distinto en vez de repetir los de la original. Sin `grupo_id`
+  // se mantiene el comportamiento de siempre (copiar los destinos vivos).
+  const grupoId = typeof req.body?.grupo_id === 'string' ? req.body.grupo_id : '';
+  if (grupoId) {
+    const grupo = db.prepare('SELECT id, name, url FROM facebook_groups WHERE id = ?').get(grupoId);
+    if (!grupo) return res.status(400).json({ error: 'El grupo de rotación no existe' });
+
+    const id = uuid();
+    db.prepare(`
+      INSERT INTO publications (id, product_id, product_name, publish_text, images, publication_date)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, orig.product_id, orig.product_name, orig.publish_text, orig.images || '[]', iso);
+
+    // variant_text e images en blanco/NULL para que el publicador herede el
+    // texto y las imágenes de la publicación (COALESCE pq.images, p.images).
+    db.prepare(`
+      INSERT INTO publication_queue
+        (id, publication_id, group_name, group_url, status, scheduled_at,
+         variant_index, variant_text, images, pending_approval)
+      VALUES (?, ?, ?, ?, 'pending', ?, 0, '', NULL, 0)
+    `).run(uuid(), id, grupo.name, grupo.url || '', iso);
+
+    const copy = db.prepare('SELECT * FROM publications WHERE id = ?').get(id);
+    try { copy.images = JSON.parse(copy.images || '[]'); } catch { copy.images = []; }
+    return res.status(201).json({ ...copy, destinos: 1 });
+  }
+
+  const vivos = db.prepare(`
+    SELECT group_name, group_url, variant_index, variant_text, images, pending_approval
+    FROM publication_queue
+    WHERE publication_id = ? AND status IN ('pending', 'published')
+    ORDER BY scheduled_at ASC, created_at ASC
+  `).all(orig.id);
+
+  const id = uuid();
+  db.prepare(`
+    INSERT INTO publications (id, product_id, product_name, publish_text, images, publication_date)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(id, orig.product_id, orig.product_name, orig.publish_text, orig.images || '[]', iso);
+
+  for (const v of vivos) {
+    db.prepare(`
+      INSERT INTO publication_queue
+        (id, publication_id, group_name, group_url, status, scheduled_at,
+         variant_index, variant_text, images, pending_approval)
+      VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+    `).run(uuid(), id, v.group_name, v.group_url, iso,
+      v.variant_index ?? 0, v.variant_text || '', v.images || '[]', v.pending_approval ?? 0);
+  }
+
+  const copy = db.prepare('SELECT * FROM publications WHERE id = ?').get(id);
+  try { copy.images = JSON.parse(copy.images || '[]'); } catch { copy.images = []; }
+  res.status(201).json({ ...copy, destinos: vivos.length });
+});
+
 router.delete('/:id', (req, res) => {
   const db = getDB();
   const existing = db.prepare('SELECT id FROM publications WHERE id = ?').get(req.params.id);
@@ -168,6 +285,7 @@ router.delete('/:id', (req, res) => {
   // Los destinos se borran junto con la publicación: si quedaran en la cola,
   // el worker legado los tomaría igual y publicaría un post huérfano.
   db.prepare('DELETE FROM publication_queue WHERE publication_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM publication_plans WHERE publication_id = ?').run(req.params.id);
   db.prepare('DELETE FROM publications WHERE id = ?').run(req.params.id);
   res.json({ message: 'Publicación eliminada' });
 });

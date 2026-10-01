@@ -1,7 +1,18 @@
 import { Router } from 'express';
+import { createRequire } from 'module';
 import { v4 as uuid } from 'uuid';
 import { getDB } from '../db/database.js';
 import { startGroupPublish, agendaSchedulerState, classifyFailure, CAUSAS } from '../lib/groupPublisher.js';
+import { registrarPlan } from '../lib/plans.js';
+
+// La normalización de nombres de grupo vive en el compositor (es la que hace
+// que el cursor encuentre el grupo aunque cambie de emoji o acento). Se importa
+// el archivo tal cual en vez de reimplementarla acá: si el compositor y la
+// agenda no normalizan igual, el cursor se descoloca en silencio. Va por
+// createRequire porque ese archivo es CommonJS (lo comparte el poster) y este
+// backend es ESM.
+const require_ = createRequire(import.meta.url);
+const { normGrupo } = require_('../../utilidades/fb-ranking/lote_grupos.js');
 
 const router = Router();
 
@@ -54,7 +65,15 @@ function aggregateEstado(destinos, nowMs) {
     if (canceladas.length) return { estado: 'cancelada', etiqueta: 'Cancelada' };
   }
 
-  if (publicadas.length === destinos.length) return { estado: 'publicada', etiqueta: 'Publicada' };
+  // Publicada = no queda nada vivo por publicar. OJO: se compara contra lo que
+  // falta por salir, NO con `destinos.length`: cuando una publicación se
+  // reprogramó, quedan filas 'archived' (el historial) y puede haber
+  // 'cancelled' (desarmadas o descartadas), y con el conteo completo una
+  // publicación que ya salió nunca llegaba a "Publicada" y se caía en
+  // "Material".
+  if (publicadas.length && !pendientes.length && !errores.length) {
+    return { estado: 'publicada', etiqueta: 'Publicada' };
+  }
   if (errores.length && !pendientes.length) return { estado: 'error', etiqueta: 'Error' };
 
   // Quedan pendientes: vencida o programada según la hora.
@@ -130,6 +149,23 @@ router.get('/', (req, res) => {
     }
   }
 
+  // Horarios que la publicación tuvo antes de reprogramarse a mano. Van aparte
+  // de los destinos: la distribución crea un clon por franja, pero el
+  // reprogramado manual sólo deja rastro del horario, no de los grupos.
+  const planesPorPub = new Map(ids.map(id => [id, []]));
+  if (ids.length) {
+    const planes = db.prepare(`
+      SELECT id, publication_id, fecha, origen, created_at
+      FROM publication_plans
+      WHERE publication_id IN (${ids.map(() => '?').join(',')})
+      ORDER BY fecha DESC
+    `).all(...ids);
+    for (const pl of planes) {
+      const arr = planesPorPub.get(pl.publication_id);
+      if (arr) arr.push(pl);
+    }
+  }
+
   const eventos = pubs.map(p => {
     const destinos = destinosPorPub.get(p.id) || [];
     const { estado, etiqueta } = aggregateEstado(destinos, nowMs);
@@ -159,6 +195,7 @@ router.get('/', (req, res) => {
       estado_label: etiqueta,
       total_destinos: destinos.length - historico,
       historial: historico,
+      planes: planesPorPub.get(p.id) || [],
       destinos_activos: activos.length,
       publicados: destinos.filter(x => x.status === 'published').length,
       errores: destinos.filter(x => x.status === 'error').length,
@@ -272,6 +309,122 @@ router.get('/conflicts', (req, res) => {
 });
 
 /**
+ * Qué grupos ya se usaron en un día local (YYYY-MM-DD).
+ *
+ * Es la consulta que pinta el Planificador: cada grupo que ya tiene una
+ * publicación con hora en ese día se marca en amarillo, y si además lo
+ * seleccionás para la publicación que estás armando, se pone naranja con
+ * aviso de que se va a repetir en el mismo grupo el mismo día.
+ *
+ * `exclude` es la publicación que se está editando: si no se excluye, al
+ * guardar los cambios una publicación se marcaría a sí misma como repetida.
+ * `archived` y `cancelled` quedan afuera porque no son publicaciones del día,
+ * son historial o planificación desarmada.
+ */
+router.get('/uso-dia', (req, res) => {
+  const db = getDB();
+  const fecha = typeof req.query.fecha === 'string' ? req.query.fecha : '';
+  const exclude = typeof req.query.exclude === 'string' ? req.query.exclude : '';
+  const pad = n => String(n).padStart(2, '0');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+    return res.status(400).json({ error: 'Fecha inválida (YYYY-MM-DD)' });
+  }
+
+  // Mismo criterio que el rango del calendario: el día local se acota con la
+  // medianoche local, convertida a UTC, porque scheduled_at vive en UTC.
+  const desdeIso = new Date(`${fecha}T00:00:00`).toISOString();
+  const hastaIso = new Date(new Date(`${fecha}T00:00:00`).getTime() + 86400000).toISOString();
+
+  const filas = db.prepare(`
+    SELECT pq.id, pq.publication_id, pq.group_name, pq.scheduled_at, pq.status,
+           p.product_name
+    FROM publication_queue pq
+    LEFT JOIN publications p ON p.id = pq.publication_id
+    WHERE pq.publication_id IS NOT NULL
+      AND pq.publication_id <> ?
+      AND pq.scheduled_at IS NOT NULL
+      AND pq.scheduled_at >= ? AND pq.scheduled_at < ?
+      AND pq.status IN ('pending','published','error')
+    ORDER BY pq.scheduled_at ASC
+  `).all(exclude, desdeIso, hastaIso);
+
+  const porGrupo = new Map();
+  for (const f of filas) {
+    const d = new Date(String(f.scheduled_at).replace(' ', 'T'));
+    if (Number.isNaN(d.getTime())) continue;
+    const clave = (f.group_name || '').toLowerCase();
+    if (!clave) continue;
+    const item = {
+      group_name: f.group_name,
+      publication_id: f.publication_id,
+      product_name: f.product_name || 'Sin producto',
+      scheduled_at: f.scheduled_at,
+      status: f.status,
+      hora_local: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
+    };
+    // Un grupo puede aparecer varias veces en el día: para el aviso interesa la
+    // primera vez que se usó, que es la que se está repitiendo.
+    if (!porGrupo.has(clave)) porGrupo.set(clave, item);
+  }
+
+  res.json({ fecha, usos: [...porGrupo.values()] });
+});
+
+/**
+ * Orden de rotación de grupos para "Distribuir en el día" (tilde "Rotar").
+ *
+ * Devuelve los siguientes `n` grupos del catálogo —mismo orden que el
+ * Planificador (sort_order, name)— arrancando DESPUÉS del último grupo ya usado
+ * hoy. "Usado hoy" es una publicación con destino pendiente, publicado o con
+ * error en ese día local: el mismo criterio que /uso-dia.
+ *
+ * El arranque es el índice de catálogo MÁS ALTO entre los usados. Como el
+ * catálogo está ordenado, todo lo que queda por delante de ese índice está sin
+ * usar, así que los primeros elegidos siempre son grupos que hoy todavía no
+ * salieron; recién se repiten cuando se da toda la vuelta. Si hoy no se usó
+ * ninguno, arranca del principio (índice 0).
+ *
+ * El llamador lo pide ANTES de crear las copias: la rotación refleja el uso
+ * previo a esta distribución, no las copias que se están por crear. Volver a
+ * repartir más tarde ve esas copias ya en la cola y continúa después.
+ */
+router.get('/rotacion-grupos', (req, res) => {
+  const db = getDB();
+  const fecha = typeof req.query.fecha === 'string' ? req.query.fecha : '';
+  const n = Math.max(1, Math.min(500, Number(req.query.n) || 1));
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+    return res.status(400).json({ error: 'Fecha inválida (YYYY-MM-DD)' });
+  }
+
+  const grupos = db.prepare(
+    'SELECT id, name, url FROM facebook_groups ORDER BY sort_order ASC, name ASC'
+  ).all();
+  if (!grupos.length) return res.json({ fecha, total: 0, inicio: 0, usados: 0, grupos: [] });
+
+  const desdeIso = new Date(`${fecha}T00:00:00`).toISOString();
+  const hastaIso = new Date(new Date(`${fecha}T00:00:00`).getTime() + 86400000).toISOString();
+  const usados = db.prepare(`
+    SELECT DISTINCT group_name FROM publication_queue
+    WHERE publication_id IS NOT NULL
+      AND group_name IS NOT NULL AND group_name <> ''
+      AND scheduled_at IS NOT NULL AND scheduled_at >= ? AND scheduled_at < ?
+      AND status IN ('pending','published','error')
+  `).all(desdeIso, hastaIso).map((r) => r.group_name);
+
+  const usadosNorm = new Set(usados.map((g) => normGrupo(g)));
+  let ultimo = -1;
+  grupos.forEach((g, i) => { if (usadosNorm.has(normGrupo(g.name))) ultimo = i; });
+  const inicio = ultimo + 1;               // puede ser total: se envuelve con %
+
+  // Si se piden más copias que grupos, se da la vuelta y se repiten: cada copia
+  // tiene que caer en algún lado. Es el mismo wrap que el compositor.
+  const salida = [];
+  for (let k = 0; k < n; k++) salida.push(grupos[(inicio + k) % grupos.length]);
+
+  res.json({ fecha, total: grupos.length, inicio, usados: usados.length, grupos: salida });
+});
+
+/**
  * Publicar un evento ahora, saltándose la espera.
  *
  * Destaca del disparador por fecha: no mira la hora, publica YA lo pendiente
@@ -324,6 +477,10 @@ router.patch('/:id', (req, res) => {
     const ms = new Date(scheduled_at).getTime();
     if (Number.isNaN(ms)) return res.status(400).json({ error: 'Fecha inválida' });
     const iso = new Date(ms).toISOString();
+    // El horario anterior queda registrado antes de sobrescribirlo: una
+    // publicación sólo puede estar en un punto del calendario a la vez, así
+    // que si no se guarda acá el usuario lo pierde.
+    registrarPlan(db, pubId, iso, 'reprogramar');
     db.prepare("UPDATE publications SET publication_date = ?, updated_at = datetime('now') WHERE id = ?")
       .run(iso, pubId);
     // Solo los que siguen pendientes: uno ya publicado no se toca (el
@@ -336,9 +493,13 @@ router.patch('/:id', (req, res) => {
 
     // Reprogramar algo que ya se publicó lo convierte en UNA NUEVA
     // planificación: lo publicado pasa a `archived` (se conserva como
-    // histórico en el detalle) y se vuelve a comprometer la publicación en la
-    // fecha nueva para esos mismos grupos. Así el evento vuelve a "Programada"
-    // (azul) sin borrar el historial anterior.
+    // histórico en el detalle, con su hora real) y se vuelve a comprometer la
+    // publicación en la fecha nueva para esos mismos grupos. Así el evento
+    // vuelve a "Programada" (azul) sin borrar el historial anterior.
+    //
+    // "Distribuir en el día" NO pasa por acá: crea una publicación clonada por
+    // franja (POST /api/publications/:id/planificar), así que cada distribución
+    // queda visible como un evento propio del calendario.
     const publicados = db.prepare(`
       SELECT group_name, group_url, variant_index, variant_text, images
       FROM publication_queue
@@ -393,6 +554,44 @@ router.post('/:id/retry', (req, res) => {
     WHERE publication_id = ? AND status IN ('error','omitted')
   `).run(pubId);
   res.json({ requeued: info });
+});
+
+/**
+ * Descartar UN destino suelto.
+ *
+ * Sirve para el caso en que una publicación tiene varios grupos y uno quedó en
+ * error para siempre (grupo dado de baja, sin permiso, id roto): sin esto, ese
+ * error queda ahí y el evento nunca llega a "Publicada" porque siempre hay un
+ * destino en error, aunque los demás hayan salido bien.
+ *
+ * Se pasa a 'cancelled' (igual que al desarmar) en vez de borrarse, así se
+ * conserva el rastro de qué se intentó y por qué falló.
+ *
+ * Por seguridad sólo se acepta desde 'error' u 'omitted'. Descartar un destino
+ * ya publicado falsearía el historial, así que se rechaza.
+ */
+router.patch('/:id/destinos/:destinoId', (req, res) => {
+  const db = getDB();
+  const pubId = req.params.id;
+  const destId = req.params.destinoId;
+
+  const destino = db.prepare(`
+    SELECT id, status FROM publication_queue WHERE id = ? AND publication_id = ?
+  `).get(destId, pubId);
+  if (!destino) return res.status(404).json({ error: 'Destino no encontrado en esta publicación' });
+  if (!['error', 'omitted'].includes(destino.status)) {
+    return res.status(400).json({
+      error: `Sólo se puede descartar un destino que falló (este está en "${destino.status}")`,
+    });
+  }
+
+  db.prepare(`
+    UPDATE publication_queue
+    SET status = 'cancelled', notes = TRIM(COALESCE(notes,'') || ?), updated_at = datetime('now')
+    WHERE id = ? AND publication_id = ?
+  `).run(' | descartado manualmente', destId, pubId);
+
+  res.json({ ok: true, destino_id: destId, status: 'cancelled' });
 });
 
 export default router;

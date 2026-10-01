@@ -23,6 +23,7 @@ let ancla = new Date();     // mes o semana que se está mirando
 let cargando = false;
 let filtroEstado = '';
 let filtroGrupo = '';
+let listaDia = null;        // publicaciones del modal "ver día", para "Distribuir en el día"
 
 // ══════════════════════════════ utilidades de fecha ═══════════════════════
 // Todo se calcula en hora LOCAL. La fecha viene del servidor ya resuelta
@@ -142,7 +143,7 @@ function pintar() {
 
   container.innerHTML = `
     <div class="page">
-      <div class="page-header">
+      <div class="page-header page-header--sticky">
         <div>
           <h1>Publicaciones</h1>
           <p>${evs.length} evento(s) · ${visibles.length} visible(s)</p>
@@ -282,23 +283,52 @@ function pintarMes() {
     const evs = eventosVisibles(eventosDelDia(dia));
     const out = dia.getMonth() !== mesActual;
     const esHoy = ymd(dia) === hoy;
-    html += `<div class="agenda-day ${out ? 'agenda-day--out' : ''} ${esHoy ? 'agenda-day--hoy' : ''}">`;
+// La celda entera abre el modal del día, no solo el "+N más": si no, con 1 a
+    // 3 publicaciones no había forma de llegar a Duplicar ni a Distribuir.
+    // Las celdas vacías no son clickeables (no hay nada que ver) y ahí se usa el
+    // "+" para crear.
+    const f = ymd(dia);
+    const clickable = evs.length ? ` role="button" tabindex="0" title="Ver las publicaciones del ${escAttr(formatDate(f))}"
+      onclick="window._agendaVerDia('${f}')"
+      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();window._agendaVerDia('${f}')}"` : '';
+    html += `<div class="agenda-day ${out ? 'agenda-day--out' : ''} ${esHoy ? 'agenda-day--hoy' : ''}${evs.length ? ' agenda-day--click' : ''}"${clickable}>`;
     html += `<span class="agenda-daynum ${out ? 'agenda-daynum--tenue' : ''}">${dia.getDate()}</span>`;
+    html += botonNuevoDia(dia);
     html += evs.slice(0, 3).map(tarjetaEvento).join('');
     if (evs.length > 3) {
-      html += `<button class="agenda-more" onclick="window._agendaVerDia('${ymd(dia)}')">+${evs.length - 3} más</button>`;
+      html += `<button class="agenda-more" onclick="event.stopPropagation();window._agendaVerDia('${f}')">+${evs.length - 3} más</button>`;
     }
     html += '</div>';
   }
   return html + '</div>';
 }
 
+/**
+ * "+" de cada celda del calendario: crea una publicación YA con ese día
+ * puesto, así no hay que scrollear hasta el botón de arriba ni elegir la fecha
+ * a mano. Va en la esquina para no comerse lugar de los eventos.
+ */
+function botonNuevoDia(dia) {
+  const f = ymd(dia);
+  return `<button class="agenda-dayadd" onclick="event.stopPropagation();window._agendaNuevo('${f}')"
+    title="Nueva publicación el ${escAttr(formatDate(f))}"
+    aria-label="Nueva publicación el ${escAttr(formatDate(f))}">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M12 5v14M5 12h14"/></svg>
+  </button>`;
+}
+
+// `destinos_activos` excluye lo archivado, cancelado o descartado, así que el
+// rótulo baja solo cuando el usuario descarta un destino. El conteo completo
+// (`total_destinos`) se sigue usando para el banner de "Sin agendar".
+function vivosDe(e) { return e.destinos_activos ?? e.total_destinos; }
+
 function tarjetaEvento(e) {
-  const meta = e.total_destinos > 0 ? `${e.total_destinos} grupo${e.total_destinos === 1 ? '' : 's'}` : 'sin agendar';
-  return `<button class="agenda-ev agenda-ev--${e.estado}" onclick="window._agendaDetalle('${e.id}')" title="${escAttr(e.product_name || 'Sin producto')} — ${escAttr(etiquetaEstado(e.estado))}">
+  const vivos = vivosDe(e);
+  const meta = vivos > 0 ? `${vivos} grupo${vivos === 1 ? '' : 's'}` : 'sin agendar';
+  return `<button class="agenda-ev agenda-ev--${e.estado}" onclick="event.stopPropagation();window._agendaDetalle('${e.id}')" title="${escAttr(e.product_name || 'Sin producto')} — ${escAttr(etiquetaEstado(e.estado))}">
     <div class="agenda-evtime">${e.hora_local || '—:—'}</div>
     <div class="agenda-evtxt">${escHtml(e.product_name || truncate(e.publish_text, 34))}</div>
-    <div class="agenda-evmeta">${escHtml(etiquetaEstado(e.estado))}${e.total_destinos ? ' · ' + meta : ''}</div>
+    <div class="agenda-evmeta">${escHtml(etiquetaEstado(e.estado))}${vivos ? ' · ' + meta : ''}</div>
   </button>`;
 }
 
@@ -322,7 +352,13 @@ function pintarSemana() {
   html += '<div class="agenda-week"><div class="agenda-weekhead"></div>';
   for (const dia of lista) {
     const esHoy = ymd(dia) === hoy;
-    html += `<div class="agenda-weekhead ${esHoy ? 'agenda-weekhead--hoy' : ''}">${DIAS[(dia.getDay() + 6) % 7]} ${dia.getDate()}</div>`;
+    // El encabezado del día también abre el modal del día: en la vista semana las
+    // celdas vacías no son clickeables (las ocupa la grilla horaria).
+    const cab = ymd(dia);
+    html += `<div class="agenda-weekhead ${esHoy ? 'agenda-weekhead--hoy' : ''} agenda-weekhead--click" role="button" tabindex="0"
+      title="Ver las publicaciones del ${escAttr(formatDate(cab))}"
+      onclick="window._agendaVerDia('${cab}')"
+      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();window._agendaVerDia('${cab}')}">${DIAS[(dia.getDay() + 6) % 7]} ${dia.getDate()}${botonNuevoDia(dia)}</div>`;
   }
   for (const h of horas) {
     html += `<div class="agenda-hour">${pad2(h)}:00</div>`;
@@ -419,7 +455,7 @@ async function detalle(id) {
       <div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
         <span class="agenda-estado-badge agenda-estado-badge--${ev.estado}">${escHtml(ev.estado_label)}</span>
         <span style="font-size:.82rem;color:var(--text-secondary)">${escHtml(formatDateTime(ev.fecha))}</span>
-        ${ev.total_destinos ? `<span style="font-size:.8rem;color:var(--text-muted)">· ${ev.total_destinos} destino(s)</span>` : ''}
+        ${vivosDe(ev) ? `<span style="font-size:.8rem;color:var(--text-muted)">· ${vivosDe(ev)} destino(s)</span>` : ''}
         ${ev.historial ? `<span style="font-size:.8rem;color:var(--text-muted)">· ${ev.historial} histórico(s)</span>` : ''}
       </div>
 
@@ -450,11 +486,23 @@ async function detalle(id) {
           ${historicos.map(destinoHTML).join('')}
         </div>
       </div>` : ''}
+
+      ${ev.planes?.length ? `<div style="margin-top:16px">
+        <div class="publish-text-label" style="margin-bottom:8px">Horarios anteriores</div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          ${ev.planes.map(p => `<div style="display:flex;align-items:center;gap:8px;font-size:.82rem;color:var(--text-secondary)">
+            <span class="agenda-destino-dot agenda-destino-dot--archived"></span>
+            <s>${escHtml(formatDateTime(p.fecha))}</s>
+            <span style="color:var(--text-muted);font-size:.74rem">${p.origen === 'editar' ? 'cambio en el Planificador' : 'reprogramada'}</span>
+          </div>`).join('')}
+        </div>
+      </div>` : ''}
     </div>
     <div class="form-actions">
       <button type="button" class="btn btn--secondary" onclick="closeModal()">Cerrar</button>
       ${tieneFallos ? '<button type="button" class="btn btn--secondary" id="ev-retry">Reintentar fallidas</button>' : ''}
       <button type="button" class="btn btn--secondary" id="ev-editar">Editar</button>
+      <button type="button" class="btn btn--secondary" onclick="closeModal();window._agendaDuplicar('${ev.id}')">Duplicar</button>
       ${tienePendientes ? '<button type="button" class="btn btn--primary" id="ev-run">Publicar ahora</button>' : ''}
     </div>
   `);
@@ -495,6 +543,16 @@ async function detalle(id) {
     closeModal(true);
     abrirPlanificador(ev);
   });
+
+  // Botón "Descartar" de cada destino que falló (por delegación: los botones
+  // los arma destinoHTML() y se repintan con el modal).
+  document.querySelectorAll('[data-descartar]').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      window._agendaDescartarDestino(id, btn.dataset.descartar);
+    });
+  });
 }
 
 function destinoHTML(d) {
@@ -506,6 +564,13 @@ function destinoHTML(d) {
   const cuando = d.published_at
     ? `publicado ${escHtml(formatDateTime(d.published_at))}`
     : d.scheduled_at ? `para ${escHtml(formatDateTime(d.scheduled_at))}` : '';
+  // Sólo en los que fallaron: un destino ya publicado no se puede descartar
+  // (sería falsear el historial) y un pendiente se resuelve reprogramando.
+  const descartable = ['error', 'omitted'].includes(d.status);
+  const botonDescartar = descartable
+    ? `<button type="button" class="btn btn--sm btn--danger" data-descartar="${d.id}"
+         title="Sacar este destino de la lista sin borrarlo">Descartar</button>`
+    : '';
   return `<div class="agenda-destino">
     <span class="agenda-destino-dot agenda-destino-dot--${d.status}"></span>
     <div class="agenda-destino-cuerpo">
@@ -518,12 +583,36 @@ function destinoHTML(d) {
       ${d.pista ? `<div class="agenda-destino-pista"><b>Qué hacer:</b> ${escHtml(d.pista)}</div>` : ''}
       ${imgs}
     </div>
+    ${botonDescartar}
   </div>`;
 }
+
+/** Descarta un destino suelto y repinta el detalle con los conteos al día. */
+window._agendaDescartarDestino = async function (pubId, destId) {
+  const ok = await confirmDialog(
+    'Este destino sale de la lista: la publicación no lo vuelve a intentar y no cuenta para el estado del evento. Se conserva el registro de qué se intentó.',
+    { title: 'Descartar destino', confirmText: 'Descartar', danger: true }
+  );
+  if (!ok) return;
+  try {
+    await api.discardAgendaDestino(pubId, destId);
+    showToast('Destino descartado', 'success');
+    closeModal(true);
+    await cargar();
+    detalle(pubId);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+};
 
 function verDia(fecha) {
   const evs = eventosVisibles(agenda?.eventos || []).filter(e => e.fecha && ymd(new Date(e.fecha)) === fecha);
   if (!evs.length) { showToast('No hay eventos ese día', 'info'); return; }
+  // "Distribuir en el día" trabaja sobre TODAS las del día: si algo ya salió,
+  // al repartirlo se archiva (queda en el historial con su hora real) y se
+  // agenda de nuevo en el horario nuevo. Ver _agendaDistribuir.
+  const repartibles = evs;
+  listaDia = { fecha, eventos: repartibles };
   openModal(`
     <div class="modal-header">
       <h2>${escHtml(formatDate(fecha))}</h2>
@@ -550,6 +639,8 @@ function verDia(fecha) {
                 `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>`)}
               ${accion(`window._agendaDesarmar('${e.id}')`, 'Desarmar', 'btn--ghost',
                 `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>`)}
+              ${accion(`window._agendaDuplicar('${e.id}')`, 'Duplicar publicación', 'btn--ghost',
+                `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`)}
               ${accion(`window._agendaEliminar('${e.id}')`, 'Eliminar publicación', 'btn--danger',
                 `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`)}
             </div>`;
@@ -559,7 +650,7 @@ function verDia(fecha) {
             <button class="agenda-destino-cuerpo" style="cursor:pointer;text-align:left;border:0;background:none;padding:0;font:inherit;color:inherit"
               title="Ver detalle" onclick="closeModal(true);window._agendaDetalle('${e.id}')">
               <div class="agenda-destino-nombre">${escHtml(e.hora_local || '')} · ${escHtml(e.product_name || truncate(e.publish_text, 40))}</div>
-              <div class="agenda-destino-notas">${escHtml(etiquetaEstado(e.estado))}${e.total_destinos ? ' · ' + e.total_destinos + ' grupo(s)' : ' · sin agendar'}</div>
+              <div class="agenda-destino-notas">${escHtml(etiquetaEstado(e.estado))}${vivosDe(e) ? ' · ' + vivosDe(e) + ' grupo(s)' : ' · sin agendar'}</div>
               <span style="font-size:.72rem;color:var(--rose);text-decoration:underline">Ver detalle →</span>
             </button>
             ${acciones}
@@ -567,7 +658,14 @@ function verDia(fecha) {
         }).join('')}
       </div>
     </div>
-    <div class="form-actions"><button type="button" class="btn btn--secondary" onclick="closeModal()">Cerrar</button></div>
+    <div class="form-actions">
+      ${repartibles.length > 0 ? `
+        <button type="button" class="btn btn--secondary" onclick="window._agendaDistribuir()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:5px"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          Distribuir en el día
+        </button>` : ''}
+      <button type="button" class="btn btn--secondary" onclick="closeModal()">Cerrar</button>
+    </div>
   `);
   setModalCloseGuard(null);
 }
@@ -612,6 +710,298 @@ window._agendaReprogramar = function (id, actual) {
       showToast(err.message, 'error');
       btn.disabled = false;
       btn.textContent = 'Reprogramar';
+    }
+  });
+};
+
+window._agendaDuplicar = async function (id) {
+  try {
+    await api.duplicatePublication(id);
+    showToast('Publicación duplicada como material. Abrí el Planificador para elegirle hora y grupos.', 'success');
+    await cargar();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+};
+
+/**
+ * "Distribuir en el día": reparte las publicaciones del día dentro de una franja
+ * (Desde → Hasta) para no abrir el Planificador N veces cuando se generaron un
+ * montón de publicaciones de una.
+ *
+ * El reparto es una caminata aleatoria: la primera queda a las `Desde` y cada
+ * siguiente suma un entero sorteado entre el mínimo y el máximo. Si con eso la
+ * tanda termina antes de `Hasta`, los gaps se estiran TODOS por el mismo factor
+ * para llegar hasta `Hasta`; como el factor es uniforme, los gaps conservan sus
+ * proporciones entre sí y no quedan iguales entre sí (ni crecientes), o sea que
+ * no se arma un patrón reconocible. La última cae exactamente en `Hasta`, así
+ * que nunca se pasa al día siguiente.
+ *
+ * Si algo ya se publicó, se archiva (queda en el historial con su hora real) y
+ * se agenda de nuevo para el horario nuevo, en los mismos grupos: es el mismo
+ * criterio que reprogramar a mano una publicación ya publicada.
+ */
+window._agendaDistribuir = function () {
+  const ctx = listaDia;
+  if (!ctx || !ctx.eventos.length) { showToast('No hay publicaciones para repartir', 'info'); return; }
+  const [y, m, d] = ctx.fecha.split('-').map(Number);
+  const nombreDe = e => e.product_name || truncate(e.publish_text, 34) || 'Publicación';
+  const imgDe = e => e.images?.[0] || '';
+
+  const minutosDe = (hora) => {
+    const [hh, mm] = String(hora || '').split(':').map(Number);
+    return (Number.isFinite(hh) ? hh : 0) * 60 + (Number.isFinite(mm) ? mm : 0);
+  };
+  const relojDe = (min) => `${pad2(Math.floor(min / 60) % 24)}:${pad2(min % 60)}`;
+  // Los destinos no traen `hora_local` (solo el evento), así que la hora real de
+  // salida se saca del timestamp.
+  const horaDe = (iso) => {
+    if (!iso) return '';
+    const d = new Date(String(iso).replace(' ', 'T'));
+    return Number.isNaN(d.getTime()) ? '' : `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  };
+
+  // Sorteo de los gaps. Se hace UNA vez por tanda: en cada tecla se recalcularía
+  // solo y la vista previa saltaría mientras el usuario está mirando.
+  let sorteados = [];
+
+  const sortearGaps = (cuantos, min, max) => {
+    const lo = Math.max(0, Math.floor(min) || 0);
+    const hi = Math.max(lo, Math.floor(max) || 0);
+    return Array.from({ length: Math.max(0, cuantos) }, () => lo + Math.floor(Math.random() * (hi - lo + 1)));
+  };
+
+  /** Devuelve [{ev, t, gap}] con la hora nueva de cada una, en orden del día. */
+  const calcular = (sel, desde, hasta, min, max) => {
+    const t0 = minutosDe(desde);
+    const t1 = minutosDe(hasta);
+    if (sel.length === 0) return { filas: [], error: 'Tildá al menos una publicación.' };
+    if (t1 <= t0) return { filas: [], error: 'La hora de fin tiene que ser posterior a la de inicio.' };
+
+    if (sel.length === 1) {
+      return { filas: [{ ev: sel[0], t: new Date(y, m - 1, d, 0, t0, 0, 0), gap: 0 }], estirado: 0, comprimido: false };
+    }
+
+    const gaps = sorteados.length === sel.length - 1 ? sorteados : (sorteados = sortearGaps(sel.length - 1, min, max));
+    const bruto = gaps.reduce((a, b) => a + b, 0);
+    const span = t1 - t0;
+    // Factor uniforme: preserva la irregularidad del sorteo y llena la franja.
+    const factor = bruto > 0 ? span / bruto : 0;
+
+    let acc = 0;
+    const filas = [{ ev: sel[0], t: new Date(y, m - 1, d, 0, t0, 0, 0), gap: 0 }];
+    for (let i = 0; i < gaps.length; i++) {
+      acc += gaps[i] * factor;
+      filas.push({ ev: sel[i + 1], t: new Date(y, m - 1, d, 0, Math.round(t0 + acc), 0, 0), gap: gaps[i] * factor });
+    }
+    return {
+      filas,
+      estirado: factor > 1 ? bruto : 0,
+      comprimido: bruto > span,
+      promedio: filas.length > 1 ? span / (filas.length - 1) : 0,
+    };
+  };
+
+  // `pintarLista` reconstruye el HTML entero, así que el tildado no puede vivir
+  // en el DOM: se guardan las excluidas y el checkbox se repinta desde acá.
+  const excluidas = new Set();
+  const seleccionadas = () => ctx.eventos.filter(e => !excluidas.has(e.id));
+
+  const pintarLista = () => {
+    const sel = seleccionadas();
+    const res = calcular(sel, desdeEl.value, hastaEl.value, minEl.value, maxEl.value);
+    const pubDe = e => (e.destinos || []).find(x => x.status === 'published');
+    const invalid = res.error;
+    // Orden del día de las tildadas: la k-ésima recibe rotacion[k].
+    const orden = sel.map(e => e.id);
+
+    cuerpoEl.innerHTML = ctx.eventos.map(e => {
+      const pub = pubDe(e);
+      const nueva = res.filas.find(f => f.ev.id === e.id);
+      const k = orden.indexOf(e.id);
+      const grupoRota = rotarEl.checked && k >= 0 ? (rotacion[k] || null) : null;
+      return `
+      <label class="dist-fila" for="dist-${e.id}">
+        <input type="checkbox" class="dist-cb" id="dist-${e.id}" data-id="${e.id}" ${excluidas.has(e.id) ? '' : 'checked'} />
+        <span class="agenda-dia-dot agenda-dia-dot--${e.estado}" title="${escAttr(etiquetaEstado(e.estado))}"></span>
+        ${imgDe(e) ? `<img class="dist-thumb" src="${escAttr(imgDe(e))}" alt="" />` : '<span class="dist-thumb dist-thumb--vacia"></span>'}
+        <span class="dist-nombre">
+          <span class="dist-titulo">${escHtml(nombreDe(e))}</span>
+          <span class="dist-sub">${escHtml(etiquetaEstado(e.estado))}${grupoRota ? ` · rotará a <b>${escHtml(grupoRota.name)}</b>` : (vivosDe(e) ? ` · ${vivosDe(e)} grupo(s)` : '')}${pub ? ` · publicada ${escHtml(horaDe(pub.published_at || pub.scheduled_at))}` : ''}</span>
+        </span>
+        <span class="dist-horas" title="La original se queda a las ${escAttr((e.hora_local || '--:--').slice(0, 5))}; se crea una copia a las ${escAttr(nueva ? relojDe(nueva.t.getHours() * 60 + nueva.t.getMinutes()) : '--:--')}">
+          <span style="color:var(--text-muted);font-size:.74rem">${escHtml((e.hora_local || '--:--').slice(0, 5))}</span>
+          <span style="color:var(--text-muted)">→</span>
+          <b>${nueva ? escHtml(relojDe(nueva.t.getHours() * 60 + nueva.t.getMinutes())) : '—'}</b>
+        </span>
+      </label>`;
+    }).join('');
+
+    const selCount = sel.length;
+    if (invalid) {
+      notaEl.innerHTML = `<div class="plan-avisos plan-avisos--vacio">${escHtml(invalid)}</div>`;
+    } else if (!selCount) {
+      notaEl.innerHTML = '<div class="plan-avisos plan-avisos--vacio">No tildaste ninguna publicación.</div>';
+    } else {
+      const Bits = [];
+      Bits.push(`${selCount} publicación(es) entre las <b>${escHtml(relojDe(minutosDe(desdeEl.value)))}</b> y las <b>${escHtml(relojDe(minutosDe(hastaEl.value)))}</b>.`);
+      if (selCount > 1) Bits.push(`Separación promedio: <b>${Math.round(res.promedio)} min</b> (variable, sorteada).`);
+      if (res.estirado) Bits.push(`Se estiró la tanda ${Math.round(res.estirado)} min para llenar la franja.`);
+      if (res.comprimido) Bits.push('La franja quedó corta: se comprimieron los gaps.');
+      const t0 = minutosDe(desdeEl.value);
+      const t1 = minutosDe(hastaEl.value);
+      if (t0 < HORA_MIN || t1 > HORA_MAX + 1) Bits.push(`Ojo: fuera de ${pad2(HORA_MIN)}:00–${pad2(HORA_MAX)}:00 no se ven en la vista semana.`);
+      notaEl.innerHTML = `<div class="plan-avisos">${Bits.join(' ')}</div>`;
+    }
+    guardarEl.disabled = !!invalid || selCount === 0;
+  };
+
+  const repintarSorteo = () => { sorteados = []; pintarLista(); };
+
+  closeModal(true);
+  openModal(`
+    <div class="modal-header">
+      <h2>Distribuir en el día</h2>
+      <button class="modal-close" onclick="closeModal()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row" style="grid-template-columns:repeat(4,1fr)">
+        <div class="form-group">
+          <label>Desde</label>
+          <input type="time" id="dist-desde" class="form-control" value="08:00" />
+        </div>
+        <div class="form-group">
+          <label>Hasta</label>
+          <input type="time" id="dist-hasta" class="form-control" value="20:00" />
+        </div>
+        <div class="form-group">
+          <label>Separación mín. (min)</label>
+          <input type="number" id="dist-min" class="form-control" value="2" min="0" step="1" />
+        </div>
+        <div class="form-group">
+          <label>Separación máx. (min)</label>
+          <input type="number" id="dist-max" class="form-control" value="5" min="0" step="1" />
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+        <button type="button" class="btn btn--sm btn--ghost" id="dist-todos">Todos</button>
+        <button type="button" class="btn btn--sm btn--ghost" id="dist-ninguno">Ninguno</button>
+        <button type="button" class="btn btn--sm btn--secondary" id="dist-sortear" title="Sortear otra vez los espacios entre publicaciones">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="vertical-align:-2px;margin-right:4px"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          Volver a sortear
+        </button>
+        <span style="font-size:.74rem;color:var(--text-muted)">Los espacios se sortean al azar para que no se vea un patrón.</span>
+      </div>
+      <label class="dist-rotar" title="Cada copia va a UN solo grupo distinto, caminando el catálogo en orden y arrancando después del último grupo ya usado hoy.">
+        <input type="checkbox" id="dist-rotar" />
+        <span><b>Rotar grupos</b>: cada copia cae en un grupo distinto, empezando por los que hoy todavía no salieron.
+          <span id="dist-rotar-info" style="color:var(--text-muted)"></span></span>
+      </label>
+      <div id="dist-lista" class="dist-lista"></div>
+      <div id="dist-nota"></div>
+      <div class="plan-avisos" style="margin-top:10px">
+        Cada vez que repartís se crea una <b>copia</b> en la franja nueva y la publicación original se queda donde está.
+        Así podés repartir varias veces el mismo día, ver todas las franjas en el calendario y borrar las que no te sirvan.
+      </div>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn btn--secondary" onclick="closeModal()">Cancelar</button>
+      <button type="button" class="btn btn--primary" id="dist-guardar">Repartir</button>
+    </div>
+  `);
+  setModalCloseGuard(null);
+
+  const desdeEl = document.getElementById('dist-desde');
+  const hastaEl = document.getElementById('dist-hasta');
+  const minEl = document.getElementById('dist-min');
+  const maxEl = document.getElementById('dist-max');
+  const cuerpoEl = document.getElementById('dist-lista');
+  const notaEl = document.getElementById('dist-nota');
+  const guardarEl = document.getElementById('dist-guardar');
+  const rotarEl = document.getElementById('dist-rotar');
+  const rotarInfoEl = document.getElementById('dist-rotar-info');
+
+  // Rotación de grupos. Se pide el orden UNA vez por un n igual a todas las del
+  // día, así la k-ésima seleccionada siempre recibe el k-ésimo grupo sin volver
+  // a pedirlo al destildar. El backend arranca después del último grupo usado
+  // hoy y da la vuelta solo si hacen falta más copias que grupos.
+  let rotacion = [];
+  const cargarRotacion = async () => {
+    if (!rotarEl.checked) { rotacion = []; if (rotarInfoEl) rotarInfoEl.textContent = ''; return; }
+    try {
+      const r = await api.getRotacionGrupos(ctx.fecha, ctx.eventos.length);
+      rotacion = r.grupos || [];
+      if (rotarInfoEl) {
+        rotarInfoEl.textContent = r.total
+          ? ` (catálogo: ${r.total}; ${r.usados} ya usado(s) hoy)`
+          : ' (no hay grupos en el catálogo)';
+      }
+    } catch (err) {
+      rotacion = [];
+      rotarEl.checked = false;
+      showToast(err.message, 'error');
+    }
+  };
+
+  // Los horarios cambian la cuenta: se vuelve a sortear porque el estiramiento
+  // depende del ancho de la franja.
+  [desdeEl, hastaEl].forEach(el => el.addEventListener('change', repintarSorteo));
+  [minEl, maxEl].forEach(el => el.addEventListener('input', repintarSorteo));
+  document.getElementById('dist-sortear').addEventListener('click', repintarSorteo);
+  document.getElementById('dist-todos').addEventListener('click', () => {
+    excluidas.clear();
+    pintarLista();
+  });
+  document.getElementById('dist-ninguno').addEventListener('click', () => {
+    ctx.eventos.forEach(e => excluidas.add(e.id));
+    pintarLista();
+  });
+  rotarEl.addEventListener('change', async () => {
+    await cargarRotacion();
+    pintarLista();
+  });
+  // El orden es el del día: tildar o destildar sólo cambia el QUÉ, no el
+  // orden en que se reparten.
+  cuerpoEl.addEventListener('change', (e) => {
+    const cb = e.target.closest('.dist-cb');
+    if (!cb) return;
+    if (cb.checked) excluidas.delete(cb.dataset.id);
+    else excluidas.add(cb.dataset.id);
+    pintarLista();
+  });
+  pintarLista();
+
+  guardarEl.addEventListener('click', async () => {
+    const sel = seleccionadas();
+    const res = calcular(sel, desdeEl.value, hastaEl.value, minEl.value, maxEl.value);
+    if (res.error || !sel.length) { showToast(res.error || 'Tildá al menos una publicación', 'warning'); return; }
+    guardarEl.disabled = true;
+    try {
+      // Cada distribución crea una COPIA en la franja nueva: la original se
+      // queda donde está. Así se puede repartir varias veces el mismo día y
+      // cada franja queda como un evento propio, para publicarlo o borrarlo
+      // por separado.
+      //
+      // Con "Rotar grupos" la copia va a UN solo grupo del catálogo en vez de a
+      // los de la original. Si el orden pedido no cubre las tildadas (p. ej. se
+      // tildaron más después), se vuelve a pedir antes de repartir.
+      const rotar = rotarEl.checked;
+      if (rotar && rotacion.length < res.filas.length) await cargarRotacion();
+      for (let i = 0; i < res.filas.length; i++) {
+        guardarEl.textContent = `Repartiendo… ${i + 1}/${res.filas.length}`;
+        const grupoId = rotar ? (rotacion[i]?.id || '') : '';
+        await api.planificarPublication(res.filas[i].ev.id, res.filas[i].t.toISOString(), grupoId);
+      }
+      const avisoRotar = rotar && rotacion.length ? ' Cada copia fue a un grupo distinto.' : '';
+      showToast(`${res.filas.length} copia(s) agendadas. Las originales quedaron en su lugar.${avisoRotar}`, 'success');
+      closeModal(true);
+      await cargar();
+    } catch (err) {
+      showToast(err.message, 'error');
+      guardarEl.disabled = false;
+      guardarEl.textContent = 'Repartir';
     }
   });
 };
@@ -680,7 +1070,11 @@ window._agendaEliminar = async function (id) {
  *
  * `ev` = evento existente (editar). Sin argumento = crear uno nuevo.
  */
-function abrirPlanificador(ev = null) {
+/**
+ * `fechaInicial` la pasa el "+" de la celda del calendario: abre el Planificador
+ * con ese día ya elegido en vez de la fecha de hoy.
+ */
+function abrirPlanificador(ev = null, fechaInicial = null) {
   const esEdicion = !!ev;
 
   // Las imágenes arrancan con las del evento; al guardar se copian a la cola
@@ -701,7 +1095,9 @@ function abrirPlanificador(ev = null) {
 
   const fechaDefecto = esEdicion && ev.fecha
     ? formatDateInput(ev.fecha)
-    : (() => { const d = new Date(Date.now() + 3600000); d.setMinutes(0, 0, 0); return formatDateInput(d.toISOString()); })();
+    : fechaInicial
+      ? formatDateInput(fechaInicial + 'T00:00:00')
+      : (() => { const d = new Date(Date.now() + 3600000); d.setMinutes(0, 0, 0); return formatDateInput(d.toISOString()); })();
 
   openModal(`
     <div class="modal-header">
@@ -767,7 +1163,9 @@ function abrirPlanificador(ev = null) {
           <div class="plan-grupos" id="plan-grupos">
             ${grupos.length ? grupos.map(g => {
               const on = gruposPrevistos.includes(g.id);
-              return `<label class="plan-grupo"><input type="checkbox" class="plan-gc" value="${escAttr(g.id)}" data-name="${escAttr(g.name)}" ${on ? 'checked' : ''}/> ${escHtml(g.name)}</label>`;
+              // El "+" de uso del día se pinta después (pintarUsoGrupos), cuando
+              // llegó la consulta: acá solo queda la fila base.
+              return `<label class="plan-grupo" data-gname="${escAttr(g.name)}"><input type="checkbox" class="plan-gc" value="${escAttr(g.id)}" data-name="${escAttr(g.name)}" ${on ? 'checked' : ''}/> ${escHtml(g.name)}<span class="plan-grupo-uso" hidden></span></label>`;
             }).join('') : '<span style="font-size:.78rem;color:var(--text-muted)">No hay grupos registrados.</span>'}
           </div>
           ${grupos.length ? `<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
@@ -927,9 +1325,13 @@ function abrirPlanificador(ev = null) {
 
   document.getElementById('plan-todos')?.addEventListener('click', () => {
     document.querySelectorAll('.plan-gc').forEach(c => { c.checked = true; });
+    pintarUsoGrupos();
+    avisosDeb();
   });
   document.getElementById('plan-ninguno')?.addEventListener('click', () => {
     document.querySelectorAll('.plan-gc').forEach(c => { c.checked = false; });
+    pintarUsoGrupos();
+    avisosDeb();
   });
   document.getElementById('plan-gestionar').addEventListener('click', () => {
     closeModal(true);
@@ -974,6 +1376,45 @@ function abrirPlanificador(ev = null) {
   selFecha.addEventListener('change', avisosDeb);
   selFecha.addEventListener('input', avisosDeb);
   document.querySelectorAll('.plan-gc').forEach(c => c.addEventListener('change', avisosDeb));
+
+  // ── grupos ya usados en ese día: amarillo al mirarlos, naranja al elegirlos ──
+  // Un grupo que ya tiene una publicación con hora ese día se pinta de amarillo
+  // como información ("este ya se usó"), y si además lo tildás para esta
+  // publicación pasa a naranja con el aviso de que se va a repetir en el mismo
+  // grupo el mismo día. Informa, no bloquea: la decisión es del usuario.
+  let usosDelDia = new Map();
+
+  const pintarUsoGrupos = () => {
+    document.querySelectorAll('.plan-grupo').forEach(label => {
+      const chk = label.querySelector('.plan-gc');
+      const aviso = label.querySelector('.plan-grupo-uso');
+      const uso = usosDelDia.get((label.dataset.gname || '').toLowerCase());
+      const repetido = !!(uso && chk?.checked);
+      label.classList.toggle('plan-grupo--usado', !!uso && !repetido);
+      label.classList.toggle('plan-grupo--repetido', repetido);
+      if (!uso) { aviso.hidden = true; aviso.textContent = ''; return; }
+      aviso.hidden = false;
+      aviso.innerHTML = repetido
+        ? `⚠ ya se usó a las <b>${escHtml(uso.hora_local)}</b>`
+        : `usado ${escHtml(uso.hora_local)}`;
+    });
+  };
+
+  const cargarUsoDia = async () => {
+    const dia = (selFecha.value || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dia)) { usosDelDia = new Map(); pintarUsoGrupos(); return; }
+    try {
+      const r = await api.getUsoDia(dia, ev?.id || '');
+      usosDelDia = new Map((r.usos || []).map(u => [(u.group_name || '').toLowerCase(), u]));
+    } catch {
+      usosDelDia = new Map();          // si falla, la lista queda neutra
+    }
+    pintarUsoGrupos();
+  };
+
+  selFecha.addEventListener('change', cargarUsoDia);
+  document.querySelectorAll('.plan-gc').forEach(c => c.addEventListener('change', pintarUsoGrupos));
+  cargarUsoDia();
 
   // ── guardado ──
   async function guardar({ agendar }) {
@@ -1159,4 +1600,7 @@ window._agendaFiltroGrupo = function (v) {
 
 window._agendaDetalle = detalle;
 window._agendaVerDia = verDia;
+/** "+" de una celda: Planificador nuevo con ese día ya puesto. */
+window._agendaNuevo = function (fecha) { abrirPlanificador(null, fecha); };
+
 window._abrirPlanificador = function (ev) { abrirPlanificador(ev || null); };

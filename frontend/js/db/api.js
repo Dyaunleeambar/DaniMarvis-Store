@@ -105,6 +105,12 @@ export const api = {
   createPublication: (data) => request('POST', '/publications', data),
   updatePublication: (id, data) => request('PUT', `/publications/${id}`, data),
   deletePublication: (id) => request('DELETE', `/publications/${id}`),
+  duplicatePublication: (id) => request('POST', `/publications/${id}/duplicate`),
+  planificarPublication: (id, fecha, grupoId = '') =>
+    request('POST', `/publications/${id}/planificar`, grupoId ? { fecha, grupo_id: grupoId } : { fecha }),
+  getUsoDia: (fecha, exclude = '') => request('GET', `/agenda/uso-dia?fecha=${encodeURIComponent(fecha)}&exclude=${encodeURIComponent(exclude)}`),
+  getRotacionGrupos: (fecha, n) => request('GET', `/agenda/rotacion-grupos?fecha=${encodeURIComponent(fecha)}&n=${encodeURIComponent(n)}`),
+  discardAgendaDestino: (pubId, destId) => request('PATCH', `/agenda/${pubId}/destinos/${destId}`, {}),
   reorderPublications: (order) => request('PATCH', '/publications/reorder', { order }),
   publishPublication: (id, platform = 'facebook', scheduledAt = null) => request('POST', `/publications/${id}/publish`, { platform, scheduled_at: scheduledAt }),
 

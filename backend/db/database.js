@@ -269,6 +269,14 @@ function createSchema() {
       product_count INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now'))
     );
+    CREATE TABLE IF NOT EXISTS publication_plans (
+      id TEXT PRIMARY KEY,
+      publication_id TEXT,
+      fecha TEXT,
+      origen TEXT DEFAULT 'reprogramar',
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (publication_id) REFERENCES publications(id)
+    );
     CREATE TABLE IF NOT EXISTS publication_queue (
       id TEXT PRIMARY KEY,
       publication_id TEXT,

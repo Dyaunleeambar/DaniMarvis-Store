@@ -841,9 +841,51 @@ tr:hover td { background: rgba(201,132,122,.03); }
   display: flex;
   flex-direction: column;
   gap: 4px;
+  position: relative;
+}
+
+/* "+" para crear una publicación en ese día. Discreto para no ensuciar las ~42
+   celdas: sólo aparece al pasar el mouse (siempre en el día de hoy), y en
+   pantallas sin hover queda atenuado pero visible para poder tocarlo. */
+.agenda-dayadd {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg-card);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .12s, color .12s, border-color .12s;
+}
+.agenda-day:hover .agenda-dayadd { opacity: 1; }
+.agenda-dayadd:hover {
+  opacity: 1;
+  color: var(--primary);
+  border-color: var(--primary);
+}
+.agenda-day--hoy .agenda-dayadd { opacity: 1; }
+.agenda-weekhead .agenda-dayadd {
+  top: 2px;
+  right: 2px;
+  width: 17px;
+  height: 17px;
+}
+.agenda-weekhead:hover .agenda-dayadd { opacity: 1; }
+@media (hover: none) {
+  .agenda-dayadd { opacity: .5; }
 }
 .agenda-day--out { background: var(--bg); }
 .agenda-day--hoy { background: #fffaf7; }
+.agenda-day--click { cursor: pointer; }
+.agenda-day--click:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 .agenda-daynum {
   font-size: .72rem;
   font-weight: 600;
@@ -922,6 +964,7 @@ tr:hover td { background: rgba(201,132,122,.03); }
   font-size: .68rem;
   font-weight: 600;
   color: var(--text-secondary);
+  position: relative;
 }
 .agenda-weekslot {
   position: absolute;
@@ -952,6 +995,8 @@ tr:hover td { background: rgba(201,132,122,.03); }
 .agenda-weekday { position: relative; }
 
 .agenda-weekhead--hoy { color: var(--primary); }
+.agenda-weekhead--click { cursor: pointer; }
+.agenda-weekhead--click:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 
 /* ── panel de detalle ───────────────────────────────────────────────────── */
 .agenda-aviso {
@@ -1002,12 +1047,84 @@ tr:hover td { background: rgba(201,132,122,.03); }
   font-size: .8rem;
 }
 .agenda-destino-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; margin-top: 5px; }
+
+/* ── "Distribuir en el día": lista de publicaciones con checkbox ───────────── */
+.dist-lista {
+  max-height: 340px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+}
+.dist-fila {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  font-size: .8rem;
+}
+.dist-fila:last-child { border-bottom: 0; }
+.dist-fila:hover { background: #faf7f5; }
+.dist-cb { flex: none; cursor: pointer; }
+.dist-thumb {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex: none;
+  background: var(--bg);
+}
+.dist-thumb--vacia { border: 1px dashed var(--border); }
+.dist-nombre { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.dist-titulo {
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dist-sub { font-size: .71rem; color: var(--text-muted); }
+.dist-horas {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.dist-horas s { color: var(--text-muted); font-size: .74rem; }
+.dist-horas b {
+  min-width: 44px;
+  text-align: center;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-size: .78rem;
+}
+.dist-rotar {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  font-size: .78rem;
+  cursor: pointer;
+}
+.dist-rotar input { flex: none; margin-top: 2px; cursor: pointer; }
+.dist-rotar b { color: var(--text); }
 .agenda-destino-dot--pending   { background: var(--info); }
 .agenda-destino-dot--published { background: var(--success); }
 .agenda-destino-dot--error     { background: var(--error); }
 .agenda-destino-dot--cancelled { background: var(--text-muted); }
 .agenda-destino-dot--omitted   { background: #b8860b; }
+.agenda-destino-dot--archived  { background: #9e918d; }
 .agenda-destino-cuerpo { flex: 1; min-width: 0; }
+.agenda-destino [data-descartar] { flex: none; align-self: center; }
 .agenda-dia-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; align-self: center; }
 .agenda-dia-dot--material { background: #9e918d; }
 .agenda-dia-dot--programada { background: #0288d1; }
@@ -1078,6 +1195,29 @@ tr:hover td { background: rgba(201,132,122,.03); }
   border-radius: 3px;
 }
 .plan-grupo:hover { background: #eee7e2; }
+
+/* Grupo que YA tiene una publicación con hora ese día: amarillo claro como
+   aviso informativo ("este ya se usó"). Si además lo estás seleccionando para
+   esta publicación, pasa a naranja (misma paleta que .plan-avisos) porque se
+   va a repetir en el mismo grupo el mismo día. Informa, no bloquea. */
+.plan-grupo-uso {
+  margin-left: auto;
+  font-size: .7rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.plan-grupo--usado {
+  background: #fdf7dd;
+  box-shadow: inset 2px 0 0 #e8d98a;
+}
+.plan-grupo--usado:hover { background: #fbf2cd; }
+.plan-grupo--usado .plan-grupo-uso { color: #7a6a10; }
+.plan-grupo--repetido {
+  background: #fdf1e3;
+  box-shadow: inset 2px 0 0 #f3d3a8;
+}
+.plan-grupo--repetido:hover { background: #fbe9d5; }
+.plan-grupo--repetido .plan-grupo-uso { color: #8a4b06; font-weight: 600; }
 .plan-avisos {
   margin-top: 10px;
   padding: 9px 11px;

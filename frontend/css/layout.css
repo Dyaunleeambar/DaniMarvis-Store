@@ -203,6 +203,20 @@
   flex-wrap: wrap;
 }
 
+/* Sticky: el botón "Planificador" queda siempre a mano aunque scrollees el
+   calendario. Se ancla debajo del topbar (que ya es sticky) y va con fondo
+   opaco para que el contenido no se vea por detrás. Sin margen negativo: el
+   padding de .app-main cambia en responsive y el desborde se rompería. */
+.page-header--sticky {
+  position: sticky;
+  top: var(--topbar-h);
+  z-index: 40;
+  background: var(--bg);
+  padding: 10px 0;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
 .page-header h1 {
   font-size: 1.4rem;
   font-weight: 700;
