@@ -7,10 +7,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = path.join(__dirname, '..', 'danimarvis.db');
 const BACKUPS_DIR = path.join(__dirname, '..', 'backups');
 
-const ALL_TABLES = [
-  'products', 'providers', 'sales', 'categories', 'settings',
-  'users', 'publications', 'publication_queue', 'exports',
-];
+// Las tablas NO se listan a mano: se leen de la base. La lista fija que había
+// antes se quedó atrás y se comía el.facebook_groups, los rankings, los estilos
+// de proveedor, las rutinas de página y todo lo que se agregara después, sin
+// avisar: esas tablas no se restauraban y quedaban con los datos del momento.
+// Ahora sale todo lo que exista, que es lo que significa "restaurar".
 
 function resolveSource(arg) {
   if (!arg) {
@@ -44,6 +45,9 @@ const SQL = await initSqlJs();
 const db = new SQL.Database(fs.readFileSync(DB_PATH));
 const data = JSON.parse(fs.readFileSync(src.jsonPath, 'utf8'));
 
+const r = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'");
+const ALL_TABLES = r.length && r[0].values.length ? r[0].values.map(v => String(v[0])) : [];
+
 function q(val) {
   if (val === null || val === undefined) return 'NULL';
   if (typeof val === 'number') return val;
@@ -53,21 +57,25 @@ function q(val) {
 for (const t of ALL_TABLES) {
   if (!Array.isArray(data[t])) continue;
   const rows = data[t];
-  if (!rows.length) continue;
 
   const existing = db.exec(`SELECT name FROM pragma_table_info('${t}')`);
-  const validCols = existing.length
-    ? new Set(existing[0].values.map(v => v[0]))
-    : new Set();
-  const keys = Object.keys(rows[0]).filter(k => validCols.has(k));
+  const validCols = existing.length ? new Set(existing[0].values.map(v => v[0])) : new Set();
 
+  // La tabla que vino VACÍA también se vacía. Con el `continue` que había antes
+  // quedaba con los datos del momento y el resultado no era la foto de esa
+  // fecha: era un mezcla de dos. Lo que decide el borrado es que la tabla esté
+  // en el JSON, no que tenga filas.
   db.exec('DELETE FROM ' + t);
+  let n = 0;
   for (const r of rows) {
+    const keys = Object.keys(r).filter(k => validCols.has(k));
+    if (!keys.length) continue;
     const cols = keys.join(', ');
     const vals = keys.map(k => q(r[k])).join(', ');
     db.exec(`INSERT INTO ${t} (${cols}) VALUES (${vals})`);
+    n++;
   }
-  console.log(`Restaurados ${rows.length} registros en ${t}`);
+  console.log(`Restaurados ${n} registros en ${t}`);
 }
 
 fs.writeFileSync(DB_PATH, Buffer.from(db.export()));
@@ -78,5 +86,10 @@ if (src.imagesDir && fs.existsSync(src.imagesDir)) {
   fs.cpSync(src.imagesDir, uploadsDir, { recursive: true });
   const count = fs.readdirSync(uploadsDir).length;
   console.log(`Imágenes restauradas: ${count}`);
+} else {
+  // Los respaldos nuevos no traen copia de `uploads/`: las imágenes están en
+  // Drive como espejo y copiar 1.7 GB dentro del respaldo local las duplicaba
+  // sin proteger nada. Si faltan imágenes, se recuperan de Drive.
+  console.log('Este respaldo no trae imágenes: están en Drive (DaniMarvisStore/uploads).');
 }
 console.log('Respaldo aplicado:', src.label);

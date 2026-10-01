@@ -39,12 +39,15 @@ router.post('/restore', (req, res) => {
       if (!tables.has(t)) continue;
       if (!Array.isArray(data[t])) continue;
       const rows = data[t];
-      if (!rows.length) continue;
 
       const existing = db.prepare(`SELECT name FROM pragma_table_info(?)`).all(t);
       const validCols = new Set(existing.map(r => r.name));
-      const sampleKeys = Object.keys(rows[0]);
 
+      // Una tabla VACÍA en el respaldo también se limpia. Con el `continue` que
+      // había antes, restaurar un respaldo en el que esa tabla estaba vacía
+      // dejaba los datos del momento intactos: el resultado no era la foto de
+      // esa fecha sino un revolújido de dos. Lo que decide el borrado es que la
+      // tabla esté en el JSON, no que tenga filas.
       const before = db.prepare('SELECT COUNT(*) as c FROM ' + t).get().c;
       if (before > 0) {
         db.exec('DELETE FROM ' + t);
@@ -57,6 +60,7 @@ router.post('/restore', (req, res) => {
         const vals = keys.map(k => q(r[k])).join(', ');
         db.exec(`INSERT INTO ${t} (${cols}) VALUES (${vals})`);
       }
+      console.log(`[Backup] Restaurada ${t}: ${rows.length} fila(s)`);
     }
 
     saveDB();

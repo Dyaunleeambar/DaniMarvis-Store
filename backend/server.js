@@ -28,7 +28,7 @@ import { generateCatalogFile } from './lib/catalogGenerator.js';
 import { ensureWebp } from './lib/imageUtils.js';
 import { getWarrantyReminders } from './lib/warranty.js';
 import { startGroupPublishScheduler, rescheduleGroupPublish, groupPublishSchedulerState, startAgendaScheduler, rescheduleAgenda, agendaSchedulerState } from './lib/groupPublisher.js';
-import { createBackup } from './scripts/backup.js';
+import { createBackup, scheduleBackups } from './scripts/backup.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -466,6 +466,11 @@ async function start() {
   createBackup().catch((e) => {
     console.error('[Backup] Error automático al iniciar:', e.message);
   });
+
+  // Y de acá en adelante cada BACKUP_INTERVAL_HOURS (24 por defecto). Antes solo
+  // se respaldaba en este punto, así que un server que se dejaba encendido
+  // semanas no generaba ni un respaldo nuevo.
+  scheduleBackups();
 
   app.listen(PORT, () => {
     console.log(`[Server] Panel DaniMarvis corriendo en http://localhost:${PORT}`);

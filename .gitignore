@@ -1,6 +1,10 @@
 node_modules/
 CLAUDE.md
 *.db
+# Copias de la BD que no terminan en .db: .db-shm, .db-wal, .db.tmp y las
+# manuales (.db.bak-*, .db.prerevert-*, .db.backup-*). Sin esto aparecen como
+# untracked y con ellas el riesgo de commitear una base entera por error.
+*.db.*
 *.db-shm
 *.db-wal
 .env
