@@ -19,14 +19,25 @@ export function formatCommission(amount, currency) {
   return formatUSD(amount);
 }
 
+/** Fecha local a partir de un valor. Un "YYYY-MM-DD" se arma como medianoche LOCAL:
+ *  new Date('YYYY-MM-DD') interpreta UTC y en zonas con offset negativo corre el
+ *  día para atrás (una publicación del 30 se veía "29"). */
+function parseDateLocal(dateStr) {
+  if (typeof dateStr === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    return new Date(y, m - 1, d);
+  }
+  return new Date(dateStr);
+}
+
 export function formatDate(dateStr) {
   if (!dateStr) return '—';
-  return new Date(dateStr).toLocaleDateString('es-CO', { year: 'numeric', month: 'short', day: 'numeric' });
+  return parseDateLocal(dateStr).toLocaleDateString('es-CO', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 export function formatDateTime(dateStr) {
   if (!dateStr) return '—';
-  return new Date(dateStr).toLocaleString('es-CO', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return parseDateLocal(dateStr).toLocaleString('es-CO', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 const pad2 = (n) => String(n).padStart(2, '0');
