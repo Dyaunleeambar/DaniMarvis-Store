@@ -31,6 +31,11 @@ const DRIVE_DIR = (process.env.BACKUP_DRIVE_DIR || 'DaniMarvisStore').replace(/^
 const DRIVE_KEEP = parseInt(process.env.BACKUP_DRIVE_KEEP || '30', 10);
 // 'auto' = copia en local solo mientras Drive no esté listo. '1'/'0' = forzarlo.
 const UPLOADS_LOCAL = process.env.BACKUP_UPLOADS_LOCAL || 'auto';
+// Cuánto se espera la subida. El espejo diario es de unos pocos archivos y va
+// sobrado con 30 min; la PRIMERA vez hay que subir todo uploads/ y con una
+// conexión lenta de subida (~200 KB/s) 1.8 GB se van a más de 2 h, así que para
+// esa corrida hay que pasarlo por variable (BACKUP_DRIVE_TIMEOUT_MIN=240).
+const DRIVE_TIMEOUT_MIN = parseInt(process.env.BACKUP_DRIVE_TIMEOUT_MIN || '30', 10);
 
 /**
  * Dónde está el rclone.
@@ -58,7 +63,7 @@ function whichRclone() {
   return 'rclone';
 }
 
-function rclone(args, timeoutMs = 30 * 60 * 1000) {
+function rclone(args, timeoutMs = DRIVE_TIMEOUT_MIN * 60 * 1000) {
   return execFileSync(whichRclone(), args, {
     encoding: 'utf8',
     timeout: timeoutMs,
