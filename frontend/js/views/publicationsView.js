@@ -294,6 +294,7 @@ function pintarMes() {
     html += `<div class="agenda-day ${out ? 'agenda-day--out' : ''} ${esHoy ? 'agenda-day--hoy' : ''}${evs.length ? ' agenda-day--click' : ''}"${clickable}>`;
     html += `<span class="agenda-daynum ${out ? 'agenda-daynum--tenue' : ''}">${dia.getDate()}</span>`;
     html += botonNuevoDia(dia);
+    if (evs.length) html += botonMenuDia(dia);
     html += evs.slice(0, 3).map(tarjetaEvento).join('');
     if (evs.length > 3) {
       html += `<button class="agenda-more" onclick="event.stopPropagation();window._agendaVerDia('${f}')">+${evs.length - 3} más</button>`;
@@ -301,6 +302,24 @@ function pintarMes() {
     html += '</div>';
   }
   return html + '</div>';
+}
+
+/**
+ * "⋯" de cada celda: duplica TODAS las publicaciones de ese día en otro día.
+ *
+ * Se dibuja sólo si el día tiene algo que duplicar. El click va con
+ * stopPropagation porque la celda entera abre el modal del día y, sin esto, el
+ * "⋯" no haría otra cosa que abrir lo mismo.
+ */
+function botonMenuDia(dia) {
+  const f = ymd(dia);
+  return `<button class="agenda-daymenu" onclick="event.stopPropagation();window._agendaDuplicarDia('${f}')"
+    title="Duplicar las publicaciones del ${escAttr(formatDate(f))}"
+    aria-label="Duplicar las publicaciones del ${escAttr(formatDate(f))}">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/>
+    </svg>
+  </button>`;
 }
 
 /**
@@ -355,10 +374,11 @@ function pintarSemana() {
     // El encabezado del día también abre el modal del día: en la vista semana las
     // celdas vacías no son clickeables (las ocupa la grilla horaria).
     const cab = ymd(dia);
+    const conEventos = eventosVisibles(eventosDelDia(dia)).length > 0;
     html += `<div class="agenda-weekhead ${esHoy ? 'agenda-weekhead--hoy' : ''} agenda-weekhead--click" role="button" tabindex="0"
       title="Ver las publicaciones del ${escAttr(formatDate(cab))}"
       onclick="window._agendaVerDia('${cab}')"
-      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();window._agendaVerDia('${cab}')}">${DIAS[(dia.getDay() + 6) % 7]} ${dia.getDate()}${botonNuevoDia(dia)}</div>`;
+      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();window._agendaVerDia('${cab}')}">${DIAS[(dia.getDay() + 6) % 7]} ${dia.getDate()}${botonNuevoDia(dia)}${conEventos ? botonMenuDia(dia) : ''}</div>`;
   }
   for (const h of horas) {
     html += `<div class="agenda-hour">${pad2(h)}:00</div>`;
@@ -663,12 +683,397 @@ function verDia(fecha) {
         <button type="button" class="btn btn--secondary" onclick="window._agendaDistribuir()">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:5px"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
           Distribuir en el día
+        </button>
+        <button type="button" class="btn btn--secondary" onclick="window._agendaDuplicarDia('${fecha}')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:5px"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          Duplicar todo al día
         </button>` : ''}
       <button type="button" class="btn btn--secondary" onclick="closeModal()">Cerrar</button>
     </div>
   `);
   setModalCloseGuard(null);
 }
+
+/**
+ * Duplicar TODAS las publicaciones de un día en otro día.
+ *
+ * No mueve: el día de origen queda intacto, con su historial, y en el destino
+ * aparecen COPIAS con todos sus destinos en 'pending'. Mover un día se comía el
+ * historial del anterior, así que la opción de "mover" no existe.
+ *
+ * La vista previa y la aplicación salen del mismo endpoint del backend
+ * (planDuplicacionDia), así que lo que se muestra antes de confirmar no puede
+ * diferir de lo que pasa después.
+ *
+ * Tres cosas se resuelven acá y no en el backend:
+ *  - El plan se pide siempre sobre el DÍA COMPLETO, nunca sobre la lista ya
+ *    filtrada. Si hay un filtro de estado o grupo activo se avisa cuántas cosas
+ *    ocultas se van a duplicar igual, para que "duplicar todas" no sea una
+ *    sorpresa.
+ *  - Al duplicar, el modal no se cierra: pasa a un estado de éxito con
+ *    "Deshacer". Es la red de seguridad de una acción masiva. El toast global
+ *    no sirve porque muestra texto fijo y se va a los 4 segundos.
+ *  - El deshacer borra las copias. Si alguna ya llegó a publicarse en Facebook
+ *    el backend se niega a borrarla y el modal lo dice, en vez de fingir que se
+ *    deshizo.
+ */
+window._agendaDuplicarDia = function (fecha) {
+  closeModal(true);
+
+  const [oy, om, od] = String(fecha).split('-').map(Number);
+  const diaSiguiente = ymd(new Date(oy, om - 1, od + 1));
+  // Set de ids visibles con el filtro de la barra, no un número: si el usuario
+  // desmarca publicaciones, el aviso de "también van estas ocultas" tiene que
+  // contar sobre lo que queda marcado.
+  const visiblesIds = new Set(eventosVisibles(eventosDelDia(new Date(oy, om - 1, od))).map(e => e.id));
+  // La hora de arranque se ofrece con la del día de origen, porque eso es
+  // exactamente "copiar el día tal cual": la primera publicación cae en su hora y
+  // los intervalos quedan como estaban. Si el usuario la mueve, mueve el bloque.
+  // Se mira el día ENTERO, no lo que pasa el filtro: si el usuario tiene filtrada
+  // la mañana, arrancar el bloque en la primera de la tarde movería todo el día.
+  const horasDia = eventosDelDia(new Date(oy, om - 1, od))
+    .map(e => e.hora_local).filter(h => /^\d{2}:\d{2}$/.test(h)).sort();
+  const horaInicio = horasDia[0] || '08:00';
+
+  let plan = null;
+  let cargando = true;
+  // El botón pide un clic de más cuando el día destino ya tiene copias de este
+  // día. Se reinicia con cada plan nuevo: si cambiás la fecha o la hora, la
+  // pregunta es otra.
+  let confirmarRepeticion = false;
+  const seleccion = new Set();      // arranca vacío; cada plan nuevo lo llena
+
+  const nombreDe = (d) => d.product_name || truncate(d.publish_text, 38) || 'Publicación';
+
+  openModal(`
+    <div class="modal-header">
+      <h2>Duplicar el ${escHtml(formatDate(fecha))} en otro día</h2>
+      <button class="modal-close" onclick="closeModal()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="agenda-aviso agenda-aviso--warn" style="margin-bottom:12px">
+        El ${escHtml(formatDate(fecha))} <b>no se toca</b>: queda con todo su historial.
+        En el día destino se crean copias, con los mismos grupos y a la hora que elijas, listas para publicar de nuevo.
+      </div>
+      <div class="form-group">
+        <label for="dup-destino">Duplicarlas el día</label>
+        <div style="display:flex;gap:10px;align-items:flex-end">
+          <div style="flex:1">
+            <input type="date" id="dup-destino" class="form-control" value="${escAttr(diaSiguiente)}" />
+          </div>
+          <div style="width:120px">
+            <label for="dup-hora" style="display:block">Arrancar a las</label>
+            <input type="time" id="dup-hora" class="form-control" value="${escAttr(horaInicio)}" />
+          </div>
+        </div>
+        <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">
+          A esa hora entra la primera publicación del día; las demás conservan los intervalos que tenían
+          respecto de ella, así el bloque no se deforma.
+        </small>
+      </div>
+      <div id="dup-previa"></div>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn btn--secondary" onclick="closeModal()">Cancelar</button>
+      <button type="button" class="btn btn--primary" id="dup-ok" disabled>Duplicando…</button>
+    </div>
+  `);
+  setModalCloseGuard(null);
+
+  const destinoEl = document.getElementById('dup-destino');
+  const horaEl = document.getElementById('dup-hora');
+  const previaEl = document.getElementById('dup-previa');
+  const okEl = document.getElementById('dup-ok');
+
+  const aviso = (texto) => `<div class="agenda-aviso agenda-aviso--warn">${texto}</div>`;
+
+  // Miniatura de la primera imagen. El placeholder va para las publicaciones sin
+  // foto: una fila sin recuadro parece que se olvidó de cargar la imagen.
+  const miniatura = (d) => d.imagen
+    ? `<img src="${escAttr(d.imagen)}" alt="" loading="lazy" style="width:40px;height:40px;object-fit:cover;border-radius:6px;flex:0 0 40px;background:var(--bg)" />`
+    : `<span style="width:40px;height:40px;flex:0 0 40px;border-radius:6px;background:var(--bg);border:1px dashed var(--border);color:var(--text-muted);font-size:.6rem;display:flex;align-items:center;justify-content:center">—</span>`;
+
+  /**
+   * Botón y resumen. Se recalcula en cada cambio de selección, así que el texto
+   * del botón SIEMPRE dice cuántas van: es la última línea de defensa contra
+   * duplicar de más.
+   */
+  const pintarResumen = () => {
+    const todas = plan?.duplicadas || [];
+    const elegidas = todas.filter(d => seleccion.has(d.id));
+    const resumenEl = document.getElementById('dup-resumen');
+    if (!resumenEl) return;
+
+    const todasEl = document.getElementById('dup-todas');
+    if (todasEl) {
+      todasEl.checked = elegidas.length === todas.length && todas.length > 0;
+      todasEl.indeterminate = elegidas.length > 0 && elegidas.length < todas.length;
+    }
+
+    const n = elegidas.length;
+    okEl.disabled = n === 0 || cargando;
+    // El primer clic sobre un día ya duplicado pide confirmación (ver el handler
+    // de `okEl`); el texto del botón tiene que decir cuál de los dos es.
+    if (confirmarRepeticion && plan?.ya_duplicada && n > 0) {
+      okEl.textContent = `Duplicar igual (ya lo hiciste ${plan.ya_duplicada} ${plan.ya_duplicada === 1 ? 'vez' : 'veces'})`;
+      okEl.classList.add('btn--danger');
+      return;
+    }
+    confirmarRepeticion = false;
+    okEl.classList.remove('btn--danger');
+    // "publicación" no es "publicación" + "es": el plural pierde el acento
+    // ("publicaciones"), así que no se puede concatenar.
+    okEl.textContent = n === 0 ? (todas.length ? 'No marcaste ninguna' : 'Nada que duplicar')
+      : n === 1 ? 'Duplicar 1 publicación'
+      : `Duplicar ${n} publicaciones`;
+
+    if (!todas.length) {
+      resumenEl.innerHTML = `<div class="agenda-aviso">No hay publicaciones el ${escHtml(formatDate(fecha))}.</div>`;
+      return;
+    }
+
+    const destinos = elegidas.reduce((t, d) => t + (d.destinos || 0), 0);
+    const publicadas = elegidas.reduce((t, d) => t + (d.publicados || 0), 0);
+    const ocultas = n - elegidas.filter(d => visiblesIds.has(d.id)).length;
+    // Los choques son por publicación: si esa no va, su choque no va con ella.
+    const conflictos = (plan.conflictos || []).filter(c => seleccion.has(c.de_id));
+
+    resumenEl.innerHTML = `
+      <div class="agenda-aviso">
+        ${n === todas.length ? 'Van' : `Van <b>${n}</b> de ${todas.length}`}:
+        ${n === 1 ? 'se crea 1 publicación' : `se crean ${n} publicaciones`} con
+        ${n === 1 ? '1 destino' : `${destinos} destinos`}, todas en 'pendiente' para que el worker las publique.
+        ${publicadas ? `De lo que ya salió el ${escHtml(formatDate(fecha))} no se copia el historial: queda sólo en el día de origen.` : ''}
+      </div>
+      ${ocultas > 0 ? aviso(`Con el filtro de la barra sólo se ven ${n - ocultas} de las marcadas: se van a duplicar también ${ocultas} que están ocultas.`) : ''}
+      ${(plan.avisos || []).map(a => aviso(escHtml(a))).join('')}
+      ${conflictos.length ? aviso(
+        `<b>Choques en el día destino</b>: ${conflictos.slice(0, 4).map(c =>
+          `${escHtml(c.group_name)} a las ${escHtml(c.hora)} está cerca de ${escHtml(c.con)}`).join('; ')}${conflictos.length > 4 ? ` (y ${conflictos.length - 4} más)` : ''}.`
+      ) : ''}
+    `;
+  };
+
+  /** Las filas NO se redibujan al cambiar una selección: se destiñan. Así el
+   *  foco del check y el scroll de la lista se conservan mientras se va marcando,
+   *  que es lo que pasa cuando el día tiene 76 publicaciones. */
+  const marcar = (id, on) => {
+    if (on) seleccion.add(id); else seleccion.delete(id);
+    previaEl.querySelectorAll('[data-dup-fila]').forEach(fila => {
+      if (fila.dataset.dupFila !== id) return;
+      fila.style.opacity = on ? '' : '.45';
+      const chk = fila.querySelector('[data-dup-check]');
+      if (chk) chk.checked = on;
+    });
+    pintarResumen();
+  };
+
+  const marcarTodas = (on) => {
+    seleccion.clear();
+    (plan?.duplicadas || []).forEach(d => { if (on) seleccion.add(d.id); });
+    previaEl.querySelectorAll('[data-dup-fila]').forEach(fila => {
+      fila.style.opacity = on ? '' : '.45';
+      const chk = fila.querySelector('[data-dup-check]');
+      if (chk) chk.checked = on;
+    });
+    pintarResumen();
+  };
+
+  const pintarPrevia = () => {
+    if (cargando) { previaEl.innerHTML = '<div class="agenda-aviso">Calculando…</div>'; okEl.disabled = true; return; }
+    if (!plan) return;
+
+    const duplicadas = plan.duplicadas || [];
+    if (!duplicadas.length) {
+      previaEl.innerHTML = `<div class="agenda-aviso">No hay publicaciones el ${escHtml(formatDate(fecha))}.</div>`;
+      okEl.disabled = true;
+      okEl.textContent = 'Nada que duplicar';
+      return;
+    }
+
+    // Orden de la fila: punto de estado, miniatura, texto y check al final. El
+    // check a la derecha deja la columna de checks en un mismo lugar para el
+    // ojo —y para el clic— aunque las filas mezclen textos de dos líneas— y evita
+    // que el check quede pegado al punto, que es donde el usuario no espera
+    // pulsar.
+    // `a_fecha` se muestra sólo cuando la copia no cae en el día destino (hora de
+    // arranque tarde + bloque largo): si no, el usuario vería una hora que no es
+    // la que pidió sin ninguna pista de por qué.
+    const filas = duplicadas.map(d => `
+      <label class="agenda-destino" data-dup-fila="${escAttr(d.id)}" style="align-items:center;cursor:pointer">
+        <span class="agenda-dia-dot agenda-dia-dot--${escAttr(d.estado)}" title="${escAttr(etiquetaEstado(d.estado))}"></span>
+        ${miniatura(d)}
+        <span style="flex:1;min-width:0;cursor:default;text-align:left;border:0;background:none;padding:0;font:inherit;color:inherit">
+          <div class="agenda-destino-nombre">${escHtml(nombreDe(d))}</div>
+          <div class="agenda-destino-notas">${escHtml(d.de_hora || '—:—')} → <b>${escHtml(d.a_hora || '—:—')}</b>${d.a_fecha && d.a_fecha !== plan.hasta ? ` <span style="color:var(--warning)">del ${escHtml(formatDate(d.a_fecha))}</span>` : ''} · ${escHtml(etiquetaEstado(d.estado))} · ${d.destinos || 0} destino(s)${d.publicados ? `, ${d.publicados} ya publicado(s)` : ''}</div>
+        </span>
+        <input type="checkbox" data-dup-check="${escAttr(d.id)}" checked style="flex:none;margin-top:5px;cursor:pointer" title="Llevar esta al día destino" />
+      </label>`).join('');
+
+    previaEl.innerHTML = `
+      ${plan.ya_duplicada ? `
+        <div class="agenda-aviso agenda-aviso--warn" style="margin-bottom:10px">
+          <b>Ya duplicaste el ${escHtml(formatDate(plan.desde))} al ${escHtml(formatDate(plan.hasta))}
+          ${plan.ya_duplicada === 1 ? 'una vez' : `${plan.ya_duplicada} veces`}.</b>
+          Si volvés a duplicar, esas publicaciones quedan repetidas en el ${escHtml(formatDate(plan.hasta))}.
+        </div>` : ''}
+      <div style="display:flex;align-items:center;gap:10px;margin:2px 0 8px">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:.78rem;font-weight:600">
+          <input type="checkbox" id="dup-todas" checked style="cursor:pointer" />
+          Todas
+        </label>
+        <span style="font-size:.72rem;color:var(--text-muted)">Desmarcá lo que no quieras llevar al otro día</span>
+      </div>
+      <div class="agenda-destinos" style="margin-bottom:12px">${filas}</div>
+      <div id="dup-resumen"></div>
+    `;
+
+    pintarResumen();
+  };
+
+  const pedirPlan = async () => {
+    const hasta = destinoEl.value;
+    if (!hasta || hasta === fecha) {
+      plan = null;
+      previaEl.innerHTML = aviso('Elegí un día destino distinto del de origen.');
+      okEl.disabled = true;
+      okEl.textContent = 'Duplicando…';
+      return;
+    }
+    cargando = true;
+    pintarPrevia();
+    try {
+      plan = await api.previewDuplicateAgendaDay(fecha, hasta, horaEl.value);
+      confirmarRepeticion = false;
+      // Viene todo marcado: el botón dice "Duplicar todo el día" y desmarcar es
+      // la excepción, no al revés.
+      seleccion.clear();
+      (plan.duplicadas || []).forEach(d => seleccion.add(d.id));
+      cargando = false;
+      pintarPrevia();
+    } catch (err) {
+      cargando = false;
+      plan = null;
+      previaEl.innerHTML = aviso(`No se pudo calcular la duplicación: ${escHtml(err.message)}`);
+      okEl.disabled = true;
+    }
+  };
+
+  destinoEl.addEventListener('change', pedirPlan);
+  // Cambiar la hora de arranque recalcula el plan entero: los horarios de todas las
+  // filas se mueven, así que mostrar los viejos sería mostrar una preview que no
+  // es la que se va a aplicar.
+  horaEl.addEventListener('change', pedirPlan);
+
+  // Un solo listener delegado para toda la lista, y puesto UNA vez: la lista se
+  // redibuja cada vez que cambia el día destino, y atar el listener al render
+  // dejaría un handler por cada cambio de fecha, con lo que un solo click
+  // empezaría a contar doble.
+  previaEl.addEventListener('change', e => {
+    const chk = e.target;
+    if (!(chk instanceof HTMLInputElement) || chk.type !== 'checkbox') return;
+    if (chk.id === 'dup-todas') return marcarTodas(chk.checked);
+    const fila = chk.closest('[data-dup-fila]');
+    if (fila) marcar(fila.dataset.dupFila, chk.checked);
+  });
+
+  // El error de carga de una imagen no burbujea pero sí se captura, así que el
+  // listener va en fase de captura. Sin esto, una miniatura que ya no está en el
+  // disco muestra el ícono de imagen rota en medio de la lista.
+  previaEl.addEventListener('error', e => {
+    const img = e.target;
+    if (!img || img.tagName !== 'IMG' || !img.closest('[data-dup-fila]')) return;
+    const vacio = document.createElement('span');
+    vacio.style.cssText = 'width:40px;height:40px;flex:0 0 40px;border-radius:6px;background:var(--bg);border:1px dashed var(--border);color:var(--text-muted);font-size:.6rem;display:flex;align-items:center;justify-content:center';
+    vacio.textContent = '—';
+    img.replaceWith(vacio);
+  }, true);
+
+  okEl.addEventListener('click', async () => {
+    const hasta = destinoEl.value;
+    const elegidas = (plan?.duplicadas || []).filter(d => seleccion.has(d.id)).map(d => d.id);
+    if (!elegidas.length) return;
+
+    // Si el día destino ya tiene copias de este día, el botón pide confirmación en
+    // vez de duplicar y ya está. El caso real: la primera ejecución tarda unos
+    // segundos, la respuesta no llega a tiempo, el usuario aprieta otra vez y el
+    // día queda con cada publicación repetida. Un clic más, dicho a propósito,
+    // es la diferencia.
+    if (plan?.ya_duplicada && !confirmarRepeticion) {
+      confirmarRepeticion = true;
+      okEl.textContent = plan.ya_duplicada === 1
+        ? 'Duplicar igual (ya lo hiciste 1 vez)'
+        : `Duplicar igual (ya lo hiciste ${plan.ya_duplicada} veces)`;
+      okEl.classList.add('btn--danger');
+      return;
+    }
+
+    okEl.disabled = true;
+    okEl.textContent = 'Duplicando…';
+    try {
+      const r = await api.duplicateAgendaDay(fecha, hasta, elegidas, horaEl.value);
+      await cargar();
+      mostrarListo(r, hasta);
+    } catch (err) {
+      showToast(err.message, 'error');
+      okEl.disabled = false;
+      pintarResumen();
+    }
+  });
+
+  /**
+   * Estado de éxito. No cierra el modal: deja el "Deshacer" a mano, que es el
+   * punto. El día de origen nunca se tocó, así que no hay nada que restaurar
+   * allá: deshacer sólo borra las copias.
+   */
+  const mostrarListo = (r, hasta) => {
+    const n = r.duplicadas?.length || 0;
+    const destinos = (r.duplicadas || []).reduce((t, d) => t + (d.destinos || 0), 0);
+    openModal(`
+      <div class="modal-header">
+        <h2>${n} ${n === 1 ? 'publicación duplicada' : 'publicaciones duplicadas'} en ${escHtml(formatDate(hasta))}</h2>
+        <button class="modal-close" onclick="closeModal()">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:.9rem;color:var(--text-secondary)">El ${escHtml(formatDate(fecha))} quedó igual: ${n === 1 ? 'su publicación sigue' : 'sus publicaciones siguen'} con su historial. En ${escHtml(formatDate(hasta))} hay ${n} ${n === 1 ? 'copia' : 'copias'} con ${n === 1 ? '1 destino' : `${destinos} destinos`} en pendiente.</p>
+        ${(r.conflictos || []).length ? aviso(`Quedan ${r.conflictos.length} choque(s) en el día destino: dos publicaciones cerca en el mismo grupo.`) : ''}
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn--secondary" id="dup-deshacer">Deshacer</button>
+        <button type="button" class="btn btn--primary" onclick="closeModal()">Cerrar</button>
+      </div>
+    `);
+    setModalCloseGuard(null);
+
+    const deshacerEl = document.getElementById('dup-deshacer');
+    if (!deshacerEl) return;
+    deshacerEl.addEventListener('click', async () => {
+      deshacerEl.disabled = true;
+      deshacerEl.textContent = 'Deshaciendo…';
+      try {
+        const clones = (r.duplicadas || []).map(d => d.clon_id).filter(Boolean);
+        const res = await api.undoDuplicateAgendaDay(clones);
+        await cargar();
+        const extra = res.omitidas?.length
+          ? ` ${res.omitidas.length} no se borraron porque ya se habían publicado.`
+          : '';
+        showToast(`${res.borradas?.length || 0} copia(s) borradas de ${formatDate(hasta)}${extra}`, 'success');
+        closeModal(true);
+      } catch (err) {
+        showToast(err.message, 'error');
+        deshacerEl.disabled = false;
+        deshacerEl.textContent = 'Deshacer';
+      }
+    });
+  };
+
+  pedirPlan();
+};
+
 
 window._agendaReprogramar = function (id, actual) {
   closeModal(true);

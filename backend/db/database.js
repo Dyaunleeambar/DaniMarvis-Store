@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'crypto';
 import { computeWarrantyEndDate } from '../lib/warranty.js';
+import { transaccion } from '../lib/transaccion.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -37,10 +38,14 @@ class Statement {
     this.#stmt.step();
     const modified = db.getRowsModified();
     this.#stmt.free();
-    saveDB();
+    // Dentro de una transacción NO se guarda: db.export() cerraría la transacción
+    // con un rollback. Lo resuelve lib/transaccion.js, que postpone el guardado.
+    if (!db.enTransaccion) saveDB();
     return modified;
   }
 }
+
+export { transaccion };
 
 export function saveDB() {
   try {
@@ -71,6 +76,12 @@ export async function initDB() {
   // Wrap db.prepare before schema/seed so Statement.all() is available
   const orig = db.prepare.bind(db);
   db.prepare = (sql) => new Statement(orig(sql));
+
+  // Puente con lib/transaccion.js: la transacción pone `enTransaccion` y al final
+  // llama `guardar()`. Estado visible desde el objeto db, no un módulo aparte, para
+  // que el shim de los tests pueda usar la misma función de transacción.
+  db.enTransaccion = false;
+  db.guardar = saveDB;
 
   createSchema();
   seedIfEmpty();
@@ -291,6 +302,16 @@ function createSchema() {
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (publication_id) REFERENCES publications(id)
+    );
+    CREATE TABLE IF NOT EXISTS publication_clones (
+      id TEXT PRIMARY KEY,
+      origen_id TEXT,
+      clon_id TEXT,
+      desde TEXT,
+      hasta TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (origen_id) REFERENCES publications(id),
+      FOREIGN KEY (clon_id) REFERENCES publications(id)
     );
   `);
   seedCategories();
@@ -830,6 +851,8 @@ function migrateIndexes() {
     CREATE INDEX IF NOT EXISTS idx_sales_sale_date ON sales(sale_date);
     CREATE INDEX IF NOT EXISTS idx_sales_commission_paid ON sales(commission_paid);
     CREATE INDEX IF NOT EXISTS idx_publication_queue_publication_id ON publication_queue(publication_id);
+    CREATE INDEX IF NOT EXISTS idx_publication_clones_clon_id ON publication_clones(clon_id);
+    CREATE INDEX IF NOT EXISTS idx_publication_clones_origen_id ON publication_clones(origen_id);
     CREATE INDEX IF NOT EXISTS idx_page_schedule_log_routine ON page_schedule_log(routine_id);
   `);
 }

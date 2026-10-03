@@ -124,6 +124,23 @@ export const api = {
   rescheduleAgendaEvent: (id, data) => request('PATCH', `/agenda/${id}`, data),
   retryAgendaEvent: (id) => request('POST', `/agenda/${id}/retry`),
 
+  // Duplicar todas las publicaciones de un día en otro. El día de origen queda
+  // intacto: la copia es una publicación nueva con sus destinos en 'pending'.
+  // El GET es la vista previa: el backend calcula el plan con la misma función
+  // que después aplica, así que lo que se muestra antes de confirmar no puede
+  // diferir de lo que pasa.
+  //
+  // `horaInicio` corre el día como bloque desde esa hora ("HH:MM"): la primera
+  // publicación cae ahí y las demás conservan su intervalo. Sin valor, cada una
+  // conserva su propia hora.
+  previewDuplicateAgendaDay: (desde, hasta, horaInicio) =>
+    request('GET', `/agenda/duplicar-dia?desde=${encodeURIComponent(desde)}&hasta=${encodeURIComponent(hasta)}` +
+      (horaInicio ? `&hora_inicio=${encodeURIComponent(horaInicio)}` : '')),
+  duplicateAgendaDay: (desde, hasta, ids, horaInicio) =>
+    request('POST', '/agenda/duplicar-dia',
+      { desde, hasta, ...(ids ? { ids } : {}), ...(horaInicio ? { hora_inicio: horaInicio } : {}) }),
+  undoDuplicateAgendaDay: (clones) => request('POST', '/agenda/duplicar-dia/deshacer', { clones }),
+
   // AI
   generateDescription: (data) => request('POST', '/generate-description', data),
   generateImage: (data) => request('POST', '/generate-image', data),

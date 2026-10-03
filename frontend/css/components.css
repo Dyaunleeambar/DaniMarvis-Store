@@ -884,6 +884,43 @@ tr:hover td { background: rgba(201,132,122,.03); }
 }
 .agenda-day--out { background: var(--bg); }
 .agenda-day--hoy { background: #fffaf7; }
+
+/* "⋯" para mover el día entero. Va a la IZQUIERDA del "+" (right: 28px) porque
+   el "+" ya está en la esquina y es el control más usado: no se lo pisa. Misma
+   política que el "+" — sólo aparece al pasar el mouse, siempre en el día de
+   hoy, y en pantallas sin hover queda atenuado pero visible para poder
+   tocarlo. No es un tirador de arrastre: un ícono de "⋯" es un menú, y una
+   acción masiva necesita confirmar y deshacer, cosa que el arrastre no da. */
+.agenda-daymenu {
+  position: absolute;
+  top: 4px;
+  right: 28px;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .12s, color .12s, border-color .12s;
+}
+.agenda-day:hover .agenda-daymenu { opacity: 1; }
+.agenda-daymenu:hover {
+  opacity: 1;
+  color: var(--primary);
+  border-color: var(--border);
+}
+.agenda-day--hoy .agenda-daymenu { opacity: 1; }
+.agenda-weekhead .agenda-daymenu { top: 2px; right: 21px; width: 17px; height: 17px; }
+.agenda-weekhead:hover .agenda-daymenu { opacity: 1; }
+@media (hover: none) {
+  .agenda-daymenu { opacity: .5; }
+}
 .agenda-day--click { cursor: pointer; }
 .agenda-day--click:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 .agenda-daynum {

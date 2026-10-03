@@ -1,9 +1,11 @@
 import { Router } from 'express';
 import { createRequire } from 'module';
 import { v4 as uuid } from 'uuid';
-import { getDB } from '../db/database.js';
+import { getDB, transaccion } from '../db/database.js';
 import { startGroupPublish, agendaSchedulerState, classifyFailure, CAUSAS } from '../lib/groupPublisher.js';
 import { registrarPlan } from '../lib/plans.js';
+import { planDuplicacionDia, duplicarPublicacion, acotarPlan } from '../lib/duplicarDia.js';
+import { aggregateEstado } from '../lib/agendaEstado.js';
 
 // La normalización de nombres de grupo vive en el compositor (es la que hace
 // que el cursor encuentre el grupo aunque cambie de emoji o acento). Se importa
@@ -37,57 +39,6 @@ function parseImages(raw) {
     const v = JSON.parse(raw || '[]');
     return Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x.trim()).slice(0, MAX_IMAGES) : [];
   } catch { return []; }
-}
-
-/**
- * Estado agregado de un evento, a partir de sus destinos.
- *
- * Se calcula acá y no en la BD porque depende de `now`: "Programada" y
- * "Vencida" son el mismo conjunto de filasPending en momentos distintos.
- */
-function aggregateEstado(destinos, nowMs) {
-  const st = destinos.map(d => d.status);
-  const has = s => st.includes(s);
-
-  const pendientes = destinos.filter(d => d.status === 'pending');
-  const publicadas = destinos.filter(d => d.status === 'published');
-  const errores = destinos.filter(d => d.status === 'error');
-  const canceladas = destinos.filter(d => d.status === 'cancelled');
-  const omitidas = destinos.filter(d => d.status === 'omitted');
-  const archivadas = destinos.filter(d => d.status === 'archived');
-
-  if (destinos.length === 0) return { estado: 'material', etiqueta: 'Material' };
-
-  // Una publicación que se desarmó deja de contar, pero se muestra como tal.
-  if (pendientes.length === 0 && publicadas.length === 0) {
-    if (omitidas.length) return { estado: 'omitida', etiqueta: 'Omitida' };
-    if (archivadas.length) return { estado: 'cancelada', etiqueta: 'Histórico' };
-    if (canceladas.length) return { estado: 'cancelada', etiqueta: 'Cancelada' };
-  }
-
-  // Publicada = no queda nada vivo por publicar. OJO: se compara contra lo que
-  // falta por salir, NO con `destinos.length`: cuando una publicación se
-  // reprogramó, quedan filas 'archived' (el historial) y puede haber
-  // 'cancelled' (desarmadas o descartadas), y con el conteo completo una
-  // publicación que ya salió nunca llegaba a "Publicada" y se caía en
-  // "Material".
-  if (publicadas.length && !pendientes.length && !errores.length) {
-    return { estado: 'publicada', etiqueta: 'Publicada' };
-  }
-  if (errores.length && !pendientes.length) return { estado: 'error', etiqueta: 'Error' };
-
-  // Quedan pendientes: vencida o programada según la hora.
-  if (publicadas.length && pendientes.length) {
-    const vencidas = pendientes.some(d => d._ms !== null && d._ms <= nowMs);
-    return { estado: vencidas ? 'parcial_vencida' : 'parcial', etiqueta: vencidas ? 'Parcial · vencida' : 'Parcial' };
-  }
-  if (pendientes.length) {
-    const vencidas = pendientes.filter(d => d._ms !== null && d._ms <= nowMs).length;
-    if (vencidas && vencidas === pendientes.length) return { estado: 'vencida', etiqueta: 'Vencida' };
-    if (vencidas) return { estado: 'parcial_vencida', etiqueta: 'Parcial · vencida' };
-    return { estado: 'programada', etiqueta: 'Programada' };
-  }
-  return { estado: 'material', etiqueta: 'Material' };
 }
 
 /**
@@ -424,6 +375,184 @@ router.get('/rotacion-grupos', (req, res) => {
   res.json({ fecha, total: grupos.length, inicio, usados: usados.length, grupos: salida });
 });
 
+// ══════════════════════════════ duplicar un día entero ════════════════════
+// El día de origen NO se toca: se crean copias de sus publicaciones en el día
+// destino. La lógica (plan, copia y vínculos) vive en lib/duplicarDia.js; acá
+// sólo están los tres endpoints. Ver el comentario de ese archivo para por qué
+// duplicar y no mover.
+
+/**
+ * Reprogramar UNA publicación a `iso`, dejando coherentes el calendario y los
+ * destinos: se actualiza publication_date (la fecha del evento) y el
+ * scheduled_at de cada fila pendiente, para que el calendario y el disparador
+ * no se contradigan.
+ *
+ * Lo que ya salió pasa a 'archived' y se vuelve a comprometer la publicación en
+ * el horario nuevo: reprogramar algo ya publicado es una planificación NUEVA, y
+ * el evento tiene que volver a "Programada" sin borrar el historial.
+ *
+ * OJO: esto reescribe el horario de la publicación, así que NO puede ser la
+ * operación de "pasar un día a otro" (eso es /duplicar-dia, que clona y deja el
+ * origen intacto justamente para no comerse el historial del día anterior).
+ *
+ * "Distribuir en el día" tampoco pasa por acá: crea una publicación clonada por
+ * franja (POST /api/publications/:id/planificar), así que cada distribución
+ * queda visible como un evento propio del calendario.
+ */
+function aplicarMovimiento(db, pubId, iso, origen = 'reprogramar') {
+  registrarPlan(db, pubId, iso, origen);
+  db.prepare("UPDATE publications SET publication_date = ?, updated_at = datetime('now') WHERE id = ?")
+    .run(iso, pubId);
+  db.prepare(`
+    UPDATE publication_queue
+    SET scheduled_at = ?, updated_at = datetime('now')
+    WHERE publication_id = ? AND status = 'pending'
+  `).run(iso, pubId);
+
+  const publicados = db.prepare(`
+    SELECT group_name, group_url, variant_index, variant_text, images
+    FROM publication_queue
+    WHERE publication_id = ? AND status = 'published'
+  `).all(pubId);
+
+  if (publicados.length) {
+    db.prepare(`
+      UPDATE publication_queue
+      SET status = 'archived', updated_at = datetime('now')
+      WHERE publication_id = ? AND status = 'published'
+    `).run(pubId);
+    for (const g of publicados) {
+      // La sentencia se prepara en cada vuelta: Statement.run() libera el
+      // statement al terminar, así que reutilizar una fallaría.
+      db.prepare(`
+        INSERT INTO publication_queue (id, publication_id, group_name, group_url,
+          variant_index, variant_text, scheduled_at, images)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(uuid(), pubId, g.group_name, g.group_url,
+        g.variant_index, g.variant_text || '', iso, g.images || '[]');
+    }
+  }
+  return publicados.length;
+}
+
+function leerFechas(req, res) {
+  const desde = typeof req.body?.desde === 'string' ? req.body.desde : req.query.desde;
+  const hasta = typeof req.body?.hasta === 'string' ? req.body.hasta : req.query.hasta;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(desde || '')) || !/^\d{4}-\d{2}-\d{2}$/.test(String(hasta || ''))) {
+    res.status(400).json({ error: 'Fechas inválidas (YYYY-MM-DD)' });
+    return null;
+  }
+  if (desde === hasta) {
+    res.status(400).json({ error: 'El día destino tiene que ser distinto del día de origen' });
+    return null;
+  }
+  // Hora de arranque del bloque, opcional. Viene en el query del GET (vista previa)
+  // y en el body del POST, y tiene que ser el MISMO valor en los dos: si el plan
+  // se calcula a una hora y se aplica a otra, la vista previa miente.
+  const hora = typeof req.body?.hora_inicio === 'string' ? req.body.hora_inicio : req.query.hora_inicio;
+  const hora_inicio = /^\d{1,2}:\d{2}$/.test(String(hora || '')) ? String(hora) : null;
+  return { desde, hasta, hora_inicio };
+}
+
+/** Vista previa: lo mismo que se va a aplicar, sin escribir nada. */
+router.get('/duplicar-dia', (req, res) => {
+  const args = leerFechas(req, res);
+  if (!args) return;
+  res.json(planDuplicacionDia(getDB(), args.desde, args.hasta, args.hora_inicio));
+});
+
+/**
+ * Aplicar la duplicación. Es un todo o nada: o se copia el día entero, o no se
+ * tocó nada.
+ *
+ * `ids` acota qué publicaciones van: la vista previa las tilda una por una y manda
+ * sólo las marcadas. Sin `ids` se copia el día completo (lo que hace cualquier
+ * cliente que no sepa de la selección).
+ *
+ * `hora_inicio` corre el día como bloque desde esa hora; sin ella cada
+ * publicación conserva la suya. El plan se vuelve a calcular acá y recién después
+ * se acota, así que la selección nunca copia algo que el plan no pensaba copiar.
+ *
+ * Va en transaccion() y no en BEGIN/COMMIT a mano por el motivo que explica
+ * database.js: guardar el archivo cierra la transacción con rollback.
+ */
+router.post('/duplicar-dia', (req, res) => {
+  const db = getDB();
+  const args = leerFechas(req, res);
+  if (!args) return;
+
+  const plan = acotarPlan(planDuplicacionDia(db, args.desde, args.hasta, args.hora_inicio), req.body?.ids);
+  if (!plan.duplicadas.length) {
+    return res.json({ ...plan, aplicado: true, duplicadas: [] });
+  }
+
+  try {
+    transaccion(db, () => {
+      for (const d of plan.duplicadas) {
+        d.clon_id = duplicarPublicacion(db, d.id, d.a_iso, args.desde, args.hasta);
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'No se pudo duplicar el día: ' + err.message });
+  }
+
+  res.json({ ...plan, aplicado: true });
+});
+
+/**
+ * Deshacer una duplicación.
+ *
+ * Recibe los `clon_id` exactos que devolvió el POST y borra esas copias con todo
+ * lo suyo. Es la inversa exacta: el día de origen no se tocó, así que no hay
+ * nada que restaurar.
+ *
+ * Lo que NO se borra es una copia que ya publicó algo: sus destinos 'published'
+ * son historial real de Facebook, y borrar la copia sería falsearlo. Queda en
+ * `omitidas` con el motivo, que la vista muestra tal cual.
+ *
+ * Va en transaccion(): si una de las copias se rebota, no queda el día a medias
+ * con la mitad de las copias borradas y la otra mitad viva.
+ */
+router.post('/duplicar-dia/deshacer', (req, res) => {
+  const db = getDB();
+  const clones = Array.isArray(req.body?.clones)
+    ? req.body.clones.filter(c => typeof c === 'string' && c)
+    : [];
+  if (!clones.length) return res.status(400).json({ error: 'No hay copias para deshacer' });
+
+  const borradas = [];
+  const omitidas = [];
+  try {
+    transaccion(db, () => {
+      for (const clonId of clones) {
+        const vinculo = db.prepare('SELECT id FROM publication_clones WHERE clon_id = ?').get(clonId);
+        if (!vinculo) {
+          omitidas.push({ id: clonId, motivo: 'no es una copia de una duplicación' });
+          continue;
+        }
+        const publicadas = db.prepare(`
+          SELECT COUNT(*) AS n FROM publication_queue
+          WHERE publication_id = ? AND status = 'published'
+        `).get(clonId);
+        if (publicadas.n) {
+          omitidas.push({ id: clonId, motivo: 'ya salió publicada en Facebook' });
+          continue;
+        }
+        db.prepare('DELETE FROM publication_queue WHERE publication_id = ?').run(clonId);
+        db.prepare('DELETE FROM publication_plans WHERE publication_id = ?').run(clonId);
+        db.prepare('DELETE FROM publication_clones WHERE clon_id = ?').run(clonId);
+        db.prepare('DELETE FROM publications WHERE id = ?').run(clonId);
+        borradas.push({ id: clonId });
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'No se pudo deshacer: ' + err.message });
+  }
+
+  res.json({ ok: true, borradas, omitidas });
+});
+
+
 /**
  * Publicar un evento ahora, saltándose la espera.
  *
@@ -460,10 +589,14 @@ router.post('/:id/run', (req, res) => {
 });
 
 /**
- * Reprogramar un evento: mueve la fecha del evento y de todos sus destinos
+ * Reprogramar UN evento: mueve la fecha del evento y de todos sus destinos
  * pendientes a la vez. Se actualiza publication_date (que es la fecha del
  * evento) y el scheduled_at de cada fila pendiente, para que el calendario y el
  * disparador no se contradigan.
+ *
+ * OJO: reprogramar UNA publicación reescribe su historial (lo publicado pasa a
+ * 'archived' y se vuelve a agendar). Para llevar un día entero a otro día sin
+ * perder el historial del de origen está /duplicar-dia, que clona.
  */
 router.patch('/:id', (req, res) => {
   const db = getDB();
@@ -476,52 +609,7 @@ router.patch('/:id', (req, res) => {
   if (scheduled_at !== undefined) {
     const ms = new Date(scheduled_at).getTime();
     if (Number.isNaN(ms)) return res.status(400).json({ error: 'Fecha inválida' });
-    const iso = new Date(ms).toISOString();
-    // El horario anterior queda registrado antes de sobrescribirlo: una
-    // publicación sólo puede estar en un punto del calendario a la vez, así
-    // que si no se guarda acá el usuario lo pierde.
-    registrarPlan(db, pubId, iso, 'reprogramar');
-    db.prepare("UPDATE publications SET publication_date = ?, updated_at = datetime('now') WHERE id = ?")
-      .run(iso, pubId);
-    // Solo los que siguen pendientes: uno ya publicado no se toca (el
-    // published_at es historial real y no se reescribe).
-    db.prepare(`
-      UPDATE publication_queue
-      SET scheduled_at = ?, updated_at = datetime('now')
-      WHERE publication_id = ? AND status = 'pending'
-    `).run(iso, pubId);
-
-    // Reprogramar algo que ya se publicó lo convierte en UNA NUEVA
-    // planificación: lo publicado pasa a `archived` (se conserva como
-    // histórico en el detalle, con su hora real) y se vuelve a comprometer la
-    // publicación en la fecha nueva para esos mismos grupos. Así el evento
-    // vuelve a "Programada" (azul) sin borrar el historial anterior.
-    //
-    // "Distribuir en el día" NO pasa por acá: crea una publicación clonada por
-    // franja (POST /api/publications/:id/planificar), así que cada distribución
-    // queda visible como un evento propio del calendario.
-    const publicados = db.prepare(`
-      SELECT group_name, group_url, variant_index, variant_text, images
-      FROM publication_queue
-      WHERE publication_id = ? AND status = 'published'
-    `).all(pubId);
-    if (publicados.length) {
-      db.prepare(`
-        UPDATE publication_queue
-        SET status = 'archived', updated_at = datetime('now')
-        WHERE publication_id = ? AND status = 'published'
-      `).run(pubId);
-      for (const g of publicados) {
-        // La sentencia se prepara en cada vuelta: Statement.run() libera el
-        // statement al terminar, así que reutilizar uno fallaría.
-        db.prepare(`
-          INSERT INTO publication_queue (id, publication_id, group_name, group_url,
-            variant_index, variant_text, scheduled_at, images)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(uuid(), pubId, g.group_name, g.group_url,
-          g.variant_index, g.variant_text || '', iso, g.images || '[]');
-      }
-    }
+    aplicarMovimiento(db, pubId, new Date(ms).toISOString(), 'reprogramar');
   }
 
   if (status !== undefined) {
