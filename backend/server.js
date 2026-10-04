@@ -27,6 +27,7 @@ import warrantyRulesRouter from './routes/warrantyRules.js';
 import { generateCatalogFile } from './lib/catalogGenerator.js';
 import { ensureWebp } from './lib/imageUtils.js';
 import { getWarrantyReminders } from './lib/warranty.js';
+import { mergePublishConfig, MASCARA, pareceSecretoValido } from './lib/settingsMerge.js';
 import { startGroupPublishScheduler, rescheduleGroupPublish, groupPublishSchedulerState, startAgendaScheduler, rescheduleAgenda, agendaSchedulerState } from './lib/groupPublisher.js';
 import { createBackup, scheduleBackups } from './scripts/backup.js';
 
@@ -152,8 +153,8 @@ app.get('/api/settings', (req, res) => {
   }
   let ai = pc.ai || {};
   let facebook = pc.facebook || {};
-  ai = { ...ai, api_key: ai.api_key ? '••••••••' : '', _api_key_set: !!ai.api_key };
-  facebook = { ...facebook, access_token: facebook.access_token ? '••••••••' : '', _access_token_set: !!facebook.access_token };
+  ai = { ...ai, api_key: ai.api_key ? MASCARA : '', _api_key_set: !!ai.api_key };
+  facebook = { ...facebook, access_token: facebook.access_token ? MASCARA : '', _access_token_set: !!facebook.access_token };
   pc.ai = ai;
   pc.facebook = facebook;
   settings.publish_config = pc;
@@ -181,18 +182,10 @@ app.put('/api/settings', (req, res) => {
     if (typeof publish_config === 'object' && publish_config !== null) {
       let existing = {};
       try { existing = JSON.parse(db.prepare('SELECT publish_config FROM settings WHERE id = 1').get().publish_config || '{}'); } catch {}
-      // El frontend nunca envía la key real (llega enmascarada). Vacío = conservar
-      // el valor vigente; solo se borra con los flags explícitos remove_ai_key /
-      // remove_fb_token.
-      const ai = { ...(existing.ai || {}), ...(publish_config.ai || {}) };
-      const fb = { ...(existing.facebook || {}), ...(publish_config.facebook || {}) };
-      if (publish_config.ai && publish_config.ai.remove_ai_key) delete ai.api_key;
-      else if (!ai.api_key) ai.api_key = (existing.ai || {}).api_key;
-      if (publish_config.facebook && publish_config.facebook.remove_fb_token) delete fb.access_token;
-      else if (!fb.access_token) fb.access_token = (existing.facebook || {}).access_token;
-      delete ai.remove_ai_key;
-      delete fb.remove_fb_token;
-      merged = { ...existing, ...publish_config, ai, facebook: fb };
+      // Toda la regla de "esto se conserva, esto se pisa" vive en la lib, que
+      // es testeable: el 2026-10-03 una API key quedó guardada como la máscara
+      // que el propio GET devuelve, y el cliente ni cuenta se enteró.
+      merged = mergePublishConfig(existing, publish_config);
     }
     db.prepare("UPDATE settings SET publish_config = ?, updated_at = datetime('now') WHERE id = 1")
       .run(JSON.stringify(merged));
@@ -222,8 +215,8 @@ app.put('/api/settings', (req, res) => {
   }
   let ai = pc.ai || {};
   let facebook = pc.facebook || {};
-  ai = { ...ai, api_key: ai.api_key ? '••••••••' : '', _api_key_set: !!ai.api_key };
-  facebook = { ...facebook, access_token: facebook.access_token ? '••••••••' : '', _access_token_set: !!facebook.access_token };
+  ai = { ...ai, api_key: ai.api_key ? MASCARA : '', _api_key_set: !!ai.api_key };
+  facebook = { ...facebook, access_token: facebook.access_token ? MASCARA : '', _access_token_set: !!facebook.access_token };
   pc.ai = ai;
   pc.facebook = facebook;
   settings.publish_config = pc;
@@ -252,6 +245,17 @@ app.post('/api/generate-description', async (req, res) => {
     warranty ? `Garantía: ${warranty}` : '',
     existingDesc ? `Descripción actual: ${existingDesc}` : ''
   ].filter(Boolean).join('\n');
+
+  if (!pareceSecretoValido(ai.api_key)) {
+    // Sin esta validación, una clave guardada como la máscara (o con cualquier
+    // carácter no-ASCII) llega tal cual a la cabecera Authorization y Node
+    // explota con `Cannot convert argument to a ByteString because the character
+    // at index 7 has a value of 8226`: un 500 que no dice ni qué ni por qué.
+    return res.status(400).json({
+      error: 'La API key guardada no es válida (llegó enmascarada o tiene caracteres raros). '
+        + 'Volvé a configurarla en Ajustes > Publicaciones.'
+    });
+  }
 
   try {
     const apiUrl = ai.api_url.replace(/\/+$/, '');
@@ -471,6 +475,19 @@ async function start() {
   // se respaldaba en este punto, así que un server que se dejaba encendido
   // semanas no generaba ni un respaldo nuevo.
   scheduleBackups();
+
+  // Chequeo de secretos al arrancar. Una API key enmascarada en la base no
+  // rompe nada al publicar, pero deja la generación de descripciones caída sin
+  // que nadie se entere hasta que alguien la usa: en el 2026-10-03 pasó eso y
+  // el síntoma fue un error de ByteString sin explicación. Better safe.
+  try {
+    const pc = JSON.parse(getDB().prepare('SELECT publish_config FROM settings WHERE id = 1').get().publish_config || '{}');
+    for (const [campo, valor] of [['API key de IA', pc.ai?.api_key], ['token de Facebook', pc.facebook?.access_token]]) {
+      if (valor && !pareceSecretoValido(valor)) {
+        console.warn(`[Server] AVISO: la ${campo} guardada no es válida (llegó enmascarada). Reconfigurala en Ajustes.`);
+      }
+    }
+  } catch { /* sin settings: no hay nada que avisar */ }
 
   app.listen(PORT, () => {
     console.log(`[Server] Panel DaniMarvis corriendo en http://localhost:${PORT}`);
