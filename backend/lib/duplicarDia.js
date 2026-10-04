@@ -362,3 +362,76 @@ export function acotarPlan(plan, ids) {
     fuera: [...elegidas].filter(id => !enElPlan.has(id)),
   };
 }
+/**
+ * Deshacer una duplicación, con la regla por DESTINO y no por copia.
+ *
+ * Recibe los `clon_id` exactos que devolvió la duplicación y borra esas copias
+ * con todo lo suyo. El día de origen no se tocó, así que no hay nada que
+ * restaurar: es la inversa exacta.
+ *
+ * Lo que NO se borra es un destino 'published': es historial real de Facebook, y
+ * borrarlo sería falsearlo. La regla es por destino porque la anterior era por
+ * copia, y eso la volvía inútil: si una copia tenía UN destino publicado, no
+ * borraba NADA de esa copia, ni los destinos que nunca salieron. Con el día
+ * duplicado del 2026-10-03 (152 vínculos, 48 copias con destinos) el deshacer
+ * limpiaba 104 vínculos vacíos y dejaba vivos los 137 destinos pendientes: la
+ * operación no deshacía lo que el usuario le pidió deshacer.
+ *
+ * Por cada copia:
+ *   - borra los destinos que nunca publicaron (pending/error/cancelled/omitted/
+ *     prepared);
+ *   - conserva los 'published' y, con ellos, la publicación y el vínculo, para
+ *     que el historial siga siendo real y la fila siga enlazada a su día;
+ *   - si no queda ningún 'published', borra también plan, vínculo y publicación,
+ *     que es la copia completa.
+ *
+ * Idempotente por clon: un clon que ya no está en `publication_clones` se
+ * reporta como `omitidas`, no es un error.
+ */
+export function deshacerDuplicacion(db, clones) {
+  const ESTADOS_NO_PUBLICADOS = "('pending','error','cancelled','omitted','prepared')";
+  const borradas = [];
+  const omitidas = [];
+  const resumen = { destinos_borrados: 0, publicados_conservados: 0, copias_completas: 0 };
+
+  for (const clonId of clones) {
+    const vinculo = db.prepare('SELECT id FROM publication_clones WHERE clon_id = ?').get(clonId);
+    if (!vinculo) {
+      omitidas.push({ id: clonId, motivo: 'no es una copia de una duplicación' });
+      continue;
+    }
+    const porEstado = db.prepare(
+      "SELECT status, COUNT(*) AS n FROM publication_queue WHERE publication_id = ? GROUP BY status"
+    ).all(clonId);
+    const publicadas = Number(porEstado.find(r => r.status === 'published')?.n) || 0;
+    const sinPublicar = porEstado
+      .filter(r => r.status !== 'published')
+      .reduce((acc, r) => acc + Number(r.n), 0);
+
+    if (sinPublicar) {
+      db.prepare(`DELETE FROM publication_queue WHERE publication_id = ? AND status IN ${ESTADOS_NO_PUBLICADOS}`)
+        .run(clonId);
+      resumen.destinos_borrados += sinPublicar;
+    }
+
+    if (publicadas) {
+      omitidas.push({
+        id: clonId,
+        motivo: `${publicadas} destino(s) ya publicados en Facebook: se conservan como historial`,
+        publicados: publicadas,
+        destinos_borrados: sinPublicar,
+      });
+      resumen.publicados_conservados += publicadas;
+      continue;
+    }
+
+    // No quedó historial: ahora sí es una copia completa y se borra entera.
+    db.prepare('DELETE FROM publication_plans WHERE publication_id = ?').run(clonId);
+    db.prepare('DELETE FROM publication_clones WHERE clon_id = ?').run(clonId);
+    db.prepare('DELETE FROM publications WHERE id = ?').run(clonId);
+    borradas.push({ id: clonId, destinos: sinPublicar, completa: true });
+    resumen.copias_completas += 1;
+  }
+
+  return { borradas, omitidas, resumen };
+}

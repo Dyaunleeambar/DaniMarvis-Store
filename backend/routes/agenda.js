@@ -4,7 +4,7 @@ import { v4 as uuid } from 'uuid';
 import { getDB, transaccion } from '../db/database.js';
 import { startGroupPublish, agendaSchedulerState, classifyFailure, CAUSAS } from '../lib/groupPublisher.js';
 import { registrarPlan } from '../lib/plans.js';
-import { planDuplicacionDia, duplicarPublicacion, acotarPlan } from '../lib/duplicarDia.js';
+import { planDuplicacionDia, duplicarPublicacion, acotarPlan, deshacerDuplicacion } from '../lib/duplicarDia.js';
 import { aggregateEstado } from '../lib/agendaEstado.js';
 
 // La normalización de nombres de grupo vive en el compositor (es la que hace
@@ -502,13 +502,12 @@ router.post('/duplicar-dia', (req, res) => {
 /**
  * Deshacer una duplicación.
  *
- * Recibe los `clon_id` exactos que devolvió el POST y borra esas copias con todo
- * lo suyo. Es la inversa exacta: el día de origen no se tocó, así que no hay
- * nada que restaurar.
- *
- * Lo que NO se borra es una copia que ya publicó algo: sus destinos 'published'
- * son historial real de Facebook, y borrar la copia sería falsearlo. Queda en
- * `omitidas` con el motivo, que la vista muestra tal cual.
+ * La lógica (qué se borra y qué se conserva) vive en
+ * `deshacerDuplicacion()` en backend/lib/duplicarDia.js, no acá: es una decisión
+ * con reglas —por destino y no por copia— que hay que poder testear contra una
+ * base en memoria, y una regla metida en un handler de Express no se prueba sin
+ * levantar el servidor. Los motivos de por qué la regla es por destino están en
+ * esa función; el resumen de qué se conservó sale en el `resumen` de la respuesta.
  *
  * Va en transaccion(): si una de las copias se rebota, no queda el día a medias
  * con la mitad de las copias borradas y la otra mitad viva.
@@ -520,36 +519,14 @@ router.post('/duplicar-dia/deshacer', (req, res) => {
     : [];
   if (!clones.length) return res.status(400).json({ error: 'No hay copias para deshacer' });
 
-  const borradas = [];
-  const omitidas = [];
+  let salida;
   try {
-    transaccion(db, () => {
-      for (const clonId of clones) {
-        const vinculo = db.prepare('SELECT id FROM publication_clones WHERE clon_id = ?').get(clonId);
-        if (!vinculo) {
-          omitidas.push({ id: clonId, motivo: 'no es una copia de una duplicación' });
-          continue;
-        }
-        const publicadas = db.prepare(`
-          SELECT COUNT(*) AS n FROM publication_queue
-          WHERE publication_id = ? AND status = 'published'
-        `).get(clonId);
-        if (publicadas.n) {
-          omitidas.push({ id: clonId, motivo: 'ya salió publicada en Facebook' });
-          continue;
-        }
-        db.prepare('DELETE FROM publication_queue WHERE publication_id = ?').run(clonId);
-        db.prepare('DELETE FROM publication_plans WHERE publication_id = ?').run(clonId);
-        db.prepare('DELETE FROM publication_clones WHERE clon_id = ?').run(clonId);
-        db.prepare('DELETE FROM publications WHERE id = ?').run(clonId);
-        borradas.push({ id: clonId });
-      }
-    });
+    salida = transaccion(db, () => deshacerDuplicacion(db, clones));
   } catch (err) {
     return res.status(500).json({ error: 'No se pudo deshacer: ' + err.message });
   }
 
-  res.json({ ok: true, borradas, omitidas });
+  res.json({ ok: true, ...salida });
 });
 
 
