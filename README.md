@@ -191,6 +191,7 @@ DaniMarvisStore/
 │   │   ├── catalogGenerator.js # Generador de HTML estático del catálogo público
 │   │   ├── chromeLauncher.js   # Auto-arranque de Chrome con puerto 9222 + perfil FB
 │   │   ├── currency.js         # Formateador de precios en USD
+│   │   ├── duplicarDia.js      # Duplicar un día de la agenda y deshacerlo
 │   │   ├── facebook.js         # Integración con Facebook Graph API
 │   │   ├── groupPublisher.js   # Publicador automático de grupos (cola + corrida async)
 │   │   ├── imageUtils.js       # Conversión de imágenes a WebP con sharp
@@ -198,6 +199,7 @@ DaniMarvisStore/
 │   ├── jobs/
 │   │   └── dailyRanking.js     # Corrida diaria del ranking + estado en disco
 │   ├── routes/
+│   │   ├── agenda.js           # Agenda de grupos: calendario, duplicar/deshacer día, disparador
 │   │   ├── products.js        # CRUD productos + visibilidad
 │   │   ├── providers.js       # CRUD proveedores
 │   │   ├── sales.js           # CRUD ventas + PATCH estado
@@ -400,6 +402,35 @@ Publica la cola en grupos de Facebook vía CDP (navegador), no por Graph API.
 `phase` es `starting` → `starting_chrome` → `picking` → `publishing` → `waiting` → `done` (o `empty` / `error`).
 
 Los flags `sesion` y `noBrowser` distinguen *por qué* falló: **sesión de Facebook vencida** (hay muro de login) o **no hay Chrome escuchando**. Antes todo se reportaba como un `error` genérico.
+
+### Agenda de grupos (disparador por fecha)
+
+Es el **seguro del publicador**: publica solo lo que ya venció, con límites de ritmo. A diferencia del worker de la cola, este camino **no pasa por `pickForRun()`** — entrega los vencidos con `ids` explícitos — así que los límites de abajo son los únicos que lo frenan.
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/agenda` | Calendario del mes: `disparador` (estado del tick + `limites`), `eventos`, `huerfanos`, `server_now` |
+| `GET` | `/api/agenda/conflicts` | Avisos de publicaciones que se pisan en la misma franja y grupo |
+| `GET` | `/api/agenda/uso-dia` | Cuánto se usó del día (publicaciones por grupo/hora) |
+| `GET` | `/api/agenda/rotacion-grupos` | Cómo viene la rotación de grupos del lote |
+| `POST` | `/api/agenda/:id/run` | Publicar un evento ahora, salteando la espera |
+| `POST` | `/api/agenda/:id/retry` | Reintentar un evento |
+| `GET` | `/api/agenda/duplicar-dia` | Plan de duplicar un día: `duplicadas`, `conflictos`, `avisos`, `ya_duplicada` |
+| `POST` | `/api/agenda/duplicar-dia` | Duplica un día completo (o lo que se tilde) hacia otro día |
+| `POST` | `/api/agenda/duplicar-dia/deshacer` | **Deshacer** una duplicación: borra lo que no se publicó y conserva lo que sí |
+
+**`GET /agenda` → `disparador.limites`** dice por qué no salió nada, sin abrir el log:
+
+| Campo | Descripción |
+|-------|-------------|
+| `decision` | `ok` \| `gap` \| `tope_hora` \| `breaker` |
+| `motivo` | Texto legible del motivo, ej. `separación mínima de 15 min: faltan 12 min` |
+| `intentos_ultima_hora` | Intentos (no aciertos) en la última hora |
+| `corte_hasta` | Hasta cuándo queda pausado el disparador por fallos seguidos |
+
+**`POST /duplicar-dia/deshacer`** — payload `{ "clones": ["id", ...] }`. Borra los destinos **no publicados** de esas copias y, si una copia no tiene ningún post publicado, borra también la publicación y su vínculo con el día de origen. Si sí tiene historial, la conserva con lo publicado y lo deja anotado en el motivo. Es idempotente: repetirlo no borra el historial.
+
+> Deshacer **no** puede deshacer un post que ya salió en Facebook. Solo limpia la cola.
 
 ### Exportaciones
 
@@ -792,6 +823,29 @@ Los defaults (`DEFAULT_AUTO_PUBLISH` en `backend/lib/groupPublisher.js`):
 | `worker_batch` | `3` | Cuántos dispara el worker por tick |
 
 > Los botones manuales de la UI mandan `force: true` e ignoran franja, cap y cooldowns. Prudencia: probá con **un** ítem primero, porque un lote consume el cap diario y los cooldowns de una vez.
+
+### Límites del disparador por fecha
+
+Estos son los de `DEFAULT_AGENDA` en `backend/lib/groupPublisher.js`, y son **otros** que los de arriba: gobiernan el disparador por fecha, no el worker de la cola.
+
+| Clave | Default | Significado |
+|-------|---------|-------------|
+| `auto` | `true` | Disparador armado |
+| `tick_min` | `1` | Cada cuánto mira los vencidos |
+| `catchup_hours` | `24` | Vencido hace más que esto **no** se recupera solo |
+| `min_gap_min` | `15` | Separación mínima entre publicaciones |
+| `max_per_hour` | `4` | Tope duro por hora |
+| `dedupe_hours` | `6` | No repetir el mismo texto en el mismo grupo antes de esto (`0` = no) |
+| `breaker_failures` | `3` | Fallos **consecutivos** que pausan el disparador |
+| `breaker_cooldown_min` | `60` | Cuánto dura esa pausa |
+
+El gap se mide contra el **último intento**, no el último acierto: con todo fallando el acierto nunca avanzaba y cada error iba seguido del siguiente vencido.
+
+> **Esto se puso el 2026-10-03 porque no existía.** El día duplicado dejó 190 destinos y el disparador los fue sacando a ~17 por hora, hasta que Facebook dejó de aceptar los envíos sin avisar nada. Los límites seAggregan en `publish_config.agenda` y el estado del corte en `publish_config._breaker`.
+
+**El interruptor maestro** (`publish_config.master.on`) es una llave aparte: mientras esté en `false` no arranca **ninguna** corrida — ni del worker, ni del disparador, ni manual.
+
+> ⚠️ **Los clics manuales ("Publicar ahora", "Correr vencidos", "Reintentar") no pasan por estos límites.** Solo obedecen el interruptor maestro. El corte por fallos sí los cuenta, pero no los frena.
 
 ### Requisito conocido
 

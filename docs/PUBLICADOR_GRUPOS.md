@@ -147,6 +147,78 @@ El tick (`runSchedulerTick`, `groupPublisher.js:532`) es corto y tiene cuatro sa
 
 ---
 
+## Los frenos — ritmo, duplicados y corte
+
+Todo esto vive en `publish_config.agenda` y lo gobierna **el disparador por fecha**
+(`runAgendaTick`), no el worker de la cola.
+
+| Clave | Default | Qué hace |
+|---|---|---|
+| `min_gap_min` | 15 | Separación mínima entre publicaciones |
+| `max_per_hour` | 4 | Tope duro por hora, para cuando el gap se afloja |
+| `dedupe_hours` | 6 | No repetir el mismo texto en el mismo grupo antes de esto (`0` = no) |
+| `breaker_failures` | 3 | Fallos **consecutivos** que pausan el disparador |
+| `breaker_cooldown_min` | 60 | Cuánto dura esa pausa |
+
+El gap se mide contra `lastAttemptInfo()` —el **último intento**, no el último
+acierto— porque con todo fallando el acierto nunca avanzaba y cada error iba
+seguido del siguiente vencido. `max_per_hour` usa `countAttemptsSince()`, que cuenta
+intentos, no aciertos.
+
+### Por qué están en el tick y no en `pickForRun()`
+
+Porque el disparador **no pasa por `pickForRun()`**. Entrega los vencidos con `ids`
+explícitos (`groupPublisher.js:1528`), y `runGroupPublish()` los filtra directo sobre
+`dueCandidates()`. O sea: el día duplicado del 2026-10-03 (190 destinos) salía a
+~17 publicaciones por hora sin tope de ninguno, hasta que Facebook dejó de aceptar
+los envíos **sin decir nada**. Los límites de acá son los únicos que protegen ese
+camino.
+
+El tick decide una vez y pasa **un** destino, como mucho (`cuantosPorTick()`).
+
+### El orden de las comprobaciones no es al azar
+
+```
+vencidos → cuarentena → guardia de duplicados → límites de ritmo → 1 destino
+```
+
+La **guardia de duplicados va primero y escribe**: aparta lo que ya salió y recién
+después se ve si toca publicar. Al revés, un tick frenado por el gap dejaría pasar
+los duplicados al siguiente, y en 15 minutos se acumulaban 4.
+
+`marcarDuplicadosEn()` cancela el destino y deja en `notes` por qué, con hace cuánto
+se publicó. El `UPDATE` exige `status='pending'`, así que no pisa un destino que el
+usuario ya resolvió, y el conteo mira las filas que el `UPDATE` **realmente** cambió
+(`run()` devuelve las modificadas): si contara las candidatas, informaría "3
+apartados" con dos que siguen en `pending` como estaban.
+
+### El corte automático
+
+`registrarFallo()` / `limpiarFallos()` (`groupPublisher.js:983-984`) viven en
+`runGroupPublish()`, o sea que **cuentan los fallos de cualquier origen** —worker,
+disparador o clic manual—: lo que se rompió es el canal de Facebook, no quién
+apretó el botón. El estado va en `publish_config._breaker`.
+
+> ⚠️ **El corte frena el disparador, no los clics a mano.** Ver Trampa 14.
+
+`GET /api/agenda` expone todo esto en `disparador.limites` (`decision`, `motivo`,
+`intentos_ultima_hora`, `corte_hasta`), que es la forma de saber por qué no salió
+nada sin abrir el log.
+
+### La evidencia del fallo
+
+`classifyFailure()` tiene una causa propia, `compositor_texto`, para el fallo más
+frecuente: **no se encuentra el compositor del grupo** (`¿grupo cerrado/archivado?`).
+Antes caía en el cajón genérico.
+
+`notaDiagnostico()` + `parsePosterDiag()` (`group_poster.js`) escriben en `notes` lo
+que el poster vio: si encontró el compositor, si el botón estaba deshabilitado
+(`aria-disabled` o `disabled`), qué alerta había visible, y la captura
+`%TEMP%/danimarvis_fallo_check.png` cuando no se pudo publicar. Antes ese diagnóstico
+se perdía y un `error` no distinguía "no había botón" de "el botón estaba apagado".
+
+---
+
 # La UI
 
 ## Montaje y navegación
@@ -608,6 +680,39 @@ Ahora:
 > que borrar el post duplicado a mano, y un "reintentar" a ciegas lo vuelve a crear. El feed no
 > renderiza en modo automatizado, así que el código no puede confirmarlo solo.
 
+### 14. Los clics manuales no pasan por ningún freno 🟡
+
+Síntoma: se limitan a 15 min y 4 por hora, pero igual salen dos o tres publicaciones
+seguidas. Y el que lo hace es el propio usuario: el log muestra la cadencia y los
+ticks del disparador dicen "interruptor maestro apagado".
+
+Causa: los límites viven en `runAgendaTick()`, y los tres botones de la UI mandan
+`force: true` (`pubQueueView.js:403`), que va por `startGroupPublish()` → no pasa ni
+por `evaluarLimites()` ni por `marcarDuplicados()`. "Publicar ahora", "Correr vencidos"
+y "Reintentar" sólo obedecen el interruptor **maestro**.
+
+Consecuencia práctica: el 2026-10-03 los tres posts de 20:21, 20:26 y 20:28 (**2 a 5
+min de diferencia, violando el gap de 15**) salieron por acá, no por el disparador. Es
+el único camino que queda sin frenar, y el más fácil de usar sin querer.
+
+Lo único que los frena de verdad es `publish_config.master.on = false`
+(`groupPublisher.js:1067`), que corta TODOS los caminos, manuales incluidos.
+
+### 15. Un `error` puede pisar un destino que el usuario ya cerró 🟢
+
+Síntoma: se cancela o se edita un ítem pendiente, y segundos después vuelve a
+`pending` o a `error` como si nada.
+
+Causa: `updateQueue()` escribía el resultado sin mirar el estado actual. Si la
+publicación tardó 2-4 minutos (y tarda), el cancel manual llegaba antes de que el
+poster terminara, y el `UPDATE` lo pisaba.
+
+Ahora el `UPDATE` de fallo exige `status='pending'`, así que un destino ya resuelto
+no se toca. **El caso del acierto es al revés y a propósito**: si el post *sí* salió,
+se registra `published` aunque el ítem se hubiera cancelado mientras corría, con un
+`warn` en `notes` — el post existe en el grupo y la cola tiene que reflejarlo, o el
+reintento lo duplicaría (Trampa 13).
+
 ---
 
 ## Puntos de extensión
@@ -623,6 +728,10 @@ Ahora:
 | Cambiar los textos de error | `group_poster.js` (los `out({... message: '...'})`) y `classifyFailure()` `groupPublisher.js:342` |
 | Agregar un estado a la cola | `createSchema` + `migratePubQueue` + los UPDATE de `updateQueue` + el filtro de `dueCandidates` + el de `renderPending` `:236` |
 | Cambiar los límites automáticos | `DEFAULT_AUTO_PUBLISH` + el clamp de `getAutopublishConfig()` + el form de Ajustes |
+| Cambiar el ritmo del disparador por fecha | `DEFAULT_AGENDA` (`groupPublisher.js:46`) + el clamp de `getAgendaConfig()` |
+| Cambiar qué cuenta como "repetido" | `claveDuplicado()` `groupPublisher.js:386` (normaliza el texto antes de comparar) |
+| Cambiar a qué se le atribuya un fallo | `classifyFailure()` `groupPublisher.js:871` (una causa por `includes`) |
+| Sacar la evidencia de las notas | `notaDiagnostico()` `groupPublisher.js:747` + `parsePosterDiag()` `group_poster.js` |
 
 **Al agregar un estado nuevo**, actualizá los cuatro filtros que asumen el enum:
 `dueCandidates()` (`:188`), `GET /due` (`pubQueue.js:74`), el filtro de la UI (`:236`) y el de
