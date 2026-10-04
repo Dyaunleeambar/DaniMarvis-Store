@@ -29,16 +29,31 @@ export const DEFAULT_AUTO_PUBLISH = {
 // para el botón "Correr vencidos"; el disparo por fecha es otro reloj y no usa
 // ninguna de estas.
 
-// El disparador por fecha es un reloj DISTINTO del worker con límites. No lleva
-// cap, ni franja, ni gap, ni cooldown: la hora la eligió el usuario evento por
-// evento, así que respetarla es el trabajo. Solo se pone a mirar cada minuto
-// para que "18:00" signifique 18:00 y no "18:00 o 18:05 si la suerte acompaña".
+// El disparador por fecha es un reloj DISTINTO del worker con límites, y sigue
+// sin cap diario ni franja: la hora la eligió el usuario evento por evento, así
+// que respetarla es el trabajo. Solo se pone a mirar cada minuto para que "18:00"
+// signifique 18:00 y no "18:00 o 18:05 si la suerte acompaña".
+//
+// PERO el ritmo no es un detalle menor. El 2026-10-03 este disparador sacó 30
+// publicaciones seguidas en 2 horas sin parar: el día estaba duplicado (190
+// destinos) y él los iba tomando de a uno, ~17 por hora, porque no tenía ningún
+// freno. Facebook dejó de aceptarlos a las 07:21 sin avisar (nada en pantalla,
+// solo el compositor con el texto adentro), y como no había separación cada
+// fallo era seguido del siguiente vencido. Así se ven 30 errores iguales en la
+// cola. Los cuatro límites de abajo son el freno, y son chicos a propósito: es
+// más fácil que los suba el usuario a tener que recuperar una cuenta que
+// Facebook decidió cortar en silencio.
 export const DEFAULT_AGENDA = {
   auto: true,          // arranca encendido: el usuario pidió disparo automático
   tick_min: 1,
   catchup_hours: 24,   // vencido hace más de esto NO se recupera solo
   grupos_por_post: 9,  // cuántos grupos se tildan por publicación en Facebook
   lote_desde: '',      // cursor: el último grupo del lote anterior ('' = desde el 0)
+  min_gap_min: 15,     // separación mínima entre publicaciones consecutive
+  max_per_hour: 4,     // tope duro por hora, por si el gap se afloja
+  dedupe_hours: 6,     // no repetir el mismo texto en el mismo grupo antes de esto (0 = no)
+  breaker_failures: 3, // fallos seguidos que pausan el disparador
+  breaker_cooldown_min: 60,
 };
 
 // Interruptor MAESTRO del publicador. Es una puerta aparte de autopublish.enabled
@@ -151,6 +166,16 @@ export function getAgendaConfig() {
   // silencio, sin error en ninguna parte.
   cfg.grupos_por_post = Math.max(1, Math.min(30, Number(cfg.grupos_por_post) || DEFAULT_AGENDA.grupos_por_post));
   cfg.lote_desde = typeof cfg.lote_desde === 'string' ? cfg.lote_desde : '';
+  // Límites de ritmo del disparador. Todos con clamp: vienen de un JSON que
+  // edita a mano el usuario y un 0 suelto en `dedupe_hours` tiene que poder
+  // DESACTIVAR la guardia, no caerse al default por el `||` (que también se
+  // come los NaN). Por eso ese usa Number.isFinite y los demás el `||`.
+  cfg.min_gap_min = Math.max(1, Math.min(1440, Number(cfg.min_gap_min) || DEFAULT_AGENDA.min_gap_min));
+  cfg.max_per_hour = Math.max(1, Math.min(60, Number(cfg.max_per_hour) || DEFAULT_AGENDA.max_per_hour));
+  const dd = Number(cfg.dedupe_hours);
+  cfg.dedupe_hours = Number.isFinite(dd) ? Math.max(0, Math.min(168, dd)) : DEFAULT_AGENDA.dedupe_hours;
+  cfg.breaker_failures = Math.max(1, Math.min(20, Number(cfg.breaker_failures) || DEFAULT_AGENDA.breaker_failures));
+  cfg.breaker_cooldown_min = Math.max(5, Math.min(1440, Number(cfg.breaker_cooldown_min) || DEFAULT_AGENDA.breaker_cooldown_min));
   return cfg;
 }
 
@@ -171,6 +196,69 @@ function countPublishedToday() {
   return Number(row?.c) || 0;
 }
 
+/**
+ * Lee una fecha de la cola como milisegundos UTC, sea del formato que sea.
+ *
+ * En la base conviven DOS formatos y por eso esto no puede ser un `new Date(x)`
+ * pelado: el código escribe ISO con 'Z' ('2026-10-03T15:16:14.660Z') pero los
+ * `datetime('now')` de SQLite escriben '2026-10-03 15:15:33', sin 'T' y sin 'Z'.
+// `new Date()` interpreta ese segundo formato como HORA LOCAL, así que según
+// de dónde venga la fila el mismo instante salía corrido 4 horas. Peor: al
+ * comparar dos fechas como texto, '2026-10-03 15:15' siempre ordena antes que
+ * '2026-10-03T15:15' porque el espacio (0x20) va antes que la 'T', y el filtro
+ * `updated_at >= '2026-10-03T13:00'` dejaba afuera justo las filas que SQLite
+ * había escrito. Normalizar acá evita las dos trampas.
+ */
+function fechaMs(valor) {
+  if (!valor) return NaN;
+  let s = String(valor).trim();
+  if (!s.includes('T')) s = s.replace(' ', 'T');
+  // Sin 'Z' ni offset, `new Date` lo leería como local. SQLite siempre guarda UTC.
+  if (!/(Z|[+-]\d{2}:?\d{2})$/.test(s)) s += 'Z';
+  const ms = new Date(s).getTime();
+  return Number.isNaN(ms) ? NaN : ms;
+}
+
+/**
+ * Cuándo fue el último INTENTO del bot, haya servido o no.
+ *
+ * La separación entre publicaciones se midió siempre contra la última
+ * `published_at`, o sea contra el último ACIERTO, y eso la volvía inútil
+ * justamente cuando hacía falta: si la cola entera viene fallando, ese valor
+ * queda congelado en el último éxito, la diferencia con "ahora" crece, y el
+ * límite de separación nunca muerde. El 2026-10-03 fue exactamente eso: 30
+ * intentos en 2 horas. La separación tiene que contar desde el último intento,
+ * que es lo que de verdad consume ritmo.
+ */
+function lastAttemptInfo() {
+  const db = getDB();
+  const row = db.prepare(`
+    SELECT MAX(t) AS t FROM (
+      SELECT published_at AS t FROM publication_queue WHERE published_at IS NOT NULL
+      UNION ALL
+      SELECT updated_at AS t FROM publication_queue WHERE status = 'error' AND updated_at IS NOT NULL
+    )
+  `).get();
+  const ms = fechaMs(row?.t);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/** Intentos (aciertos o fallos) en la última hora, para el tope por hora. */
+function countAttemptsSince(msDesde) {
+  const db = getDB();
+  const desde = new Date(msDesde).toISOString();
+  const desdeSql = desde.replace('T', ' ');
+  const row = db.prepare(`
+    SELECT COUNT(*) AS c FROM publication_queue
+    WHERE status IN ('published','error')
+      AND (
+        (published_at IS NOT NULL AND replace(published_at,'T',' ') >= ?)
+        OR (status = 'error' AND replace(updated_at,'T',' ') >= ?)
+      )
+  `).get(desdeSql, desdeSql);
+  return Number(row?.c) || 0;
+}
+
 // `lastPublishedForGroup()` vivía acá para el cooldown de 4h por grupo. Se fue
 // con el cooldown: la separación entre posts la define el usuario al agendar.
 
@@ -178,6 +266,202 @@ function withinHoursWindow(cfg) {
   const h = localNow().getHours();
   return h >= (Number(cfg.hours_from) || 0) && h < (Number(cfg.hours_to) || 24);
 }
+
+// ------------------------------------------------------- límites de ritmo ---
+//
+// Todo lo de abajo gira alrededor de una idea: el disparador por fecha NO puede
+// convertir un día de 190 destinos en 17 publicaciones por hora. Facebook no
+// avisa cuando deja de aceptar, así que la única defensa es no llegar a ese
+// ritmo y, cuando algo sale mal, frenar en vez de seguir insistiendo.
+
+/** Estado del corte automático. Vive en la config para sobrevivir reinicios. */
+export function leerBreaker() {
+  try {
+    const db = getDB();
+    const row = db.prepare('SELECT publish_config FROM settings WHERE id = 1').get();
+    const pc = JSON.parse(row?.publish_config || '{}');
+    const b = pc._breaker;
+    if (!b || typeof b !== 'object') return { failures: 0, until: 0, reason: '' };
+    return {
+      failures: Number(b.failures) || 0,
+      fallos: Number(b.fallos) || 0,
+      until: Number(b.until) || 0,
+      reason: typeof b.reason === 'string' ? b.reason : '',
+      at: typeof b.at === 'string' ? b.at : '',
+    };
+  } catch {
+    return { failures: 0, until: 0, reason: '' };
+  }
+}
+
+function escribirBreaker(b) {
+  try {
+    const db = getDB();
+    const row = db.prepare('SELECT publish_config FROM settings WHERE id = 1').get();
+    const pc = JSON.parse(row?.publish_config || '{}');
+    pc._breaker = b;
+    // Va arriba del todo de publish_config y no adentro de `agenda` a propósito:
+    // al guardar la config desde la UI, `agenda` se reemplaza entero (merge
+    // raso), así que un estado guardado adentro se perdería en cada guardado.
+    db.prepare("UPDATE settings SET publish_config = ?, updated_at = datetime('now') WHERE id = 1")
+      .run(JSON.stringify(pc));
+  } catch (err) {
+    console.error('[agenda] no se pudo guardar el corte automático:', err.message);
+  }
+}
+
+/** Suma un fallo. Al llegar al tope, pausa el disparador un rato. */
+export function registrarFallo(cfg, mensaje) {
+  const prev = leerBreaker();
+  const failures = (prev.failures || 0) + 1;
+  const tope = Math.max(1, Number(cfg?.breaker_failures) || DEFAULT_AGENDA.breaker_failures);
+  if (failures < tope) {
+    escribirBreaker({ ...prev, failures });
+    return { paused: false, failures };
+  }
+  const minutos = Math.max(5, Number(cfg?.breaker_cooldown_min) || DEFAULT_AGENDA.breaker_cooldown_min);
+  const until = Date.now() + minutos * 60000;
+  escribirBreaker({ failures: 0, fallos: failures, until, reason: String(mensaje || '').slice(0, 160), at: toIsoUtc(new Date()) });
+  console.error(`[agenda] CORTE AUTOMÁTICO: ${failures} fallos seguidos. Pausa ${minutos} min. Último: ${String(mensaje || '').slice(0, 120)}`);
+  return { paused: true, failures, until };
+}
+
+/** Un acierto limpia la cuenta de fallos seguidos: el canal vuelve a estar bien. */
+export function limpiarFallos() {
+  const prev = leerBreaker();
+  if (!prev.failures) return;
+  escribirBreaker({ ...prev, failures: 0 });
+}
+
+/**
+ * Decide si el disparador puede salir ahora, y por qué no si no puede.
+ *
+ * Función pura a propósito: recibe el estado ya leído de la base y devuelve la
+ * decisión, para poder testear la política (qué pasa con 3 fallos, con el tope
+ * de la hora, con el gap medido desde el último intento) sin montar nada.
+ * El orden de las comprobaciones es el que se ve en los mensajes: primero lo
+ * que frena en seco (el corte), después los topes.
+ */
+export function evaluarLimites({ cfg, nowMs = Date.now(), lastAttemptMs = null, intentosHora = 0, breaker = null }) {
+  const b = breaker || { failures: 0, until: 0, reason: '' };
+  if (b.until && nowMs < b.until) {
+    const min = Math.ceil((b.until - nowMs) / 60000);
+    const n = b.fallos || b.failures;
+    return { ok: false, motivo: `corte automático: ${n} fallo${n === 1 ? '' : 's'} seguido${n === 1 ? '' : 's'}`
+      + (b.reason ? ` (${b.reason.slice(0, 60)})` : '')
+      + ` — reintenta en ${min} min`, codigo: 'breaker' };
+  }
+  const gapMin = Math.max(1, Number(cfg?.min_gap_min) || DEFAULT_AGENDA.min_gap_min);
+  if (lastAttemptMs) {
+    const faltan = Math.ceil((lastAttemptMs + gapMin * 60000 - nowMs) / 60000);
+    if (faltan > 0) return { ok: false, motivo: `separación mínima de ${gapMin} min: faltan ${faltan} min`, codigo: 'gap' };
+  }
+  const topeHora = Math.max(1, Number(cfg?.max_per_hour) || DEFAULT_AGENDA.max_per_hour);
+  if (intentosHora >= topeHora) {
+    return { ok: false, motivo: `tope de ${topeHora} publicaciones por hora alcanzado`, codigo: 'tope_hora' };
+  }
+  return { ok: true, motivo: '', codigo: 'ok' };
+}
+
+/**
+ * Cuántos destinos puede sacar el tick de ahora. Siempre uno: el tick corre cada
+ * minuto y el gap manda, así que dos de golpe solo servirían para saltarse el
+ * ritmo que se está procurando respetuar.
+ */
+export function cuantosPorTick({ decision }) {
+  return decision?.ok ? 1 : 0;
+}
+
+
+// ------------------------------------------------------- anti-duplicado ---
+//
+// El 2026-10-03, con el día duplicado, el mismo texto llegó a "DE TODO EN
+// REMEDIOS" tres veces en 7 minutos y a otros grupos dos veces en la hora. No es
+// un problema de Facebook: es un problema de que la cola tenía el triple de lo
+// que debía y nadie miraba qué se había mandado ya. Con `dedupe_hours` en 0 la
+// guardia se apaga entera (para quien quiera publicar el mismo texto a propósito
+// en el mismo grupo).
+
+/** Clave de comparación: mismo grupo + mismo texto, sin que estorben acentos, espacios ni mayúsculas. */
+export function claveDuplicado(grupo, texto) {
+  const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  return `${norm(grupo)}\u0000${norm(texto).slice(0, 400)}`;
+}
+
+/**
+ * Aparta los destinos que repiten un texto que ya salió en ese grupo hace poco.
+ *
+ * No borra nada: los deja en 'cancelled' con la hora del envío anterior en las
+ * notas, para que el usuario vea la decisión y pueda revertirla desde el
+ * calendario. Escribir en vez de omitir en silencio importa: si se omitiera sin
+ * rastro, la cola parecería más corta y nadie sabría que hubo un descarte.
+ *
+ * Recibe `db` como parámetro (no usa el getDB() del módulo) para poder testear
+ * la política contra una base en memoria, igual que hace duplicarDia.js.
+ */
+export function marcarDuplicadosEn(db, candidatos, cfg, ahoraMs = Date.now()) {
+  const horas = Math.max(0, Number(cfg?.dedupe_hours) || 0);
+  if (!horas || !candidatos.length) return { omitidos: 0, ids: [] };
+  const desde = new Date(ahoraMs - horas * 3600000).toISOString();
+  const desdeSql = desde.replace('T', ' ');
+  const yaSalieron = db.prepare(`
+    SELECT pq.group_name, COALESCE(NULLIF(pq.variant_text,''), p.publish_text, '') AS texto, pq.published_at
+    FROM publication_queue pq
+    LEFT JOIN publications p ON p.id = pq.publication_id
+    WHERE pq.status = 'published' AND pq.published_at IS NOT NULL
+      AND replace(pq.published_at,'T',' ') >= ?
+  `).all(desdeSql);
+
+  const vistos = new Map();
+  for (const r of yaSalieron) {
+    const k = claveDuplicado(r.group_name, r.texto);
+    const prev = vistos.get(k);
+    if (!prev || String(r.published_at) > String(prev.published_at)) vistos.set(k, r);
+  }
+
+  const omitidos = [];
+  for (const c of candidatos) {
+    const texto = c.variant_text || c.publish_text || '';
+    if (!String(texto).trim()) continue;
+    const prev = vistos.get(claveDuplicado(c.group_name, texto));
+    if (!prev) continue;
+    const cuando = fechaMs(prev.published_at);
+    const haceMin = Number.isNaN(cuando) ? null : Math.round((ahoraMs - cuando) / 60000);
+    const nota = `omitido por duplicado: este mismo texto ya se publicó en este grupo`
+      + (haceMin !== null ? ` hace ${haceMin} min` : '')
+      + ` (límite ${horas} h). Si lo querés igual, reprogramalo desde el calendario.`;
+    try {
+      // El `AND status = 'pending'` es lo que impide pisar un destino que el
+      // usuario ya resolvió entre que se armó la lista y se escribió esto. Por
+      // eso el conteo mira las filas REALES que cambió el UPDATE y no las que
+      // se intentaron: si se contaran las candidatas, el tick informaría "3
+      // duplicados apartados" con dos que siguen en 'pending' como estaban, y
+      // además los sacaría de la lista de este tick sin motivo.
+      const cambiadas = db.prepare(`
+        UPDATE publication_queue
+        SET status = 'cancelled',
+            notes = TRIM(COALESCE(notes,'') || ' | ' || ?),
+            updated_at = datetime('now')
+        WHERE id = ? AND status = 'pending'
+      `).run(nota, c.id);
+      if (cambiadas) omitidos.push(c.id);
+    } catch (err) {
+      console.error('[agenda] no se pudo apartar un duplicado:', err.message);
+    }
+  }
+  return { omitidos: omitidos.length, ids: omitidos };
+}
+
+/** Envoltorio con la base del servidor, para el tick. */
+function marcarDuplicados(candidatos, cfg, ahoraMs = Date.now()) {
+  try {
+    return marcarDuplicadosEn(getDB(), candidatos, cfg, ahoraMs);
+  } catch (err) {
+    console.error('[agenda] no se pudo revisar duplicados:', err.message);
+    return { omitidos: 0, ids: [] };
+  }
+}
+
 
 // ------------------------------------------------------- resolución inputs ---
 function resolveGroupUrl(item) {
@@ -295,7 +579,6 @@ function pickForRun(cfg, { auto, force }) {
   const candidates = dueCandidates().filter(c => resolveGroupUrl(c));
   const rows = [];
   const todayCount = countPublishedToday();
-  const lastOverall = lastPublishedInfo();
 
   for (const c of candidates) {
     if (rows.length >= (auto ? cfg.worker_batch : 30)) break;
@@ -303,15 +586,20 @@ function pickForRun(cfg, { auto, force }) {
     const groupUrl = resolveGroupUrl(c);
     // SIN cooldown por grupo: la separación la fija el usuario al agendar. Lo
     // que sigue son los límites del worker con límites (el que usa "Correr
-    // vencidos"), que no aplica al disparador por fecha.
+    // vencidos"), que no aplica al disparador por fecha: ese tiene los suyos,
+    // en `evaluarLimites()`, porque ni siquiera pasa por acá (manda `ids`).
     // franja horaria (solo worker)
     if (auto && !force && !withinHoursWindow(cfg)) continue;
     // cap diario (solo auto)
     if (auto && !force && todayCount + rows.length >= cfg.daily_cap) continue;
-    // gap mínimo entre consecutivos (auto)
-    if (auto && !force && lastOverall) {
-      const gapMs = now - new Date(lastOverall).getTime();
-      if (gapMs < cfg.min_gap_min * 60000) continue;
+    // gap mínimo entre consecutivos (auto). Se mide contra el último INTENTO
+    // (último acierto o último fallo), no solo contra el último publicado: con
+    // la cola fallando, `lastPublishedInfo()` se congela en el último éxito y
+    // el gap deja de existir justo cuando más hace falta. `lastAttemptInfo()`
+    // ya incluye los `published_at`, así que sustituye al otro.
+    if (auto && !force) {
+      const ultimo = lastAttemptInfo();
+      if (ultimo !== null && now - ultimo < cfg.min_gap_min * 60000) continue;
     }
 
     rows.push(c);
@@ -400,9 +688,78 @@ function spawnPoster({ groupUrl, messageFile, imageFiles, mode, label, debug = f
       if (loteDesde) args.push('--lote-desde=' + loteDesde);
     }
     execFile(process.execPath, [POSTER_JS, ...args], { timeout: 280000 }, (err, stdout, stderr) => {
-      resolve(parsePosterOutput(stdout, { err, allText: `${stdout || ''}\n${stderr || ''}` }));
+      const parsed = parsePosterOutput(stdout, { err, allText: `${stdout || ''}\n${stderr || ''}` });
+      // El poster escribe en stderr justo lo que uno necesita para entender un
+      // fallo: la línea [SUBMIT] con el botón que encontró (si estaba deshabilitado,
+      // de qué tamaño era, si venía del panel del compositor o de un fallback
+      // global) y la captura del fallo. Hasta ahora eso se juntaba en `allText`,
+      // que solo se usa cuando el proceso no devolvió NADA — y como siempre
+      // devuelve el JSON del resultado, se descartaba. Por eso el error del
+      // 2026-10-03 decía "el texto sigue en el compositor" sin decir por qué.
+      const diag = parsePosterDiag(stderr);
+      if (diag && Object.keys(diag).length) Object.assign(parsed, diag);
+      resolve(parsed);
     });
   });
+}
+
+/**
+ * Saca del stderr del poster lo que sirve para diagnosticar un fallo.
+ * Función pura: se puede testear con un stderr fixture.
+ */
+export function parsePosterDiag(stderr) {
+  const txt = String(stderr || '');
+  if (!txt) return {};
+  const out = {};
+  const submit = txt.split('\n').map(l => l.trim()).find(l => l.startsWith('[SUBMIT]'));
+  if (submit) {
+    try {
+      const b = JSON.parse(submit.slice('[SUBMIT]'.length).trim());
+      out.submit = {
+        aria_disabled: b.dis ?? null,
+        etiqueta: b.label ?? null,
+        aria: b.aria ?? null,
+        del_panel: !!b.scoped,
+        tam: b.w && b.h ? `${b.w}x${b.h}` : null,
+      };
+    } catch { /* la línea vino corrupta: no es motivo para perder el resultado */ }
+  }
+  const fresh = txt.split('\n').map(l => l.trim()).find(l => l.startsWith('[FRESH]'));
+  if (fresh) {
+    try {
+      const fr = JSON.parse(fresh.slice('[FRESH]'.length).trim());
+      // [FRESH] sale en el camino de éxito: sirve para distinguir "no seMandó" de
+      // "se mand\u00f3 pero no lo vimos", que antes eran el mismo error.
+      if (fr && typeof fr === 'object') out.fresh = { encontrados: fr.found ?? null, articulos: fr.articles ?? null };
+    } catch { /* idem */ }
+  }
+  return out;
+}
+
+/**
+ * La evidencia del clic, en las notas del destino que falló.
+ *
+ * Sin esto, un "no se envió" no distingue tres cosas muy distintas: el botón
+ * estaba deshabilitado y el clic no hizo nada (Facebook no lo tomó), el clic
+ * cayó en un diálogo equivocado, o el post salió y no lo supimos leer. Con la
+ * línea [SUBMIT] y la captura se puede decir cuál, sin adivinar.
+ */
+function notaDiagnostico(result) {
+  const s = result?.submit;
+  const partes = [];
+  if (s) {
+    partes.push('botón ' + (s.del_panel ? 'del panel del compositor' : 'de la página (fallback)'));
+    if (s.tam) partes.push(`de ${s.tam}`);
+    if (s.aria_disabled === 'true') partes.push('DESHABILITADO: el clic no hacía nada');
+    else if (s.aria_disabled) partes.push(`aria-disabled=${s.aria_disabled}`);
+  }
+  const aviso = String(result?.alert_text || '').trim();
+  if (aviso) partes.push(`FB mostró: "${aviso.slice(0, 90)}"`);
+  if (result?.screenshot) partes.push(`captura: ${result.screenshot}`);
+  if (result?.fresh && result.fresh.encontrados === false) {
+    partes.push('el post no aparece entre los artículos del grupo');
+  }
+  return partes.length ? ` | ${partes.join('; ')}` : '';
 }
 
 function updateQueue(item, result, mode) {
@@ -435,9 +792,29 @@ function updateQueue(item, result, mode) {
     notes += imgNota;
   } else {
     notes = [base, `auto:error ${result.message || ''}`.trim()].filter(Boolean).join(' | ').slice(0, 500);
+    notes = (notes + notaDiagnostico(result)).slice(0, 500);
   }
   notes = (notes + avisos).slice(0, 500);
+
+  // Estado real de la fila ahora mismo. Hace falta porque entre que se tomó el
+  // ítem y que terminó de publicarse (2-4 min) el usuario puede haberlo
+  // cancelado desde el calendario, y el UPDATE de abajo se lo pisaba sin
+  // preguntar: el 2026-10-03 un destino cancelado a las 11:13 quedó 'published'
+  // a las 11:16 y el post realmente había salido. Perder "publicó de verdad" es
+  // peor que perder una cancelación, así que las dos cosas van con su regla.
+  let estadoPrevio = 'pending';
+  try {
+    estadoPrevio = db.prepare('SELECT status FROM publication_queue WHERE id = ?').get(item.id)?.status || 'pending';
+  } catch { /* si no se puede leer, se asume el peor caso */ }
+  const fueCancelado = ['cancelled', 'omitted'].includes(estadoPrevio);
+
   if (result.ok && mode === 'publish') {
+    // Un post que SALIÓ se registra siempre, se haya cancelado en el medio o no:
+    // el historial real de Facebook no se puede dejar en 'cancelled'. Se deja
+    // asentado que la cancelación llegó tarde.
+    if (fueCancelado) {
+      notes = `${notes} | OJO: se canceló desde el calendario mientras se publicaba y el post igual salió`.slice(0, 500);
+    }
     db.prepare("UPDATE publication_queue SET status = 'published', notes = ?, published_at = ?, pending_approval = ?, updated_at = datetime('now') WHERE id = ?")
       .run(notes, now, pending, item.id);
   } else if (result.ok && mode === 'prepare') {
@@ -450,9 +827,14 @@ function updateQueue(item, result, mode) {
     // contador de intentos ni backoff. Por eso un fallo de red se veía en la UI
     // como "quedó esperando" indefinidamente. Ahora el ítem queda en 'error' y
     // la UI lo muestra en su propio balde, con reintento manual.
-    db.prepare("UPDATE publication_queue SET status = 'error', notes = ?, published_at = NULL, updated_at = datetime('now') WHERE id = ?")
+    //
+    // Y si mientras tanto lo cancelaron, el cancelado gana: un fallo no puede
+    // resucitar un destino que el usuario ya Sacó de la cola.
+    db.prepare("UPDATE publication_queue SET status = 'error', notes = ?, published_at = NULL, updated_at = datetime('now') WHERE id = ? AND status = 'pending'")
       .run(notes, item.id);
+    if (fueCancelado) return { aplicado: false, estadoPrevio };
   }
+  return { aplicado: true, estadoPrevio };
 }
 
 async function deleteTempFiles(files) {
@@ -477,12 +859,23 @@ export const CAUSAS = {
   noBrowser: 'No se pudo abrir Chrome. Prendé el navegador con depuración en el puerto 9222.',
   sesion: 'La sesión de Facebook venció o cambió. Entrá de nuevo y reintentá.',
   compositor: 'El compositor de Facebook no apareció, o el post no confirmó. Suele ser Facebook lento o un diálogo viejo tapándolo, no el grupo. Reintentá en un rato.',
+  // Esta es la causa del 2026-10-03 y merece su propia línea. El compositor
+  // aparece, se escribe el texto, se hace clic en "Publicar"... y no pasa nada.
+  // Facebook no muestra ningún aviso, así que no es un error visible: es un
+  // rechazo silencioso. Salió 30 veces seguidas en 2 horas y el corte automático
+  // ahora frena esa cascada, pero mientras tanto la pista útil es otra: si el
+  // botón salió deshabilitado, el clic fue a la nada y el problema es el ritmo.
+  compositor_texto: 'Se hizo clic en Publicar y el texto se quedó en el compositor: Facebook no aceptó el envío y no mostró aviso. Casi siempre es que rechazó el ritmo de publicaciones. Bajá el ritmo y esperá antes de reintentar.',
 };
 
 function classifyFailure(message) {
   const m = String(message || '');
   if (/no se pudo conectar a chrome|puerto 9222|localhost:9222|failed to fetch browser websocket|econnrefused|could not connect to chrome/i.test(m)) return 'noBrowser';
   if (/sesi[oó]n de facebook requerida|sesi[oó]n (expirada|venci[oó]da)|\/login|checkpoint|cookie_consent/i.test(m)) return 'sesion';
+  // Va antes que 'compositor' y es más específica: el texto quedó adentro, o sea
+  // que el compositor SÍ apareció y el clic no surtió efecto. Antes esto caía en
+  // el mismo cajón que "no encontramos el compositor", que es otro problema.
+  if (/se hizo clic en publicar pero el post no se envi[oó]|pero el post no se envi[oó]|sigue en el compositor/i.test(m)) return 'compositor_texto';
   // El poster no comprueba si el grupo está cerrado: solo que no halló el
   // compositor. Sin esta línea la UI lo muestra como "Error" pelado y el
   // usuario no tiene ni idea de que reintentar a ciegas no va a servir.
@@ -580,7 +973,15 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
         setLoteCursor(result.lote_grupos[result.lote_grupos.length - 1]);
         agendaCfg.lote_desde = result.lote_grupos[result.lote_grupos.length - 1];
       }
-      updateQueue(item, result, effectiveMode);
+      const escritura = updateQueue(item, result, effectiveMode);
+      // Corte automático: cuenta fallos CONSECUTIVOS de cualquier origen (worker,
+      // disparador o clic manual), porque lo que se rompió es el canal de
+      // Facebook, no quién apretó el botón. Al llegar al tope el disparador queda
+      // pausado un rato en vez de seguir sacando destinos de a uno. Sin esto, el
+      // 2026-10-03, la cola se consumió entera en 2 horas y Facebook dejó de
+      // aceptar los envíos sin decir nada.
+      if (result.ok) limpiarFallos();
+      else registrarFallo(agendaCfg, result.message);
       const avisos = Array.isArray(result.warnings) && result.warnings.length
         ? result.warnings.join('; ') : '';
       const row = {
@@ -590,7 +991,7 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
         mode: effectiveMode,
         ok: result.ok,
         status: result.status,
-        message: ((result.message || '') + (avisos ? ` | aviso: ${avisos}` : '') + (result.img_adjunta !== undefined ? ` | img_adjunta:${result.img_adjunta}` : '') + (result.img_pedidas !== undefined ? ` de ${result.img_pedidas}` : '')).slice(0, 220),
+        message: ((result.message || '') + (escritura && escritura.aplicado === false ? ' | el destino ya no estaba pendiente: no se sobrescribió' : '') + (avisos ? ` | aviso: ${avisos}` : '') + (result.img_adjunta !== undefined ? ` | img_adjunta:${result.img_adjunta}` : '') + (result.img_pedidas !== undefined ? ` de ${result.img_pedidas}` : '')).slice(0, 220),
         post_url: result.post_url || '',
         warnings: Array.isArray(result.warnings) ? result.warnings : [],
       };
@@ -979,6 +1380,26 @@ export function agendaSchedulerState() {
     }
   } catch { /* la BD puede no estar lista */ }
 
+  // Los límites y el corte automático viajan en el estado para que el calendario
+  // pueda explicar el silencio. Sin esto, cuando los topes frenan el disparador
+  // la UI muestra lo mismo que cuando no hay nada vencido: nada. Y "no está
+  // publicando" sin motivo es justo lo que hace que un usuario lo toque todo.
+  let limites = {};
+  try {
+    const decision = decisionActual(cfg || getAgendaConfig());
+    limites = {
+      decision: decision.codigo,
+      motivo: decision.motivo,
+      min_gap_min: cfg ? cfg.min_gap_min : null,
+      max_per_hour: cfg ? cfg.max_per_hour : null,
+      dedupe_hours: cfg ? cfg.dedupe_hours : null,
+      breaker_failures: cfg ? cfg.breaker_failures : null,
+      breaker_cooldown_min: cfg ? cfg.breaker_cooldown_min : null,
+      corte_hasta: decision.codigo === 'breaker' ? toIsoUtc(new Date(leerBreaker().until)) : null,
+      intentos_ultima_hora: decision.intentosHora,
+    };
+  } catch { /* la BD puede no estar lista */ }
+
   return {
     active: Boolean(agendaTimer),
     auto: cfg ? cfg.auto : null,
@@ -993,7 +1414,21 @@ export function agendaSchedulerState() {
     last_tick: lastAgendaTickAt,
     next_tick: nextAgendaTickAt,
     last_tick_result: lastAgendaResult,
+    limites,
   };
+}
+
+/** Lee el estado que necesita `evaluarLimites` desde la base. */
+function decisionActual(cfg, nowMs = Date.now()) {
+  const intentosHora = countAttemptsSince(nowMs - 3600000);
+  const decision = evaluarLimites({
+    cfg,
+    nowMs,
+    lastAttemptMs: lastAttemptInfo(),
+    intentosHora,
+    breaker: leerBreaker(),
+  });
+  return { ...decision, intentosHora };
 }
 
 /**
@@ -1053,15 +1488,55 @@ export function runAgendaTick() {
     return lastAgendaResult;
   }
 
+  // La guardia de duplicados va PRIMERO y antes de cualquier decisión de ritmo,
+  // y por eso escribe: aparta lo que ya salió y recién después se ve si toca
+  // publicar. Si fuera al revés, un tick frenado por el gap dejaría pasar
+  // duplicados para el siguiente, y en 15 minutos se acumulaban 4.
+  const dup = marcarDuplicados(publicables, cfg);
+  if (dup.omitidos) {
+    console.log(`[agenda] ${dup.omitidos} destino(s) repetidos apartados (mismo texto en el mismo grupo hace menos de ${cfg.dedupe_hours} h)`);
+  }
+  const trasDup = dup.ids.length ? publicables.filter(c => !dup.ids.includes(c.id)) : publicables;
+  if (trasDup.length === 0) {
+    lastAgendaResult = { skipped: true, reason: 'todos los vencidos eran repetidos', at: lastAgendaTickAt, quarantined: descartados, duplicados: dup.omitidos };
+    return lastAgendaResult;
+  }
+
+  // Límites de ritmo. Este es el freno que faltaba: hasta acá el tick pasaba
+  // TODOS los vencidos como `ids` y runGroupPublish los iba sacando de a uno con
+  // 45-135 s de pausa entre ellos, sin tope de ninguno. Con el día duplicado
+  // (190 destinos) eso son ~17 publicaciones por hora hasta que Facebook dejó de
+  // aceptarlas en silencio. Ahora se decide una vez por tick y se pasa UN
+  // destino, como mucho.
+  const decision = decisionActual(cfg);
+  const cuantos = cuantosPorTick({ decision });
+  if (cuantos === 0) {
+    lastAgendaResult = {
+      skipped: true,
+      reason: decision.motivo,
+      motivo: decision.codigo,
+      at: lastAgendaTickAt,
+      pendientes: trasDup.length,
+    };
+    return lastAgendaResult;
+  }
+  const elegidas = trasDup.slice(0, cuantos);
+
   // `ids` explícitos: runGroupPublish() los filtra directo sobre dueCandidates()
-  // y se salta pickForRun(), o sea que no pasa por cap/franja/gap/cooldown.
-  const res = startGroupPublish({ ids: publicables.map(c => c.id), auto: false });
+  // y se salta pickForRun(), o sea que no pasa por cap/franja/gap/cooldown del
+  // worker. Por eso los límites de arriba son los únicos que protegen este camino.
+  const res = startGroupPublish({ ids: elegidas.map(c => c.id), auto: false });
   lastAgendaResult = res.accepted
-    ? { started: true, runId: res.runId, queued: publicables.length, quarantined: descartados, at: lastAgendaTickAt }
+    ? {
+      started: true, runId: res.runId, queued: elegidas.length, at: lastAgendaTickAt,
+      quarantined: descartados, duplicados: dup.omitidos,
+      pendientes: trasDup.length - elegidas.length,
+      proximo_min_gap: cfg.min_gap_min,
+    }
     : { skipped: true, reason: res.reason, at: lastAgendaTickAt };
 
   if (res.accepted) {
-    console.log(`[agenda] vencidas: ${publicables.length} (corrida ${res.runId.slice(0, 8)})`);
+    console.log(`[agenda] vencidas: ${elegidas.length} de ${trasDup.length} (corrida ${res.runId.slice(0, 8)}) — gap ${cfg.min_gap_min} min, tope ${cfg.max_per_hour}/h`);
   } else {
     console.log(`[agenda] tick saltado — ${res.reason}`);
   }

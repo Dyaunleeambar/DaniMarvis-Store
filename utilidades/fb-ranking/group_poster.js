@@ -1255,7 +1255,16 @@ async function processGroup(browser, groupUrl, label) {
       await sleep(1500);
     }
     if (!pub.clicked) {
-      return out({ group_url: groupUrl, ok: false, status: 'error', message: 'No se encontró el botón Publicar.' });
+      // Mismo trato que el fallo de abajo: si no se encontró el botón, la
+      // pantalla es la evidencia. Este caso también apareció en el 2026-10-03
+      // (6 veces) y quedó sin ninguna pista de por qué.
+      let captura = '';
+      try {
+        const nombre = 'danimarvis_fallo_check.png';
+        await page.screenshot({ path: require('path').join(require('os').tmpdir(), nombre) });
+        captura = nombre;
+      } catch (_) { /* nunca romper el resultado por una captura */ }
+      return out({ group_url: groupUrl, ok: false, status: 'error', message: 'No se encontró el botón Publicar.', clicks: pub, screenshot: captura });
     }
     if (!cleared) {
       // Diagnóstico para que el error diga POR QUÉ no se ve el envío y no haya
@@ -1276,18 +1285,38 @@ async function processGroup(browser, groupUrl, label) {
           const r = el.getBoundingClientRect();
           mayor = Math.max(mayor, r.width * r.height);
         }
-        // texto de bloqueo que FB muestra en el compositor o encima
-        const norm = (s) => (s || '').replace(/\s+/g, ' ').toLowerCase();
-        const bloqueo = ['no puedes publicar', 'límite', 'limite', 'intenta de nuevo más tarde',
+        // texto de bloqueo que FB muestra en el compositor o encima.
+        //
+        // OJO con el alcance de esta búsqueda: antes miraba SOLO
+        // [role="alert"], y de los 34 fallos del 2026-10-03 ninguno trae aviso.
+        // Facebook no siempre marca el cartel como alert: si rechaza el envío
+        // por ritmo lo muestra como toast o diálogo suelto, y entonces esta
+        // búsqueda volvía con null y el error decía "no se encontró nada", que
+        // es lo mismo que decir "no miré donde tocaba". Ahora se mira todo lo
+        // visible que parezca un cartel, y se devuelve el TEXTO, no solo la
+        // palabra clave: "no se encontró ningún aviso" y "FB dijo tal cosa" son
+        // dos datos distintos y solo el segundo sirve para actuar.
+        const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+        const normLow = (s) => norm(s).toLowerCase();
+        const possibles = Array.from(document.querySelectorAll(
+          'div[role="alert"], span[role="alert"], div[role="dialog"], [data-testid*="Dialog"]'
+        )).filter(vis)
+          .map(el => norm(el.innerText))
+          .filter(t => t && t.length < 400);
+        const palabras = ['no puedes publicar', 'límite', 'limite', 'intenta de nuevo más tarde',
           'intenta de nuevo mas tarde', 'verificación', 'verificacion', 'confirmá tu cuenta',
-          'confirma tu cuenta', 'sugerencia', 'error', 'bloqueado', 'demasiado']
-          .find(k => Array.from(document.querySelectorAll('div[role="alert"], span[role="alert"]'))
-            .some(a => norm(a.innerText).includes(k)));
+          'confirma tu cuenta', 'sugerencia', 'error', 'bloqueado', 'demasiado', 'espera un momento',
+          'lo siento', 'no pudimos', 'intenta de nuevo'];
+        const conAviso = posibles.find(t => palabras.some(k => normLow(t).includes(k)));
+        const bloqueo = conAviso ? conAviso.slice(0, 160)
+          : (palabras.find(k => posibles.some(t => normLow(t).includes(k))) || null);
         return {
           editables: edits.length,
           conTexto: conTexto.length,
           areaMax: Math.round(mayor),
           bloqueo: bloqueo || null,
+          // Para el log: cuántos carteles había, aunque ninguno fuera un aviso.
+          carteles: posibles.length,
         };
       }).catch(() => ({}));
       // Un post largo o con 6+ imágenes necesita bastante más que 30 s para
@@ -1305,10 +1334,24 @@ async function processGroup(browser, groupUrl, label) {
         : (diag.conTexto
             ? ' El texto sigue en el compositor: el post probablemente NO se envió.'
             : ' No se encontró el compositor al releer, así que no se puede confirmar el envío.');
+      // Captura del FALLO. Antes solo se fotografiaba el éxito, que es justo lo
+      // que no hace falta: cuando algo sale mal, la imagen de la pantalla es
+      // often the only thing that shows a dialog, a spinner, a disabled button or
+      // an unexpected page. Va al mismo tempdir que la del éxito para que el
+      // usuario la pueda abrir sin buscar nada.
+      let captura = '';
+      try {
+        const nombre = 'danimarvis_fallo_check.png';
+        await page.screenshot({ path: require('path').join(require('os').tmpdir(), nombre) });
+        captura = nombre;
+      } catch (_) { /* la captura es un extra: nunca debe romper el resultado */ }
       return out({
         group_url: groupUrl, ok: false, status: 'error',
         message: `Se hizo clic en Publicar pero el post no se envió (${diag.conTexto || 0} editor(es) con texto, el mayor de ${diag.areaMax || 0}px²).${porQuien}`,
         clicks: pub,
+        alert_text: diag.bloqueo || '',
+        carteles: diag.carteles || 0,
+        screenshot: captura,
       });
     }
     // diagnosticar el post recién publicado (¿trae la foto?) en esta misma pestaña
