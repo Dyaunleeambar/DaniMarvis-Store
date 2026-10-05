@@ -21,13 +21,34 @@ export async function render(container) {
   }
 }
 
+// Límite numérico para los campos del disparador por fecha.
+//
+// El backend recampa igual (getAgendaConfig), pero recampar acá evita mandar
+// NaN: `parseInt('abc') || 15` da 15 por casualidad, y `Number('abc')` da NaN
+// que se serializa como `null` en el JSON. Este helper es el único lugar donde
+// se decide qué se guarda, así que los rangos están anotados junto al valor.
+function limite(valor, def, min, max) {
+  const n = Number(valor);
+  if (!Number.isFinite(n)) return def;
+  return Math.max(min, Math.min(max, Math.round(n)));
+}
+
 function renderPage(container, settings, categories, providerStyles) {
   const pc = settings.publish_config || {};
   const template = pc.template || '';
   const ai = pc.ai || {};
   const fb = pc.facebook || {};
   const ap = pc.autopublish || {};
-  const ag = pc.agenda || { auto: true, tick_min: 1, catchup_hours: 24 };
+  const ag = pc.agenda || {};
+  // Defaults del backend (DEFAULT_AGENDA en backend/lib/groupPublisher.js).
+  // Se repiten acá para que los campos nazcan con el valor real en pantalla:
+  // estas claves no viven en la base hasta que el usuario las toque, así que sin
+  // esto los inputs se verían vacíos aunque el servidor esté aplicando otro valor.
+  const AG = {
+    auto: true, tick_min: 1, catchup_hours: 24,
+    min_gap_min: 15, max_per_hour: 4, dedupe_hours: 6,
+    breaker_failures: 3, breaker_cooldown_min: 60,
+  };
   const ms = pc.master || { on: true };
   const rk = pc.ranking || {};
 
@@ -192,16 +213,62 @@ function renderPage(container, settings, categories, providerStyles) {
             <div class="form-row">
               <div class="form-group">
                 <label>Revisar la agenda cada (min)</label>
-                <input type="number" name="ag_tick" class="form-control" min="1" max="15" value="${ag.tick_min ?? 1}" />
+                <input type="number" name="ag_tick" class="form-control" min="1" max="15" value="${ag.tick_min ?? AG.tick_min}" />
                 <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">1 minuto = lo más exacto. Se aplica al guardar, sin reiniciar.</small>
               </div>
               <div class="form-group">
                 <label>Recuperar vencidos hasta (h)</label>
-                <input type="number" name="ag_catchup" class="form-control" min="0" max="168" value="${ag.catchup_hours ?? 24}" />
+                <input type="number" name="ag_catchup" class="form-control" min="0" max="168" value="${ag.catchup_hours ?? AG.catchup_hours}" />
                 <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">
                   Si el server estuvo apagado, se publica lo que venció dentro de esta ventana. Lo más
                   viejo que esto queda marcado como <em>Omitida</em>: no se publica solo, para no salir
                   un post de hace tres días sin que lo veas.
+                </small>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Separación mínima entre posts (min)</label>
+                <input type="number" name="ag_gap" class="form-control" min="1" max="1440" value="${ag.min_gap_min ?? AG.min_gap_min}" />
+                <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">
+                  Espera mínima desde el último <em>intento</em>, no desde el último post: si
+                  un post falla, la espera igual corre. Contra el reloj real cada corrida
+                  tarda 2-4 min, así que abajo de 4 no cambia nada.
+                </small>
+              </div>
+              <div class="form-group">
+                <label>Tope de intentos por hora</label>
+                <input type="number" name="ag_hour" class="form-control" min="1" max="60" value="${ag.max_per_hour ?? AG.max_per_hour}" />
+                <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">
+                  Techo duro por hora, contando también los que fallan y los que clickeás a mano.
+                  <strong>Ojo:</strong> el ritmo real es el menor de los dos límites,
+                  <code>min(60/separación, tope)</code>. Con 15 y 4 dan 4/hora: son el mismo
+                  número. Para publicar más hay que bajar <em>los dos</em>.
+                </small>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>No repetir texto en el mismo grupo (h)</label>
+                <input type="number" name="ag_dedupe" class="form-control" min="0" max="168" value="${ag.dedupe_hours ?? AG.dedupe_hours}" />
+                <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">
+                  0 desactiva la guardia: el duplicado se cancela solo y queda esperando
+                  decisión tuya en el calendario.
+                </small>
+              </div>
+              <div class="form-group">
+                <label>Fallos que pausan el disparador</label>
+                <input type="number" name="ag_brk_n" class="form-control" min="1" max="20" value="${ag.breaker_failures ?? AG.breaker_failures}" />
+                <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">
+                  Con la pausa de al lado: corta todo y avisa, en vez de seguir insistiendo
+                  contra Facebook. Son los que dejaron 30 errores iguales el 2026-10-03.
+                </small>
+              </div>
+              <div class="form-group">
+                <label>Pausa del corte (min)</label>
+                <input type="number" name="ag_brk_min" class="form-control" min="5" max="1440" value="${ag.breaker_cooldown_min ?? AG.breaker_cooldown_min}" />
+                <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">
+                  Cuánto queda cortado después de alcanzar el número de fallos de arriba.
                 </small>
               </div>
             </div>
@@ -469,8 +536,18 @@ function renderPage(container, settings, categories, providerStyles) {
       },
       agenda: {
         auto: fd.get('ag_auto') === '1',
-        tick_min: parseInt(fd.get('ag_tick'), 10) || 1,
-        catchup_hours: Number.isFinite(Number(fd.get('ag_catchup'))) ? Number(fd.get('ag_catchup')) : 24
+        tick_min: limite(fd.get('ag_tick'), 1, 1, 15),
+        catchup_hours: limite(fd.get('ag_catchup'), 24, 0, 168),
+        // Límites de ritmo. Antes vivían solo en DEFAULT_AGENDA (código) y no había
+        // forma de verlos ni tocarlos desde acá. Los rangos son los mismos clamps
+        // de getAgendaConfig() en backend/lib/groupPublisher.js.
+        min_gap_min: limite(fd.get('ag_gap'), 5, 1, 1440),
+        max_per_hour: limite(fd.get('ag_hour'), 12, 1, 60),
+        // 0 tiene que poder DESACTIVAR el dedupe (lo dice el default del backend),
+        // por eso no puede caer en el `|| default`: de ahí el helper `limite`.
+        dedupe_hours: limite(fd.get('ag_dedupe'), 6, 0, 168),
+        breaker_failures: limite(fd.get('ag_brk_n'), 3, 1, 20),
+        breaker_cooldown_min: limite(fd.get('ag_brk_min'), 60, 5, 1440)
       },
       ranking: {
         auto_enabled: fd.get('rk_auto_enabled') === '1',

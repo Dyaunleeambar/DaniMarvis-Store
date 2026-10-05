@@ -32,7 +32,11 @@ function base() {
     ai: { enabled: true, api_url: 'https://openrouter.ai/api/v1', api_key: REAL, model: 'x', system_prompt: 'p' },
     facebook: { page_id: '123', access_token: TOKEN },
     master: { on: true },
-    agenda: { auto: true, tick_min: 1 },
+    // `lote_desde` es el cursor de rotación de grupos: lo escribe el publicador
+    // en `pc.agenda.lote_desde` mientras corre, y el formulario de Ajustes no lo
+    // manda nunca. Por eso el merge de `agenda` no puede reemplazar el objeto
+    // entero.
+    agenda: { auto: true, tick_min: 1, lote_desde: 'Compra venta Cárdenas con precio', grupos_por_post: 9 },
   };
 }
 
@@ -114,6 +118,38 @@ console.log('\n7. pareceSecretoValido: el filtro de la cabecera');
   ok('vacío o no-string no', !pareceSecretoValido('') && !pareceSecretoValido(null) && !pareceSecretoValido(42));
   ok('con espacio interno sí (es legal)', pareceSecretoValido('sk or v1 abc'));
   ok('resolverSecreto respeta el quitar', resolverSecreto({ incoming: 'x', vigente: REAL, quitar: true }) === undefined);
+}
+
+console.log('\n8. `agenda` campo por campo: el cursor de rotación sobrevive');
+{
+  // Lo que hace el formulario de Ajustes: manda `agenda` con tres claves y ni
+  // se entera de que hay un cursor adentro. Con `{...actual, ...nuevo}` el
+  // objeto entero se reemplaza y `lote_desde` vuelve a '' — la rotación de los
+  // grupos se reiniciaba desde el grupo 0 con cada guardado de Ajustes.
+  const comoLaUi = mergePublishConfig(base(), {
+    agenda: { auto: true, tick_min: 1, catchup_hours: 24 },
+  });
+  ok('el cursor lote_desde sobrevive a un guardado de Ajustes',
+    comoLaUi.agenda.lote_desde === 'Compra venta Cárdenas con precio',
+    JSON.stringify(comoLaUi.agenda));
+  ok('grupos_por_post también', comoLaUi.agenda.grupos_por_post === 9);
+  ok('y las tres claves que sí mandaron se aplican',
+    comoLaUi.agenda.catchup_hours === 24 && comoLaUi.agenda.tick_min === 1);
+
+  // Bajar el ritmo manda solo los dos límites de ritmo.
+  const soloLimites = mergePublishConfig(base(), { agenda: { min_gap_min: 8, max_per_hour: 6 } });
+  ok('un update de ritmo no borra el cursor', soloLimites.agenda.lote_desde === 'Compra venta Cárdenas con precio');
+  ok('ni los grupos por post', soloLimites.agenda.grupos_por_post === 9);
+  ok('y los límites nuevos quedan', soloLimites.agenda.min_gap_min === 8 && soloLimites.agenda.max_per_hour === 6);
+
+  // Un `''` explícito SÍ limpia el cursor: el merge tiene que distinguir
+  // "no mandé la clave" de "la mandé vacía a propósito".
+  const limpiar = mergePublishConfig(base(), { agenda: { lote_desde: '' } });
+  ok('un lote_desde vacío explícito sí se aplica', limpiar.agenda.lote_desde === '');
+  ok('y no borra los otros límites al hacerlo', limpiar.agenda.min_gap_min === undefined && limpiar.agenda.grupos_por_post === 9);
+
+  ok('un envío sin agenda deja la agenda entera',
+    JSON.stringify(mergePublishConfig(base(), {}).agenda) === JSON.stringify(base().agenda));
 }
 
 console.log(fallos ? `\n${fallos} prueba(s) fallaron\n` : '\nTodo en verde\n');

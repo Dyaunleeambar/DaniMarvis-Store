@@ -560,7 +560,7 @@ router.post('/:id/run', (req, res) => {
   // runNow: el evento puede estar agendado para más adelante, y "Publicar
   // ahora" tiene que salir igual. Sin esto, dueCandidates() filtraría los
   // destinos por scheduled_at <= now y la corrida terminaría vacía.
-  const r = startGroupPublish({ auto: false, ids, runNow: true });
+  const r = startGroupPublish({ auto: false, ids, runNow: true, origen: 'manual' });
   if (r.skipped) return res.status(409).json(r);
   res.status(202).json(r);
 });

@@ -591,12 +591,18 @@ function destinoHTML(d) {
     ? `<button type="button" class="btn btn--sm btn--danger" data-descartar="${d.id}"
          title="Sacar este destino de la lista sin borrarlo">Descartar</button>`
     : '';
+  // "Publicada" sola miente cuando el post quedó esperando al administrador del
+  // grupo: salió del compositor pero todavía no se ve. El 2026-10-04 pasó — un
+  // post en esa situación se contó como entregado. El tag principal lo dice.
+  const tag = (d.status === 'published' && d.pending_approval)
+    ? 'Publicada (esperando aprobación)'
+    : (DEST_ICON[d.status] || d.status);
   return `<div class="agenda-destino">
     <span class="agenda-destino-dot agenda-destino-dot--${d.status}"></span>
     <div class="agenda-destino-cuerpo">
       <div class="agenda-destino-nombre">${escHtml(d.group_name || 'Grupo')}</div>
       <div class="agenda-destino-notas">
-        <b>${escHtml(DEST_ICON[d.status] || d.status)}</b>${cuando ? ' · ' + cuando : ''}
+        <b>${escHtml(tag)}</b>${cuando ? ' · ' + cuando : ''}
         ${notas ? '<br>' + escHtml(notas) : ''}
       </div>
       ${d.pending_approval ? '<div class="agenda-destino--aprobacion">Queda esperando al administrador del grupo</div>' : ''}

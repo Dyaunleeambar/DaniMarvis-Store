@@ -833,15 +833,46 @@ Estos son los de `DEFAULT_AGENDA` en `backend/lib/groupPublisher.js`, y son **ot
 | `auto` | `true` | Disparador armado |
 | `tick_min` | `1` | Cada cuánto mira los vencidos |
 | `catchup_hours` | `24` | Vencido hace más que esto **no** se recupera solo |
-| `min_gap_min` | `15` | Separación mínima entre publicaciones |
-| `max_per_hour` | `4` | Tope duro por hora |
+| `min_gap_min` | `5` | Separación mínima, medida **de inicio a inicio** |
+| `max_per_hour` | `12` | Tope duro por hora |
+| `grupos_por_post` | `9` | Cuántos grupos se tildan por publicación (el "lote") |
 | `dedupe_hours` | `6` | No repetir el mismo texto en el mismo grupo antes de esto (`0` = no) |
 | `breaker_failures` | `3` | Fallos **consecutivos** que pausan el disparador |
 | `breaker_cooldown_min` | `60` | Cuánto dura esa pausa |
 
 El gap se mide contra el **último intento**, no el último acierto: con todo fallando el acierto nunca avanzaba y cada error iba seguido del siguiente vencido.
 
-> **Esto se puso el 2026-10-03 porque no existía.** El día duplicado dejó 190 destinos y el disparador los fue sacando a ~17 por hora, hasta que Facebook dejó de aceptar los envíos sin avisar nada. Los límites seAggregan en `publish_config.agenda` y el estado del corte en `publish_config._breaker`.
+Y se ancla al **arranque** de ese intento, no a su `published_at`. No es un detalle: `published_at` siempre es posterior al arranque, así que medir desde ahí suma la duración de cada corrida al gap. Con corridas de ~1.5 min y gap de 5, eso rendía ~8 publicaciones por hora en vez de 12. La marca de arranque vive en `publish_config._ultimoIntento` y sobrevive a reinicios; si no está, se cae a `published_at`.
+
+> Con `min_gap_min: 5`, `grupos_por_post: 9` y un tick por minuto, el techo son **12 publicaciones por hora** (≈120 interacciones con grupos por hora). Es un ritmo agresivo alto para Facebook: el sistema **no puede detectar** que la plataforma dejó de aceptar envíos en silencio. Si baja la propagación de forma sostenida, es la señal para bajarlo.
+
+> **Esto se puso el 2026-10-03 porque no existía.** El día duplicado dejó 190 destinos y el disparador los fue sacando a ~17 por hora, hasta que Facebook dejó de aceptar los envíos sin avisar nada. Los límites se agregan en `publish_config.agenda` y el estado del corte en `publish_config._breaker`.
+
+#### La API key vive en dos lugares
+
+`publish_config.ai.api_key` es la fuente, y `.env` es la copia de seguridad. Al arrancar, `backend/lib/secrets.js` rellena la base desde el `.env` **solo si la base no trae key** — el `.env` nunca pisa una key que ya está en la base, para que un valor viejo no destruya una key nueva.
+
+Esto se agregó el 2026-10-04: la `publish_config` quedó en `NULL`, la migración de la agenda leyó `{}` y la degradó para siempre a tres claves. Con eso se perdieron la API key, los límites del reloj y el cursor de rotación, **sin un solo error**. La key se recuperó de un respaldo de dos días.
+
+`.env` está en `.gitignore`. Para regenerarlo basta con arrancar el servidor con la base sana: se escribe solo.
+
+**Los límites del reloj y el cursor de rotación NO están respaldados.** Viven solo en la base y se reconfiguran a mano en cinco segundos, pero conviene saberlo antes de tocar la tabla `settings`.
+
+#### Correr la base de verdad en las pruebas
+
+`DANIMARVIS_DB` y `DANIMARVIS_ENV_PATH` apuntan la base y el `.env` a otro archivo, así que las pruebas pueden arrancar el `initDB()` completo (mismas migraciones que producción) sin tocar datos reales.
+
+```bash
+DANIMARVIS_DB=/tmp/prueba.db DANIMARVIS_ENV_PATH=/tmp/prueba.env \
+  node -e "import('./backend/db/database.js').then(m => m.initDB())"
+```
+
+`npm run check` incluye `scripts/test-persistencia-config.mjs`, que verifica que la configuración sobreviva a un reinicio y que una base dañada recupere la key. Ese test también falla si toca el `.env` del proyecto: los fixtures corren contra su propio temporal.
+
+> Dos trampas de `sql.js@1.14.1` que costaron tiempo:
+>
+> - El `db.prepare(...)` **crudo** no persiste y **no falla**. En la app no pasa porque `backend/db/database.js` envuelve las sentencias con un `Statement` propio que hace bind + step. En scripts sueltos, usar `db.run(sql, [params])` y verificar con una lectura después de `db.export()`.
+> - No editar `backend/danimarvis.db` con el servidor vivo: `initDB()` termina en `saveDB()` y reescribe el archivo entero desde memoria.
 
 **El interruptor maestro** (`publish_config.master.on`) es una llave aparte: mientras esté en `false` no arranca **ninguna** corrida — ni del worker, ni del disparador, ni manual.
 

@@ -9,7 +9,10 @@ import { transaccion } from '../lib/transaccion.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const DB_PATH = join(__dirname, '..', 'danimarvis.db');
+// La ruta sale del entorno para que las pruebas puedan arrancar la base de verdad
+// contra un archivo temporal. Probar esto sin ese escape significaba correr
+// initDB() sobre la base de producción, que reescribe el archivo entero.
+const DB_PATH = process.env.DANIMARVIS_DB || join(__dirname, '..', 'danimarvis.db');
 
 let db = null;
 
@@ -97,17 +100,31 @@ export async function initDB() {
   migratePromptEngine();
   migrateGeneratedImages();
   migrateCommissionCurrency();
-  migrateGroupFbId();
   migrateProviderStyleCode();
   migrateProviderStyles();
   migrateWarrantyRules();
   migrateWarrantyEnd();
   migrateFacebookGroups();
+  // DESPUÉS de migrateFacebookGroups: esta migración consulta facebook_groups, y
+  // esa tabla la crea la de arriba. Con el orden viejo, una instalación nueva
+  // reventaba en el arranque con "no such table: facebook_groups" y el servidor
+  // no levantaba. El orden era el único que funcionaba porque en la base que ya
+  // existía la tabla estaba de antes.
+  migrateGroupFbId();
   migrateRankingSnapshots();
   migrateRankingHistory();
   migratePageRoutines();
   migrateAuthSecret();
   migrateIndexes();
+  // Antes de volcar al archivo. Si la base perdió la key, este es el último
+  // momento en que se puede reinyectar y dejar el .env con la copia al día.
+  try {
+    const { reconciliarApiKey, respaldarApiKey } = await import('../lib/secrets.js');
+    const key = reconciliarApiKey(db, { onLog: (m) => console.log(m) });
+    respaldarApiKey(key);
+  } catch (e) {
+    console.log(`[secretos] no se pudo reconciliar la API key: ${e.message}`);
+  }
   saveDB();
 }
 
@@ -830,6 +847,13 @@ function migrateGroupFbId() {
   try {
     db.exec("ALTER TABLE facebook_groups ADD COLUMN fb_id TEXT");
   } catch (_) { /* ya existe */ }
+
+  // Si la tabla todavía no está, no hay nada que backfillear. Se sale callado a
+  // propósito: la migración que la crea corre en este mismo arranque, y en el
+  // siguiente esta vuelve a ejecutarse sola. Lo que NO puede ser es reventar, que
+  // es lo que pasaba con este bloque antes de que existiera la tabla.
+  const existe = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='facebook_groups'").get();
+  if (!existe) return;
 
   // Backfill: el ID siempre estuvo dentro de la URL.
   const filas = db.prepare("SELECT id, url FROM facebook_groups WHERE url LIKE '%/groups/%'").all();

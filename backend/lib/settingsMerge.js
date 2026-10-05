@@ -58,8 +58,14 @@ function aplicarSecreto(destino, nombre, incoming, vigente, quitar) {
  * Fusiona la config entrante con la vigente.
  *
  * - Las claves de primer nivel que no llegan se conservan.
- * - `ai` y `facebook` se mezclan campo por campo, para que mandar solo la API
- *   key no borre la URL, el modelo ni el system_prompt.
+ * - `ai`, `facebook` y `agenda` se mezclan campo por campo, para que mandar solo
+ *   la API key no borre la URL, el modelo ni el system_prompt.
+ * - `agenda` va campo por campo por el cursor de rotación: `lote_desde` lo
+ *   guarda el publicador en `pc.agenda.lote_desde` mientras corre, y el
+ *   formulario de Ajustes manda `agenda` con solo `auto`/`tick_min`/
+ *   `catchup_hours`. Con el reemplazo entero del `{...actual, ...nuevo}`, cada
+ *   guardado de Ajustes devolvía el cursor a `''` y la rotación de los 121
+ *   grupos se reiniciaba desde el grupo 0.
  * - Los flags `remove_*` se aplican y después se borran del resultado: si
  *   quedaran guardados, el próximo guardado los volvería a aplicar y borraría
  *   el secreto de nuevo.
@@ -76,6 +82,7 @@ export function mergePublishConfig(existing = {}, incoming = {}) {
 
   const ai = { ...(actual.ai || {}), ...(nuevo.ai || {}) };
   const facebook = { ...(actual.facebook || {}), ...(nuevo.facebook || {}) };
+  const agenda = { ...(actual.agenda || {}), ...(nuevo.agenda || {}) };
 
   aplicarSecreto(
     ai, 'api_key',
@@ -91,5 +98,5 @@ export function mergePublishConfig(existing = {}, incoming = {}) {
   delete ai.remove_ai_key;
   delete facebook.remove_fb_token;
 
-  return { ...actual, ...nuevo, ai, facebook };
+  return { ...actual, ...nuevo, ai, facebook, agenda };
 }

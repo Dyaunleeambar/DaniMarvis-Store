@@ -17,3 +17,7 @@ dist2/
 dist3/
 server.log
 precios-importacion/
+
+# Salida generada: lo escribe utilidades/fb-ranking/content_library_views.js al
+# correr el POC de forma manual. Es un artefacto de runtime, no fuente.
+utilidades/fb-ranking/reporte_POC_fechas.json

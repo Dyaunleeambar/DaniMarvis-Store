@@ -16,10 +16,12 @@
 // Lo que se puede probar sin navegador va con funciones puras o con la base en
 // memoria (scripts/helpers/sqljs.mjs). Lo que necesita Chrome de verdad (que el
 // clic en "Publicar" surta efecto) no se prueba acá: se mira en un post real.
+import { readFileSync } from 'node:fs';
 import { abrirMemoria } from './helpers/sqljs.mjs';
 import {
   evaluarLimites, cuantosPorTick, claveDuplicado, marcarDuplicadosEn,
-  parsePosterDiag, classifyFailure, CAUSAS, DEFAULT_AGENDA,
+  parsePosterDiag, classifyFailure, notaLote, logFinCorrida, elegirAnclaIntento,
+  CAUSAS, DEFAULT_AGENDA,
 } from '../backend/lib/groupPublisher.js';
 import { deshacerDuplicacion } from '../backend/lib/duplicarDia.js';
 
@@ -40,6 +42,86 @@ const CFG = {
 };
 
 // ── 1. la política de ritmo ──────────────────────────────────────────────────
+console.log('\n1b. el gap cuenta de INICIO a INICIO, no desde que el post termina');
+{
+  // Antes el gap se medía contra `published_at` (cuando el post TERMINA), así que
+  // el ciclo real era `gap + duración de la corrida`: con 1m35s de media, un gap
+  // de 8 min daba 6,3/h y el tope de 6/h nunca era el que mandaba. Pedir 12/h con
+  // la semántica vieja era imposible sin bajar el gap a 3 y casi sin descanso.
+  const ahora = Date.now();
+  const CFG12 = { ...CFG, min_gap_min: 5, max_per_hour: 12 };
+  const duracionReal = 95 * 1000; // lo que tardó la corrida real del 2026-10-04
+
+  // Post que empezó hace 5 min y terminó hace 5 - 1m35s.
+  const inicio = ahora - 5 * MIN;
+  const fin = inicio + duracionReal;
+  ok('a los 5 min exactos del INICIO ya puede salir el siguiente',
+    evaluarLimites({ cfg: CFG12, nowMs: ahora, lastAttemptMs: inicio, intentosHora: 0 }).ok,
+    evaluarLimites({ cfg: CFG12, nowMs: ahora, lastAttemptMs: inicio, intentosHora: 0 }).motivo);
+  ok('con la semántica vieja (medir desde published_at) NO salía',
+    !evaluarLimites({ cfg: CFG12, nowMs: ahora, lastAttemptMs: fin, intentosHora: 0 }).ok);
+
+  // 12/h con gap 5 significa: una publicación cada 5 min, sin importar cuánto
+  // tardó cada una. 12 ticks de 5 min = 12 publicaciones.
+  let t = ahora;
+  let publicadas = 0;
+  for (let i = 0; i < 13; i++) {
+    const d = evaluarLimites({ cfg: CFG12, nowMs: t, lastAttemptMs: i === 0 ? null : t - 5 * MIN, intentosHora: publicadas });
+    if (d.ok) { publicadas++; }
+    t += 5 * MIN;
+  }
+  ok('gap 5 + tope 12 rinden 12 publicaciones en una hora', publicadas === 12, `salieron ${publicadas}`);
+
+  // El ritmo real NO puede depender de cuánto tarda cada post.
+  const rapida = ahora - 5 * MIN;
+  const lenta = ahora - 5 * MIN;
+  ok('el ritmo es el mismo con corridas de 30s o de 8 min',
+    evaluarLimites({ cfg: CFG12, nowMs: ahora, lastAttemptMs: rapida, intentosHora: 0 }).ok
+    && evaluarLimites({ cfg: CFG12, nowMs: ahora, lastAttemptMs: lenta, intentosHora: 0 }).ok);
+
+  ok('con el tope de 12/h frena al llegar a 12 aunque el gap ya se haya cumplido',
+    !evaluarLimites({ cfg: CFG12, nowMs: ahora, lastAttemptMs: ahora - 20 * MIN, intentosHora: 12 }).ok);
+}
+
+/**
+ * El anclaje del gap.
+ *
+ * Este bloque cubre el bug que los tests de `evaluarLimites` no podían ver: aquellos
+ * le pasan `lastAttemptMs` ya calculado a mano, así queashion No Importa cómo se
+ * obtenía. El error real estaba aguas arriba, en elegir entre la marca de arranque
+ * y `published_at`, y salía como ritmo de ~8/h en vez de 12/h sin ningún test en rojo.
+ */
+console.log('\n1c. elegirAnclaIntento: de dónde sale el ancla');
+{
+  const ahora = Date.now();
+  const duracionReal = 95 * 1000;
+  const inicio = ahora - 5 * MIN;
+  const fin = inicio + duracionReal;   // el post terminó DESPUÉS de arrancar
+
+  // El caso que rompía: con `Math.max` de los dos, ganaba `published_at` (siempre
+  // posterior al arranque) y el gap se medía desde el final.
+  ok('con marca de arranque y published_at, manda el ARRANQUE',
+    elegirAnclaIntento({ marca: { ms: inicio, at: new Date(inicio).toISOString() }, finMs: fin }) === inicio,
+    `devolvio ${elegirAnclaIntento({ marca: { ms: inicio, at: new Date(inicio).toISOString() }, finMs: fin })}`);
+  ok('nunca devuelve el published_at si hay marca de arranque',
+    elegirAnclaIntento({ marca: { ms: inicio }, finMs: fin }) !== fin);
+
+  // Y el efecto observable: a los 5 min del arranque tiene que poder salir el
+  // siguiente. Si el anclaje fuera el final, faltaría la duración del post.
+  const anclaje = elegirAnclaIntento({ marca: { ms: inicio }, finMs: fin });
+  ok('a los 5 min exactos del inicio ya puede salir otro (si fuera el final, no)',
+    evaluarLimites({ cfg: { min_gap_min: 5, max_per_hour: 12 }, nowMs: ahora, lastAttemptMs: anclaje, intentosHora: 0 }).ok);
+
+  // Plan B: sin marca (base vieja, o que no se pudo guardar) se usa published_at.
+  ok('sin marca cae a published_at', elegirAnclaIntento({ marca: null, finMs: fin }) === fin);
+  ok('sin marca y sin published_at no inventa un ancla', elegirAnclaIntento({ marca: null, finMs: null }) === null);
+
+  // Marca corrupta: no debe romper ni devolver basura.
+  ok('marca con ms en texto se interpreta', elegirAnclaIntento({ marca: { ms: String(inicio) }, finMs: fin }) === inicio);
+  ok('marca basura no pisa el published_at', elegirAnclaIntento({ marca: { ms: 0, at: 'no-es-fecha' }, finMs: fin }) === fin);
+  ok('acepta la marca solo por texto ISO', elegirAnclaIntento({ marca: { at: new Date(inicio).toISOString() }, finMs: fin }) === inicio);
+}
+
 console.log('\n1. evaluarLimites: qué decide salir y qué frena');
 {
   const ahora = Date.UTC(2026, 9, 3, 15, 0, 0);
@@ -216,11 +298,17 @@ console.log('\n6. classifyFailure: "el clic no surtió efecto" es su propia caus
 // ── 7. los valores por defecto ───────────────────────────────────────────────
 console.log('\n7. los límites por defecto son los acordados');
 {
-  ok('separación de 15 min', DEFAULT_AGENDA.min_gap_min === 15, String(DEFAULT_AGENDA.min_gap_min));
-  ok('tope de 4 por hora', DEFAULT_AGENDA.max_per_hour === 4, String(DEFAULT_AGENDA.max_per_hour));
+  // El punto de operación acordado es 12 posts por hora: gap 5 medido de INICIO
+  // a INICIO. El tope va en 12, no más alto, para que un aflojo del gap no pueda
+  // dejar pasar más. Estos defaults son los de una base nueva, así que si se
+  // cambian hay que cambiarlos acá también o el test miente.
+  ok('separación de 5 min (de inicio a inicio)', DEFAULT_AGENDA.min_gap_min === 5, String(DEFAULT_AGENDA.min_gap_min));
+  ok('tope de 12 por hora', DEFAULT_AGENDA.max_per_hour === 12, String(DEFAULT_AGENDA.max_per_hour));
   ok('duplicados barredos a las 6 h', DEFAULT_AGENDA.dedupe_hours === 6, String(DEFAULT_AGENDA.dedupe_hours));
   ok('corte a los 3 fallos', DEFAULT_AGENDA.breaker_failures === 3, String(DEFAULT_AGENDA.breaker_failures));
   ok('pausa de 60 min', DEFAULT_AGENDA.breaker_cooldown_min === 60, String(DEFAULT_AGENDA.breaker_cooldown_min));
+  ok('el tope Real nunca excede el acordado aunque el gap se afloje',
+    Math.min(60 / DEFAULT_AGENDA.min_gap_min, DEFAULT_AGENDA.max_per_hour) <= 12);
 }
 
 // ── 8. el deshacer parcial ───────────────────────────────────────────────────
@@ -297,6 +385,124 @@ console.log('\n8. deshacerDuplicacion: borra lo que no salió, conserva lo que s
   ok('repetir el deshacer conserva el publicado', existe('publication_queue', 'c1-A'));
   ok('repetir el deshacer no borra nada más', r2.resumen.destinos_borrados === 0);
   ok('repetir el deshacer no tira la publicación', existe('publications', 'c1'));
+}
+
+console.log('\nnotaLote: la propagación a N grupos queda asentada');
+{
+  // El 2026-10-04 el usuario reportsó un post que salió "solo en el destino
+  // programado" y no había forma de confirmarlo ni de refutarlo: el poster
+  // devolvía lote_grupos y el backend lo descartaba. Estos tests fijan que la
+  // nota se escriba siempre que el poster mande el dato.
+  const conLote = notaLote({ lote_grupos: ['Revolico A', 'Revolico B', 'Revolico C'], grupos_en_lista: 121 });
+  ok('anota cuántos grupos del lote se tickearon', conLote.includes('3/121 grupos'));
+  ok('y cuáles fueron', conLote.includes('Revolico A | Revolico B | Revolico C'));
+
+  ok('sin /total si el poster no lo manda', notaLote({ lote_grupos: ['X'] }).includes(' | lote: 1 grupos ['));
+  ok('lista vacía se asienta, no se ignora',
+    notaLote({ lote_grupos: [], grupos_en_lista: 121 }).includes('NO se tildó ningún grupo'));
+  ok('sin el campo no inventa nada', notaLote({}) === '' && notaLote(null) === '');
+  ok('filtra nombres vacíos', notaLote({ lote_grupos: ['A', '', null, 'B'] }).includes('[A | B]'));
+  ok('no se desborda con 30 grupos largos (y el conteo sobrevive al corte)',
+    notaLote({ lote_grupos: Array(30).fill('Grupo muy largo de nombre').map((_, i) => 'G' + i) }).length <= 242
+    && notaLote({ lote_grupos: Array(30).fill('Grupo muy largo de nombre').map((_, i) => 'G' + i) }).includes('30 grupos'));
+  // El presupuesto de `notes` es 500 chars y la nota de imágenes va después del
+  // lote: si el lote se pasa de largo, la imagen se pierde. Esto lo delimita.
+  const notaLarga = notaLote({ lote_grupos: Array(30).fill('Grupo extremadamente largo').map((_, i) => 'G' + i), grupos_en_lista: 121 });
+  const completo = 'auto:publicado 2026-10-04T11:42:55 | pendiente de aprobación del administrador'
+    + notaLarga + ' | imágenes: FB confirmó los adjuntos (5 pedidas; conteo exacto no verificado)';
+  ok('con el lote más largo posible, la nota de imágenes sigue entrando',
+    completo.length <= 500, 'largo total: ' + completo.length);
+}
+
+console.log('\nlog por corrida: el registro tiene que poder auditar una publicación');
+{
+  // El 2026-10-04 hubo un post 1,75 min después de un error, con el gap en 15, y
+  // no se pudo saber si lo sac00f3 el reloj o el usuario: la agenda y el clic
+  // manual llamaban los DOS con `auto: false`. Estos tests fijan que el origen
+  // viaje explícito y que ninguna corrida quede a medio loguear.
+  const leer = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
+  const gp = leer('../backend/lib/groupPublisher.js');
+
+  const callSites = (src) => [...src.matchAll(/startGroupPublish\(\s*\{([^}]*)\}/g)].map(m => m[1]);
+  const enLibro = callSites(gp).filter(c => !/^\s*(auto|force|ids|mode|debug|runNow)\s*[=}]/.test(c) || c.includes('origen'));
+  const sinOrigen = [...callSites(gp), ...callSites(leer('../backend/routes/agenda.js')),
+    ...callSites(leer('../backend/routes/groupPublish.js'))].filter(c => !c.includes('origen'));
+  ok('ningún call site se olvida de pasar `origen`', sinOrigen.length === 0, `${sinOrigen.length} sin origen`);
+  ok('la agenda se identifica como `agenda`, no como manual', enLibro.some(c => c.includes("origen: 'agenda'")));
+  ok('el worker se identifica como `worker`', callSites(gp).some(c => c.includes("origen: 'worker'")));
+  ok('los clics se identifican como `manual`',
+    callSites(leer('../backend/routes/agenda.js')).some(c => c.includes("origen: 'manual'"))
+    && callSites(leer('../backend/routes/groupPublish.js')).every(c => c.includes("origen: 'manual'")));
+
+  // Todo `return r;` de runGroupPublish tiene que loguear el FIN antes. Si uno se
+  // cuelga sin log, queda un INICIO sin cierre y la auditoría pierde el destino.
+  const cuerpo = gp.slice(gp.indexOf('async function runGroupPublish('), gp.indexOf('export function startGroupPublish('));
+  const lineas = cuerpo.split('\n');
+  const huerfanos = lineas.filter((l, i) => l.trim() === 'return r;'
+    && !lineas.slice(Math.max(0, i - 4), i).some(p => p.includes('logFinCorrida')));
+  ok('ningún `return r;` se escapa sin loguear el FIN', huerfanos.length === 0, `${huerfanos.length} huérfanos`);
+  ok('el log dice origen, duración, ok/error y el lote por destino',
+    /INICIO corrida=.*origen=/.test(gp) && /FIN {4}corrida=.*origen=/.test(gp)
+    && /dur=.*ok=.*err=/.test(gp) && gp.includes('(lote ${x.lote}'));
+  ok('la agenda loguea POR QUÉ se pudo publicar ahora, no solo cuántas',
+    gp.includes('[agenda] ELEGIDO') && gp.includes('motivo=${decision.codigo}'));
+
+  // `currentRun.origen` y `lastResult.origen` son los que lee la UI.
+  ok('el origen queda disponible para la UI, no solo en el log',
+    /origen: quien/.test(gp) && /r\.origen = c\.origen/.test(gp));
+  // Regresión de una corrida real: `runGroupPublish` reemplaza el `currentRun`
+  // que arma `startGroupPublish` y se comía el origen, así que el log de cierre
+  // salía con `origen=?` en el preciso momento en que había que auditarlo.
+  ok('el segundo currentRun no borra el origen (bug que salió en una corrida real)',
+    /currentRun = \{[^}]*origen: currentRun && currentRun\.origen/.test(gp),
+    'el segundo currentRun tiene que reusar currentRun.origen');
+}
+
+console.log('\nformato del log: una línea tiene que bastar para auditar el post');
+{
+  // Se captura el console.log real del formateador con una corrida sintética: si
+  // el formato no dice qué grupo salió, cuántos grupos del lote se tickearon y
+  // quién mandó la corrida, el log no sirve para nada.
+  //
+  // `capturar` solo envuelve a `logFinCorrida`: `ok()` también escribe por
+  // console.log, y pisarlo durante los asserts se traga sus propias pruebas.
+  const cap = [];
+  const real = console.log;
+  const capturar = (fn) => { cap.length = 0; console.log = (...a) => cap.push(a.join(' ')); try { fn(); } finally { console.log = real; } return cap.join('\n'); };
+
+  const r = { ok: true };
+  const linea = capturar(() => logFinCorrida(r, {
+    runId: '7d0152e2-corta', startedMs: Date.now() - 134000, origen: 'agenda', ok: 1, errors: 1,
+    results: [
+      { group: 'Revolico Matanzas', ok: true, status: 'published', lote: 9, lote_total: 121 },
+      { group: 'REVOLICO Encrucijada #1', ok: false, status: 'error', lote: null },
+    ],
+  }));
+  ok('estampa el origen en lastResult para la UI', r.origen === 'agenda');
+  ok('una sola línea con corrida, origen, duración y contadores',
+    (linea.match(/\[publish\] FIN/g) || []).length === 1
+    && linea.includes('corrida=7d0152e2') && linea.includes('origen=agenda')
+    && linea.includes('dur=2m14s') && linea.includes('ok=1 err=1'), linea);
+  ok('nombra cada grupo con su resultado y el lote que salió',
+    linea.includes('Revolico Matanzas:ok (lote 9/121)')
+    && linea.includes('REVOLICO Encrucijada #1:FALLÓ'), linea);
+
+  ok('avisa si el interruptor cortó la corrida a mitad', capturar(() => logFinCorrida(
+    { ok: true, pausado_por_interruptor: true },
+    { runId: 'aaaa1111', startedMs: Date.now() - 3000, origen: 'manual', ok: 0, errors: 0, results: [] },
+  )).includes('PAUSADO_POR_INTERRUPTOR'));
+
+  ok('marca cuando un post salió SOLO al destino y no al lote', capturar(() => logFinCorrida(
+    { ok: true },
+    { runId: 'bbbb2222', startedMs: Date.now() - 1000, origen: 'agenda', ok: 1, errors: 0,
+      results: [{ group: 'G', ok: true, status: 'published', lote: 0, lote_total: 121 }] },
+  )).includes('SIN_LOTE=1'));
+
+  const fallo = capturar(() => logFinCorrida({ ok: false, error: 'Chrome no disponible' },
+    { runId: 'cccc3333', startedMs: Date.now() - 500, origen: 'manual', ok: 0, errors: 0, results: [] }));
+  ok('si no llegó a publicar nada, también deja rastro',
+    fallo.includes('origen=manual') && fallo.includes('Chrome no disponible'), fallo);
+  console.log('\n' + linea.split('\n')[0]);
 }
 
 console.log(fallos ? `\n${fallos} prueba(s) fallaron\n` : '\nTodo en verde\n');

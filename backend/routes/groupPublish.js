@@ -24,6 +24,7 @@ router.post('/run', (req, res) => {
     force,
     ids: idsArr,
     mode: typeof mode === 'string' ? mode : null,
+    origen: 'manual',
   });
   if (r.skipped) return res.status(409).json(r);
   res.status(202).json(r);
@@ -36,6 +37,7 @@ router.post('/run/:id', (req, res) => {
     force: true,
     ids: [req.params.id],
     mode: typeof mode === 'string' ? mode : null,
+    origen: 'manual',
   });
   if (r.skipped) return res.status(409).json(r);
   res.status(202).json(r);

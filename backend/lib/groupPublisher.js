@@ -49,8 +49,8 @@ export const DEFAULT_AGENDA = {
   catchup_hours: 24,   // vencido hace más de esto NO se recupera solo
   grupos_por_post: 9,  // cuántos grupos se tildan por publicación en Facebook
   lote_desde: '',      // cursor: el último grupo del lote anterior ('' = desde el 0)
-  min_gap_min: 15,     // separación mínima entre publicaciones consecutive
-  max_per_hour: 4,     // tope duro por hora, por si el gap se afloja
+  min_gap_min: 5,      // separación mínima entre publicaciones, de INICIO a INICIO
+  max_per_hour: 12,    // tope duro por hora, por si el gap se afloja
   dedupe_hours: 6,     // no repetir el mismo texto en el mismo grupo antes de esto (0 = no)
   breaker_failures: 3, // fallos seguidos que pausan el disparador
   breaker_cooldown_min: 60,
@@ -228,8 +228,23 @@ function fechaMs(valor) {
  * queda congelado en el último éxito, la diferencia con "ahora" crece, y el
  * límite de separación nunca muerde. El 2026-10-03 fue exactamente eso: 30
  * intentos en 2 horas. La separación tiene que contar desde el último intento,
- * que es lo que de verdad consume ritmo.
+* que es lo que de verdad consume ritmo.
+ *
+ * El anclaje es el INICIO del último intento, no su `published_at`.
+ *
+ * Función pura para poder testearla sin base: la trampa es que `published_at`
+ * siempre es posterior al arranque del post que la escribió, así que quedarse con
+ * el más nuevo de los dos (un `max`) equivale a medir desde el final, que es
+ * justo lo contrario de lo pedido. Con un ciclo de ~2.5 min y gap de 5, eso
+ * rendía ~8 publicaciones por hora en vez de 12.
  */
+export function elegirAnclaIntento({ marca, finMs }) {
+  const crudo = Number(marca?.ms);
+  const desdeMs = Number.isFinite(crudo) && crudo > 0 ? crudo : fechaMs(marca?.at);
+  if (!Number.isNaN(desdeMs) && desdeMs > 0) return desdeMs;
+  return Number.isNaN(finMs) || finMs === null || finMs === undefined ? null : finMs;
+}
+
 function lastAttemptInfo() {
   const db = getDB();
   const row = db.prepare(`
@@ -240,7 +255,14 @@ function lastAttemptInfo() {
     )
   `).get();
   const ms = fechaMs(row?.t);
-  return Number.isNaN(ms) ? null : ms;
+
+  let marca = null;
+  try {
+    const cfgRow = db.prepare('SELECT publish_config FROM settings WHERE id = 1').get();
+    marca = JSON.parse(cfgRow?.publish_config || '{}')._ultimoIntento;
+  } catch { /* sin marca: se cae al plan B */ }
+
+  return elegirAnclaIntento({ marca, finMs: Number.isNaN(ms) ? null : ms });
 }
 
 /** Intentos (aciertos o fallos) en la última hora, para el tope por hora. */
@@ -307,6 +329,29 @@ function escribirBreaker(b) {
       .run(JSON.stringify(pc));
   } catch (err) {
     console.error('[agenda] no se pudo guardar el corte automático:', err.message);
+  }
+}
+
+/**
+ * Momento en que EMPEZÓ el último post, para medir el gap de inicio a inicio.
+ *
+ * Va en `settings.publish_config` y no en `agenda` por lo mismo que
+ * `_breaker`: al guardar la config desde la UI, `agenda` se reemplaza entero.
+ * Sobrevive a reinicios, que es lo que importa: si se perdiera, el primer post
+ * después de apagar el panel se saltaría el gap sin que nadie lo notara.
+ */
+function marcarIntentoAhora() {
+  try {
+    const db = getDB();
+    const row = db.prepare('SELECT publish_config FROM settings WHERE id = 1').get();
+    const pc = JSON.parse(row?.publish_config || '{}');
+    pc._ultimoIntento = { at: toIsoUtc(new Date()), ms: Date.now() };
+    db.prepare("UPDATE settings SET publish_config = ?, updated_at = datetime('now') WHERE id = 1")
+      .run(JSON.stringify(pc));
+  } catch (err) {
+    // Si no se puede guardar, el gap se mide contra `published_at` (el plan B de
+    // lastAttemptInfo). Perder la marca degrada el ritmo, no lo rompe.
+    console.error('[agenda] no se pudo marcar el inicio del intento:', err.message);
   }
 }
 
@@ -762,6 +807,33 @@ function notaDiagnostico(result) {
   return partes.length ? ` | ${partes.join('; ')}` : '';
 }
 
+/**
+ * Nota con los grupos del lote que el poster.tickó de verdad en el compositor.
+ *
+ * El poster siempre devuelve `lote_grupos` (y `grupos_en_lista`), pero en un
+ * post exitoso `result.message` no se guarda en la cola, y ahí era donde venía
+ * el texto del lote. La propagación a los N grupos quedaba invisible: no se
+ * podía confirmar ni desde la cola ni desde los logs, porque el stdout del
+ * poster se descarta y solo se parsean sus líneas JSON.
+ *
+ * Se escribe incluso con la lista vacía a propósito: "se pidió lote y no se
+ * ticked ningún grupo" es justo lo que distingue un post que salió a un grupo
+ * de uno que salió a nueve. Sin ese dato, un fallo de propagación se ve
+ * idéntico a un éxito.
+ *
+ * Función pura: se testea sin base ni navegador.
+ */
+export function notaLote(result) {
+  if (!Array.isArray(result?.lote_grupos)) return '';
+  const grupos = result.lote_grupos.filter(Boolean);
+  const enLista = Number(result.grupos_en_lista) || 0;
+  if (!grupos.length) return ' | lote: NO se tildó ningún grupo extra';
+  // El tope es 240 y no 300 a propósito: `notes` se corta a 500 chars al final y
+  // con 300 el lote se comía la nota de imágenes. El conteo va primero, así que
+  // si trunca, lo que sobrevive es el dato que importa ("salió a 9 grupos").
+  return ` | lote: ${grupos.length}${enLista ? '/' + enLista : ''} grupos [${grupos.join(' | ')}]`.slice(0, 240);
+}
+
 function updateQueue(item, result, mode) {
   const db = getDB();
   const now = toIsoUtc(new Date());
@@ -784,15 +856,22 @@ function updateQueue(item, result, mode) {
         ? ` | imágenes: FB confirmó los adjuntos (${pedidas} pedidas; conteo exacto no verificado)`
         : ` | ATENCIÓN imágenes: se pidieron ${pedidas} y FB no mostró los controles de quitar foto; probablemente no las tomó`)
     : '';
+  // Lote de grupos: cuáles se ticked de verdad en el compositor. El poster ya
+  // lo devolvía como `lote_grupos` y el backend lo botaba: en un post exitoso
+  // `result.message` no se guarda, y ahí era donde venía el texto del lote. O
+  // sea que la propagación a los N grupos era invisible — no se podía confirmar
+  // ni desde la cola ni desde los logs (el stdout del poster se descarta).
+  const loteNota = notaLote(result);
   let notes;
   if (result.ok) {
     const tag = mode === 'prepare' ? 'preparado' : 'publicado';
     notes = [base, `auto:${tag} ${now.slice(0, 19)}`.trim()].filter(Boolean).join(' | ');
     if (pending) notes += ' | pendiente de aprobación del administrador';
+    notes += loteNota;
     notes += imgNota;
   } else {
     notes = [base, `auto:error ${result.message || ''}`.trim()].filter(Boolean).join(' | ').slice(0, 500);
-    notes = (notes + notaDiagnostico(result)).slice(0, 500);
+    notes = (notes + notaDiagnostico(result) + loteNota).slice(0, 500);
   }
   notes = (notes + avisos).slice(0, 500);
 
@@ -890,7 +969,7 @@ export { classifyFailure };
  * startGroupPublish(), que devuelve de inmediato. Va dejando el avance en
  * currentRun para que groupPublishStatus() lo sirva por polling.
  */
-async function runGroupPublish({ runId = null, auto = false, force = false, ids = [], mode = null, debug = false, runNow = false } = {}) {
+async function runGroupPublish({ runId = null, auto = false, force = false, ids = [], mode = null, debug = false, runNow = false, origen = 'manual' } = {}) {
   const cfg = getAutopublishConfig();
   // El lote va en el reloj de agenda, no en el worker con límites. `grupos_por_post`
   // y `lote_desde` son del disparador por fecha; usarlos del autopublish daba
@@ -903,6 +982,10 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
     phase: 'starting', total: 0, done: 0, ok: 0, errors: 0,
     current_group: null, mode: effectiveMode, results: [],
     sesion: false, noBrowser: false, error: null,
+    // `origen` viene del `startGroupPublish` y hay que reusarlo acá: este objeto
+    // REEMPLAZA al que arma ahí, y sin copiarlo el log de cierre salía con
+    // `origen=?` justo cuando sí importaba (lo detectó una corrida real).
+    origen: currentRun && currentRun.origen ? currentRun.origen : 'manual',
   };
 
   try {
@@ -919,6 +1002,7 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
       currentRun.noBrowser = true;
       currentRun.error = r.error;
       currentRun.finished = toIsoUtc(new Date()).slice(0, 19);
+      logFinCorrida(r);
       return r;
     }
 
@@ -932,6 +1016,7 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
       lastResult = r;
       currentRun.phase = 'empty';
       currentRun.finished = toIsoUtc(new Date()).slice(0, 19);
+      logFinCorrida(r);
       return r;
     }
 
@@ -951,6 +1036,11 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
         break;
       }
       currentRun.current_group = item.group_name;
+      // El reloj del gap arranca AQUÍ, cuando el post empieza a escribirse, y no
+      // cuando termina. Medirlo contra `published_at` hacía que el ritmo real
+      // fuera 1/(gap + duración de la corrida): con 1m35s de media, un gap de
+      // 8 min daba 6,3/h y el tope de 6/h era el que nunca mandaba.
+      marcarIntentoAhora();
       const groupUrl = resolveGroupUrl(item);
       const imageFiles = await resolveImages(item.images);
       const messageFile = writeMessageFile(item);
@@ -993,6 +1083,10 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
         status: result.status,
         message: ((result.message || '') + (escritura && escritura.aplicado === false ? ' | el destino ya no estaba pendiente: no se sobrescribió' : '') + (avisos ? ` | aviso: ${avisos}` : '') + (result.img_adjunta !== undefined ? ` | img_adjunta:${result.img_adjunta}` : '') + (result.img_pedidas !== undefined ? ` de ${result.img_pedidas}` : '')).slice(0, 220),
         post_url: result.post_url || '',
+        // El lote va explícito en el row: `notaLote` lo persiste en las notas,
+        // pero el log necesita el dato crudo para no tener que parsear texto.
+        lote: Array.isArray(result.lote_grupos) ? result.lote_grupos.length : null,
+        lote_total: result.grupos_en_lista || null,
         warnings: Array.isArray(result.warnings) ? result.warnings : [],
       };
       // El aviso de sesión/Chrome puede aparecer en cualquier ítem: se marca
@@ -1035,6 +1129,7 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
     lastResult = r;
     currentRun.phase = 'done';
     currentRun.finished = toIsoUtc(new Date()).slice(0, 19);
+    logFinCorrida(r);
     return r;
   } catch (err) {
     const r = { ok: false, error: err.message.slice(0, 300), started: startedAt };
@@ -1042,10 +1137,42 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
     currentRun.phase = 'error';
     currentRun.error = r.error;
     currentRun.finished = toIsoUtc(new Date()).slice(0, 19);
+    logFinCorrida(r);
     return r;
   } finally {
     running = false;
   }
+}
+
+/**
+ * Cierre de la corrida en el log: qué salió, cuánto tardó y cuántos grupos del
+ * lote quedaron ticked de verdad.
+ *
+ * El lote se lee del campo `lote`/`lote_total` de cada resultado, no parseando
+ * las notas: es dato crudo y no depende de que el texto no se haya cortado.
+ * `estado` es inyectable solo para poder testear el formato sin abrir Chrome.
+ */
+export function logFinCorrida(r, estado = null) {
+  const c = estado || currentRun;
+  if (!c) return;
+  // Se estampa acá porque `lastResult` es la MISMA referencia que `r` en los
+  // cuatro caminos de salida, y `/api/publish/status` lo expone: así el origen
+  // de la última corrida queda disponible para la UI y para auditar, sin depender
+  // de parsear el log.
+  if (r && typeof r === 'object') r.origen = c.origen || 'manual';
+  const dur = c.startedMs ? Math.round((Date.now() - c.startedMs) / 1000) : 0;
+  const mins = Math.floor(dur / 60);
+  const resumen = (c.results || []).map((x) => {
+    const lote = x.lote === null || x.lote === undefined ? '' : ` (lote ${x.lote}${x.lote_total ? '/' + x.lote_total : ''})`;
+    return `${x.group || '?'}:${x.ok ? (x.status === 'prepared' ? 'preparado' : 'ok') : 'FALLÓ'}${lote}`;
+  }).join(', ');
+  const sinLote = (c.results || []).filter((x) => x.lote === 0).length;
+  console.log(`[publish] FIN    corrida=${String(c.runId).slice(0, 8)} origen=${c.origen || '?'}`
+    + ` dur=${mins ? mins + 'm' : ''}${dur % 60}s ok=${c.ok || 0} err=${c.errors || 0}`
+    + (r && r.pausado_por_interruptor ? ' PAUSADO_POR_INTERRUPTOR' : '')
+    + (sinLote ? ` SIN_LOTE=${sinLote}` : '')
+    + (resumen ? `  ${resumen}` : '')
+    + (r && r.error ? `  error="${String(r.error).slice(0, 90)}"` : ''));
 }
 
 /**
@@ -1056,7 +1183,7 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
  * entre posts eso son minutos, y api.js no tiene timeout, así que el botón
  * quedaba en "Corriendo..." sin que nadie supiera si colgó o estaba trabajando.
  */
-export function startGroupPublish({ auto, force = false, ids = [], mode = null, debug = false, runNow = false } = {}) {
+export function startGroupPublish({ auto, force = false, ids = [], mode = null, debug = false, runNow = false, origen = null } = {}) {
   // Interruptor maestro: llave general de todo el publicador. Si está apagado
   // no arranca NADA, ni lo automático ni un clic en "Publicar ahora": esa es la
   // gracia del interruptor (decidir periodos en que el sistema no funciona).
@@ -1079,15 +1206,28 @@ export function startGroupPublish({ auto, force = false, ids = [], mode = null, 
   running = true;
   const runId = uuid();
   const started = toIsoUtc(new Date()).slice(0, 19);
+  // `origen` es explícito en los cuatro call sites porque la agenda y un clic
+  // manual llamaban los DOS con `auto: false`. Sin esto, el log no distinguía un
+  // post que salió por el reloj de uno que salió porque el usuario lo pidió, y
+  // un post 2 min después de un error (fuera del gap) era imposible de
+  // auditar: podía ser un clic o un hole del freno.
+  const quien = origen || (auto === true ? 'worker' : 'manual');
+  const origenes = { agenda: 'reloj de agenda', worker: 'worker con límites', manual: 'clic del usuario' };
   // se siembra acá para que el primer poll ya vea la corrida, aunque el Chrome
   // todavía esté arrancando
   currentRun = {
     runId, started, startedMs: Date.now(), finished: null, phase: 'starting', total: 0, done: 0, ok: 0, errors: 0,
     current_group: null, mode: mode || cfg.mode, results: [], sesion: false, noBrowser: false, error: null,
+    origen: quien,
   };
 
+  // El log por corrida.Va al principio y no solo al final porque si el proceso
+  // se cae a mitad de camino, el log igual dice qué se había tomado y por qué.
+  console.log(`[publish] INICIO corrida=${runId.slice(0, 8)} origen=${quien} (${origenes[quien] || quien})`
+    + ` modo=${mode || cfg.mode} destinos=${ids.length || 'todos'} ${force ? 'forzado' : ''}${runNow ? ' runNow' : ''}`);
+
   // fire-and-forget: los errores ya quedan en lastResult/currentRun
-  runGroupPublish({ auto: isAuto, force, ids, mode, debug, runId, runNow }).catch((err) => {
+  runGroupPublish({ auto: isAuto, force, ids, mode, debug, runId, runNow, origen: quien }).catch((err) => {
     console.error('[publish] corrida falló:', err);
     lastResult = { ok: false, error: err.message.slice(0, 300), started };
     if (currentRun && currentRun.runId === runId) {
@@ -1145,9 +1285,9 @@ export function runSchedulerTick() {
 
   // Interruptor maestro: corta ANTES de mirar la cola o abrir Chrome.
   try {
-    if (!getMasterConfig().on) return skip('interruptor maestro apagado');
+    if (!getMasterConfig().on) return skip('interruptor maestro apagado', 'maestro_apagado');
   } catch (err) {
-    return skip(`no se pudo leer el interruptor: ${err.message.slice(0, 120)}`);
+    return skip(`no se pudo leer el interruptor: ${err.message.slice(0, 120)}`, 'maestro_ilegible');
   }
 
   // Clave: NO arrancar la corrida "a ciegas". runGroupPublish() llama a
@@ -1162,7 +1302,7 @@ export function runSchedulerTick() {
   }
   if (hayTrabajo === 0) return skip('no hay publicaciones vencidas');
 
-  const res = startGroupPublish({ auto: true });
+  const res = startGroupPublish({ auto: true, origen: 'worker' });
   lastTickResult = res.accepted
     ? { started: true, runId: res.runId, queued: hayTrabajo, at: lastTickAt }
     : { skipped: true, reason: res.reason, at: lastTickAt };
@@ -1295,6 +1435,12 @@ let agendaTimer = null;
 let lastAgendaTickAt = null;
 let nextAgendaTickAt = null;
 let lastAgendaResult = null;
+// Firma del último "no hice nada" para no repetir la misma línea cada minuto: el
+// tick dispara cada 60 s y, si escribiera en cada salto, el log tendría ~1.400
+// líneas por día y enterraría justo lo que se viene a buscar. Se loguea al
+// CAMBIAR de motivo, que es cuando a uno le interesa saber que el planificador
+// se frenó, y al reiniciar el proceso.
+let ultimoSaltoAgenda = null;
 // El intervalo REAL con el que quedó armado el setInterval. Se guarda aparte
 // porque leer la config otra vez ya devuelve el valor NUEVO, y comparar eso
 // contra sí mismo daría "same_interval" para siempre: el temporizador nunca se
@@ -1418,6 +1564,22 @@ export function agendaSchedulerState() {
   };
 }
 
+/**
+ * Loguea un "no hice nada" SOLO cuando el motivo cambió.
+ *
+ * El tick corre cada minuto y casi siempre se salta por algo (nada vencido, gap,
+ * tope, breaker). Escribir en cada salto llena el log de ruido y esconde lo
+ * importante; pero callarse del todo tiene un costo peor: si el planificador se
+ * muere o se queda apagado, el log queda idéntico al de "no hay nada que hacer",
+ * que es justo la confusión que se vino a diagnosticar el 2026-10-04.
+ */
+function logSaltoAgenda(codigo, motivo, extra = '') {
+  const firma = `${codigo}|${motivo}|${extra}`;
+  if (firma === ultimoSaltoAgenda) return;
+  ultimoSaltoAgenda = firma;
+  console.log(`[agenda] SIN PUBLICAR (${codigo}) ${motivo}${extra ? ' — ' + extra : ''}`);
+}
+
 /** Lee el estado que necesita `evaluarLimites` desde la base. */
 function decisionActual(cfg, nowMs = Date.now()) {
   const intentosHora = countAttemptsSince(nowMs - 3600000);
@@ -1442,18 +1604,19 @@ export function runAgendaTick() {
   lastAgendaTickAt = toIsoUtc(new Date());
   nextAgendaTickAt = toIsoUtc(new Date(Date.now() + agendaIntervalMs()));
 
-  const skip = (reason) => {
-    lastAgendaResult = { skipped: true, reason, at: lastAgendaTickAt };
+  const skip = (reason, codigo = 'motivo', extra = '') => {
+    lastAgendaResult = { skipped: true, reason, motivo: codigo, at: lastAgendaTickAt };
+    logSaltoAgenda(codigo, reason, extra);
     return lastAgendaResult;
   };
 
-  if (running) return skip('ya hay una corrida en curso');
+  if (running) return skip('ya hay una corrida en curso', 'ocupado');
 
   let cfg;
   try { cfg = getAgendaConfig(); }
-  catch (err) { return skip(`config ilegible: ${err.message.slice(0, 120)}`); }
+  catch (err) { return skip(`config ilegible: ${err.message.slice(0, 120)}`, "config"); }
 
-  if (!cfg.auto) return skip('disparador por fecha apagado');
+  if (!cfg.auto) return skip('disparador por fecha apagado', 'auto_apagado');
 
   // Interruptor maestro: mismo criterio que el worker. Corta sin mirar la cola,
   // así los vencidos se siguen acumulando en 'pending' para cuando se prenda.
@@ -1484,8 +1647,7 @@ export function runAgendaTick() {
   // descarta, pero igual paga el arranque del navegador).
   const publicables = vencidos.filter(c => resolveGroupUrl(c) && !quitados.has(c.id));
   if (publicables.length === 0) {
-    lastAgendaResult = { skipped: true, reason: 'no hay publicaciones vencidas', at: lastAgendaTickAt, quarantined: descartados };
-    return lastAgendaResult;
+    return skip('no hay publicaciones vencidas', 'nada_vencido', `quarantinados=${descartados}`);
   }
 
   // La guardia de duplicados va PRIMERO y antes de cualquier decisión de ritmo,
@@ -1498,7 +1660,8 @@ export function runAgendaTick() {
   }
   const trasDup = dup.ids.length ? publicables.filter(c => !dup.ids.includes(c.id)) : publicables;
   if (trasDup.length === 0) {
-    lastAgendaResult = { skipped: true, reason: 'todos los vencidos eran repetidos', at: lastAgendaTickAt, quarantined: descartados, duplicados: dup.omitidos };
+    lastAgendaResult = { skipped: true, reason: 'todos los vencidos eran repetidos', motivo: 'duplicados', at: lastAgendaTickAt, quarantined: descartados, duplicados: dup.omitidos };
+    logSaltoAgenda('duplicados', 'todos los vencidos eran repetidos', `apartados=${dup.omitidos}`);
     return lastAgendaResult;
   }
 
@@ -1518,6 +1681,10 @@ export function runAgendaTick() {
       at: lastAgendaTickAt,
       pendientes: trasDup.length,
     };
+    // El freno dejó pasar cero destinos. Va al log porque es la línea que
+    // explica un post que no salió a su hora, y `pendientes` es lo que dice
+    // cuánta cola se está atrasando mientras tanto.
+    logSaltoAgenda(decision.codigo, decision.motivo, `${trasDup.length} pendiente(s)`);
     return lastAgendaResult;
   }
   const elegidas = trasDup.slice(0, cuantos);
@@ -1525,7 +1692,7 @@ export function runAgendaTick() {
   // `ids` explícitos: runGroupPublish() los filtra directo sobre dueCandidates()
   // y se salta pickForRun(), o sea que no pasa por cap/franja/gap/cooldown del
   // worker. Por eso los límites de arriba son los únicos que protegen este camino.
-  const res = startGroupPublish({ ids: elegidas.map(c => c.id), auto: false });
+  const res = startGroupPublish({ ids: elegidas.map(c => c.id), auto: false, origen: 'agenda' });
   lastAgendaResult = res.accepted
     ? {
       started: true, runId: res.runId, queued: elegidas.length, at: lastAgendaTickAt,
@@ -1536,7 +1703,20 @@ export function runAgendaTick() {
     : { skipped: true, reason: res.reason, at: lastAgendaTickAt };
 
   if (res.accepted) {
+    // Se limpia la firma del salto anterior: si el próximo tick vuelve a frenarse
+    // por el MISMO motivo, tiene que volver a aparecer en el log. Sin esto, un
+    // freno que se alterna con publicaciones se leería como uno solo y se
+    // perderían las pausas.
+    ultimoSaltoAgenda = null;
     console.log(`[agenda] vencidas: ${elegidas.length} de ${trasDup.length} (corrida ${res.runId.slice(0, 8)}) — gap ${cfg.min_gap_min} min, tope ${cfg.max_per_hour}/h`);
+    // Por qué se pudo publicar AHORA y no en el tick anterior. Antes el log decía
+    // solo "vencidas: 1 de 4", y sin el motivo no había forma de distinguir un
+    // tick que obeyed el freno de uno que lo pasó por alto.
+    for (const c of elegidas) {
+      console.log(`[agenda] ELEGIDO destino=${c.id.slice(0, 8)} prog=${c.scheduled_at}`
+        + ` grupo="${(c.group_name || '?').slice(0, 46)}" motivo=${decision.codigo} (${decision.motivo})`
+        + ` intentos_ultima_hora=${decision.intentosHora}/${cfg.max_per_hour}`);
+    }
   } else {
     console.log(`[agenda] tick saltado — ${res.reason}`);
   }
