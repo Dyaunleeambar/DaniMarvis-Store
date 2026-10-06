@@ -24,6 +24,11 @@ let cargando = false;
 let filtroEstado = '';
 let filtroGrupo = '';
 let listaDia = null;        // publicaciones del modal "ver día", para "Distribuir en el día"
+// De qué modal de la agenda salió la última acción, para poder volver a él con los
+// datos ya recargados en vez de cerrarlo y dejar al usuario en el calendario pelado.
+// Antes cada handler hacía `closeModal(true)` y nada más: eliminar cinco publicaciones
+// de un día significaba cinco clicks en volver a abrir el modal de ese día.
+let modalAgendaCtx = null;  // { tipo: 'detalle'|'dia', id?, fecha? }
 
 // ══════════════════════════════ utilidades de fecha ═══════════════════════
 // Todo se calcula en hora LOCAL. La fecha viene del servidor ya resuelta
@@ -455,9 +460,13 @@ const DEST_ICON = {
   archived: 'Publicada (histórica)',
 };
 
-async function detalle(id) {
+async function detalle(id, { silencioso = false } = {}) {
   const ev = (agenda?.eventos || []).find(e => e.id === id);
-  if (!ev) { showToast('Ese evento no está en el rango visible', 'warning'); return; }
+  if (!ev) {
+    if (!silencioso) showToast('Ese evento no está en el rango visible', 'warning');
+    return false;
+  }
+  modalAgendaCtx = { tipo: 'detalle', id };
 
   const tienePendientes = ev.destinos.some(d => d.status === 'pending');
   const tieneFallos = ev.destinos.some(d => d.status === 'error' || d.status === 'omitted');
@@ -472,6 +481,7 @@ async function detalle(id) {
       </button>
     </div>
     <div class="modal-body">
+      ${avisoModalPersistente()}
       <div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
         <span class="agenda-estado-badge agenda-estado-badge--${ev.estado}">${escHtml(ev.estado_label)}</span>
         <span style="font-size:.82rem;color:var(--text-secondary)">${escHtml(formatDateTime(ev.fecha))}</span>
@@ -564,8 +574,10 @@ async function detalle(id) {
     abrirPlanificador(ev);
   });
 
-  // Botón "Descartar" de cada destino que falló (por delegación: los botones
-  // los arma destinoHTML() y se repintan con el modal).
+  // Cada acción que se dispara desde el modal tiene que invalidar el contexto antes
+  // de awaits: si no, una recarga lenta dejaría al modal apuntando a una publicación
+  // que el usuario ya cerró, y el `volverAlContexto()` de esa acción reabriría algo
+  // que él ya no está mirando.
   document.querySelectorAll('[data-descartar]').forEach(btn => {
     btn.addEventListener('click', e => {
       e.preventDefault();
@@ -573,6 +585,8 @@ async function detalle(id) {
       window._agendaDescartarDestino(id, btn.dataset.descartar);
     });
   });
+
+  return true;
 }
 
 function destinoHTML(d) {
@@ -615,6 +629,7 @@ function destinoHTML(d) {
 
 /** Descarta un destino suelto y repinta el detalle con los conteos al día. */
 window._agendaDescartarDestino = async function (pubId, destId) {
+  const ctx = modalAgendaCtx;
   const ok = await confirmDialog(
     'Este destino sale de la lista: la publicación no lo vuelve a intentar y no cuenta para el estado del evento. Se conserva el registro de qué se intentó.',
     { title: 'Descartar destino', confirmText: 'Descartar', danger: true }
@@ -623,17 +638,21 @@ window._agendaDescartarDestino = async function (pubId, destId) {
   try {
     await api.discardAgendaDestino(pubId, destId);
     showToast('Destino descartado', 'success');
-    closeModal(true);
-    await cargar();
-    detalle(pubId);
+    modalAgendaCtx = null;
+    const voltou = await volverAlContexto(ctx);
+    if (!voltou) closeModal(true);
   } catch (err) {
     showToast(err.message, 'error');
   }
 };
 
-function verDia(fecha) {
+function verDia(fecha, { silencioso = false } = {}) {
   const evs = eventosVisibles(agenda?.eventos || []).filter(e => e.fecha && ymd(new Date(e.fecha)) === fecha);
-  if (!evs.length) { showToast('No hay eventos ese día', 'info'); return; }
+  if (!evs.length) {
+    if (!silencioso) showToast('No hay eventos ese día', 'info');
+    return false;
+  }
+  modalAgendaCtx = { tipo: 'dia', fecha };
   // "Distribuir en el día" trabaja sobre TODAS las del día: si algo ya salió,
   // al repartirlo se archiva (queda en el historial con su hora real) y se
   // agenda de nuevo en el horario nuevo. Ver _agendaDistribuir.
@@ -647,6 +666,7 @@ function verDia(fecha) {
       </button>
     </div>
     <div class="modal-body">
+      ${avisoModalPersistente()}
       <div class="agenda-destinos">
         ${evs.map(e => {
           const fechaActual = e.fecha ? formatDateInput(e.fecha) : '';
@@ -698,6 +718,55 @@ function verDia(fecha) {
     </div>
   `);
   setModalCloseGuard(null);
+  return true;
+}
+
+/**
+ * Agrega una fila que explique que el modal sigue abierto a propósito.
+ *
+ * Sin esto, borrar cinco publicaciones de un día se siente igual que cerrar y
+ * reabrir cinco veces: el usuario no tiene forma de saber que el modal va a seguir
+ * ahí y termina por cerrándolo a mano después de cada acción.
+ */
+function avisoModalPersistente(contexto = modalAgendaCtx) {
+  if (!contexto) return '';
+  const donde = contexto.tipo === 'dia'
+    ? `las publicaciones del ${formatDate(contexto.fecha)}`
+    : 'esta publicación';
+  return `<div class="agenda-aviso agenda-aviso--off" style="margin:0 0 14px">
+    <div>Este cuadro sigue abierto: podés seguir aplicando acciones sobre ${donde}. Los estados se actualizan solos.</div>
+  </div>`;
+}
+
+/**
+ * Vuelve al modal de donde salió la acción, con los datos ya recargados.
+ *
+ * El problema que resuelve: cada handler hacía `closeModal(true)` y `await cargar()`,
+ * o sea cerraba el modal y refrescaba el calendario que estaba DEBAJO. Para el usuario
+ * eso era cerrar la lista en la que estaba trabajando y tener que volver a abrirla,
+ * una vez por cada publicación que quisiera borrar. Y en el caso de `_agendaDuplicar`,
+ * que NO cerraba, pasaba lo contrario: recargaba los datos pero dejaba el modal con el
+ * HTML viejo, así que el estado real solo aparecía al refrescar la aplicación a mano.
+ *
+ * Con esto, después de cualquier acción el modal se repinta con los datos nuevos y el
+ * usuario sigue en el mismo contexto, listo para la siguiente.
+ *
+ * `ctx` se pasa explícito cuando el contexto pudo cambiar durante la acción (por
+ * ejemplo, borrar la última publicación del día: el modal de día ya no aplica y hay
+ * que caer al de detalle o cerrarlo).
+ *
+ * Devuelve `true` si se pudo volver a pintar algo.
+ */
+async function volverAlContexto(ctx = null) {
+  const c = ctx || modalAgendaCtx;
+  if (!c) { await cargar(); return false; }
+  await cargar();
+  if (c.tipo === 'dia') {
+    // Si el día se quedó sin publicaciones, verDia() devuelve false y cierra: no
+    // tiene sentido dejar un modal con la lista vacía.
+    return verDia(c.fecha, { silencioso: true }) === true;
+  }
+  return detalle(c.id, { silencioso: true }) === true;
 }
 
 /**
@@ -1126,10 +1195,15 @@ window._agendaReprogramar = function (id, actual) {
 };
 
 window._agendaDuplicar = async function (id) {
+  const ctx = modalAgendaCtx;
   try {
     await api.duplicatePublication(id);
     showToast('Publicación duplicada como material. Abrí el Planificador para elegirle hora y grupos.', 'success');
-    await cargar();
+    // Antes solo recargaba los datos y dejaba el modal con el HTML viejo: la
+    // duplicación se hacía en la base pero no se veía hasta refrescar la aplicación
+    // a mano. Ahora se repinta el modal en el que estabas.
+    const voltou = await volverAlContexto(ctx);
+    if (!voltou) closeModal(true);
   } catch (err) {
     showToast(err.message, 'error');
   }
@@ -1418,6 +1492,7 @@ window._agendaDistribuir = function () {
 };
 
 window._agendaPublicarAhora = async function (id) {
+  const ctx = modalAgendaCtx;
   const ok = await confirmDialog(
     'Se publica de inmediato en los grupos pendientes de esta publicación, sin esperar la hora agendada. La corrida puede tardar unos minutos.',
     { title: 'Publicar ahora', confirmText: 'Publicar ahora', danger: false }
@@ -1426,7 +1501,18 @@ window._agendaPublicarAhora = async function (id) {
   try {
     await api.runAgendaEvent(id);
     showToast('Corrida iniciada. Seguí el progreso en Configuración.', 'success');
-    closeModal(true);
+    // La corrida es asíncrona y dura minutos: no tiene sentido esperarla para
+    // repintar. Se vuelve al modal de inmediato con el estado ya actualizado (la
+    // publicación queda en curso) y el calendario de atrás se refresca solo a los
+    // 1,5 s. No se usa `volverAlContexto()` porque este handler necesita decidir él
+    // mismo cuándo repintar: el reintento automático tiene su propio setTimeout.
+    await cargar();
+    if (ctx) {
+      const voltou = ctx.tipo === 'dia'
+        ? verDia(ctx.fecha, { silencioso: true }) === true
+        : detalle(ctx.id, { silencioso: true }) === true;
+      if (!voltou) closeModal(true);
+    }
     setTimeout(cargar, 1500);
   } catch (err) {
     showToast(err.message, 'error');
@@ -1435,12 +1521,17 @@ window._agendaPublicarAhora = async function (id) {
 
 window._agendaEditar = function (id) {
   const ev = (agenda?.eventos || []).find(e => e.id === id);
-  if (!ev) { showToast('Ese evento no está disponible', 'warning'); return; }
+  if (!ev) { showToast('Ese evento no está en el rango visible', 'warning'); return; }
+  // Editar y el Planificador son otra pantalla: acá sí se cierra el modal, pero el
+  // contexto se limpia para que un `volverAlContexto()` posterior no intente reabrir
+  // el modal de una publicación que ya no se está mirando.
+  modalAgendaCtx = null;
   closeModal(true);
   abrirPlanificador(ev);
 };
 
 window._agendaDesarmar = async function (id) {
+  const ctx = modalAgendaCtx;
   const ok = await confirmDialog(
     'Se cancelan los destinos pendientes y la publicación vuelve a ser material de la biblioteca: ya no se publicará, pero su texto e imágenes se conservan.',
     { title: 'Desarmar publicación', confirmText: 'Desarmar' }
@@ -1448,15 +1539,21 @@ window._agendaDesarmar = async function (id) {
   if (!ok) return;
   try {
     await api.rescheduleAgendaEvent(id, { status: 'cancelled' });
-    showToast('Publicación desarmada', 'success');
-    closeModal(true);
-    await cargar();
+    showToast('Publicación desarmada · podés seguir con las demás', 'success');
+    const voltou = await volverAlContexto(ctx);
+    // Desarmada sigue existiendo (vuelve a ser material de la biblioteca), pero si
+    // veníamos del detalle puede quedar fuera del rango visible: en ese caso, al calendario.
+    if (!voltou) closeModal(true);
   } catch (err) {
     showToast(err.message, 'error');
   }
 };
 
 window._agendaEliminar = async function (id) {
+  // El contexto se captura ANTES del confirmDialog, que es un await: si se leyera
+  // después, un usuario que confirmara más tarde (o cancelara y abriera otra
+  // publicación) haría que el repintado volviera a un modal que ya no está mirando.
+  const ctx = modalAgendaCtx;
   const ok = await confirmDialog(
     'Se elimina la publicación de forma permanente: texto, imágenes, destinos e historial de publicación. Esta acción no se puede deshacer.',
     { title: 'Eliminar publicación', confirmText: 'Eliminar' }
@@ -1464,9 +1561,11 @@ window._agendaEliminar = async function (id) {
   if (!ok) return;
   try {
     await api.deletePublication(id);
-    showToast('Publicación eliminada', 'success');
-    closeModal(true);
-    await cargar();
+    showToast('Publicación eliminada · podés seguir con las demás', 'success');
+    const voltou = await volverAlContexto(ctx?.tipo === 'detalle' && ctx.id === id ? null : ctx);
+    // Veníamos del detalle de la que acabamos de borrar: no se puede reabrir, así que
+    // el modal se cierra y el calendario de atrás ya quedó refrescado.
+    if (!voltou && ctx?.tipo === 'detalle') closeModal(true);
   } catch (err) {
     showToast(err.message, 'error');
   }
