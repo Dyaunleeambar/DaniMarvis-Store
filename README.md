@@ -842,9 +842,11 @@ Estos son los de `DEFAULT_AGENDA` en `backend/lib/groupPublisher.js`, y son **ot
 
 El gap se mide contra el **último intento**, no el último acierto: con todo fallando el acierto nunca avanzaba y cada error iba seguido del siguiente vencido.
 
-Y se ancla al **arranque** de ese intento, no a su `published_at`. No es un detalle: `published_at` siempre es posterior al arranque, así que medir desde ahí suma la duración de cada corrida al gap. Con corridas de ~1.5 min y gap de 5, eso rendía ~8 publicaciones por hora en vez de 12. La marca de arranque vive en `publish_config._ultimoIntento` y sobrevive a reinicios; si no está, se cae a `published_at`.
+Y se ancla al **arranque** de ese intento, no a su `published_at`. No es un detalle: `published_at` siempre es posterior al arranque, así que medir desde ahí suma la duración de cada corrida al gap. Con corridas de ~1.5 min y gap de 5, eso rendía ~8/h en vez de ~10/h. La marca de arranque vive en `publish_config._ultimoIntento` y sobrevive a reinicios; si no está, se cae a `published_at`.
 
-> Con `min_gap_min: 5`, `grupos_por_post: 9` y un tick por minuto, el techo son **12 publicaciones por hora** (≈120 interacciones con grupos por hora). Es un ritmo agresivo alto para Facebook: el sistema **no puede detectar** que la plataforma dejó de aceptar envíos en silencio. Si baja la propagación de forma sostenida, es la señal para bajarlo.
+> Con `min_gap_min: 5`, `grupos_por_post: 9` y un tick por minuto, el techo rondan las **10-11 publicaciones por hora** (≈100 interacciones con grupos por hora), no 12: el tick corre cada minuto, así que el intervalo efectivo es de 5 a 6 min según la fase, no 5 clavados. Para 12/h clavadas habría que bajar el gap a 4 y dejar que `max_per_hour` sea el que corta.
+>
+> Es un ritmo agresivo para Facebook y el sistema **no puede detectar** que la plataforma dejó de aceptar envíos en silencio. La señal más barata es ver `SIN_LOTE=1` en el cierre de las corridas, o que los posts salgan a 1 grupo cuando se pidieron 9.
 
 > **Esto se puso el 2026-10-03 porque no existía.** El día duplicado dejó 190 destinos y el disparador los fue sacando a ~17 por hora, hasta que Facebook dejó de aceptar los envíos sin avisar nada. Los límites se agregan en `publish_config.agenda` y el estado del corte en `publish_config._breaker`.
 

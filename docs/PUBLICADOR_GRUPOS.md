@@ -154,21 +154,40 @@ Todo esto vive en `publish_config.agenda` y lo gobierna **el disparador por fech
 
 | Clave | Default | Qué hace |
 |---|---|---|
-| `min_gap_min` | 15 | Separación mínima entre publicaciones |
-| `max_per_hour` | 4 | Tope duro por hora, para cuando el gap se afloja |
+| `min_gap_min` | 5 | Separación mínima, medida **de inicio a inicio** |
+| `max_per_hour` | 12 | Tope duro por hora, para cuando el gap se afloja |
+| `grupos_por_post` | 9 | Cuántos grupos se tildan por publicación (el "lote") |
 | `dedupe_hours` | 6 | No repetir el mismo texto en el mismo grupo antes de esto (`0` = no) |
 | `breaker_failures` | 3 | Fallos **consecutivos** que pausan el disparador |
 | `breaker_cooldown_min` | 60 | Cuánto dura esa pausa |
+
+> Subieron de 15/4 a 5/12 el 2026-10-05, a pedido del usuario. Con `tick_min: 1` el
+> techo real ronda las **10-11/h**, no 12: el tick corre cada minuto, así que el
+> intervalo efectivo es de 5 a 6 min según la fase, no 5 clavados. Para 12/h
+> clavadas habría que bajar el gap a 4 y dejar que `max_per_hour` sea el que corta.
 
 El gap se mide contra `lastAttemptInfo()` —el **último intento**, no el último
 acierto— porque con todo fallando el acierto nunca avanzaba y cada error iba
 seguido del siguiente vencido. `max_per_hour` usa `countAttemptsSince()`, que cuenta
 intentos, no aciertos.
 
+Y se ancla al **arranque** de ese intento, no a su `published_at`. No es un detalle:
+`published_at` siempre se escribe después del arranque, así que medir desde ahí
+**suma la duración de cada corrida al gap**. Con corridas de ~1.5 min y gap de 5,
+eso rendía ~8/h en vez de ~10/h. La marca vive en `publish_config._ultimoIntento`, la
+escribe `marcarIntentoAhora()` antes de cada post y sobrevive a reinicios.
+
+La elección del ancla está en `elegirAnclaIntento()` (`groupPublisher.js:241`), una
+función pura sin base a propósito. Ya se rompió una vez por usar `Math.max(inicio, fin)`: como `published_at`
+siempre es posterior, ganaba el final y el gap volvía a medirse desde que el post
+terminaba. Los tests de `evaluarLimites()` no lo detectaron porque le pasaban
+`lastAttemptMs` ya calculado a mano —probaban el consumidor con un dato inventado, no
+la selección del dato. Cubrir eso es `1c.` en `scripts/test-limites-agenda.mjs`.
+
 ### Por qué están en el tick y no en `pickForRun()`
 
 Porque el disparador **no pasa por `pickForRun()`**. Entrega los vencidos con `ids`
-explícitos (`groupPublisher.js:1528`), y `runGroupPublish()` los filtra directo sobre
+explícitos (`groupPublisher.js:1695`), y `runGroupPublish()` los filtra directo sobre
 `dueCandidates()`. O sea: el día duplicado del 2026-10-03 (190 destinos) salía a
 ~17 publicaciones por hora sin tope de ninguno, hasta que Facebook dejó de aceptar
 los envíos **sin decir nada**. Los límites de acá son los únicos que protegen ese
@@ -194,7 +213,7 @@ apartados" con dos que siguen en `pending` como estaban.
 
 ### El corte automático
 
-`registrarFallo()` / `limpiarFallos()` (`groupPublisher.js:983-984`) viven en
+`registrarFallo()` / `limpiarFallos()` (`groupPublisher.js:359-375`) viven en
 `runGroupPublish()`, o sea que **cuentan los fallos de cualquier origen** —worker,
 disparador o clic manual—: lo que se rompió es el canal de Facebook, no quién
 apretó el botón. El estado va en `publish_config._breaker`.
@@ -204,6 +223,42 @@ apretó el botón. El estado va en `publish_config._breaker`.
 `GET /api/agenda` expone todo esto en `disparador.limites` (`decision`, `motivo`,
 `intentos_ultima_hora`, `corte_hasta`), que es la forma de saber por qué no salió
 nada sin abrir el log.
+
+> El corte se limpia solo con un acierto (`limpiarFallos()`). A mano hay que vaciar
+> `publish_config._breaker` **con el servidor parado**: `initDB()` termina en
+> `saveDB()` y reescribe el archivo entero desde memoria. Respaldo previo en
+> `backend/backups/` y `db.run(sql, [params])`, nunca `db.prepare().run()` — en
+> `sql.js@1.14.1` el crudo no persiste y no falla.
+
+### Dónde vive la configuración, y cómo se perdió una vez
+
+Todo lo de esta sección vive en `settings.publish_config`, **una sola columna de texto
+con JSON adentro**. El 2026-10-04 esa columna quedó en `NULL`, la migración de la agenda
+leyó `{}` y la degradó para siempre a `{auto, tick_min, catchup_hours}`. Con eso se
+perdieron la API key, los límites del reloj y el cursor de rotación, **sin un solo error
+en el log**: el sistema seguía publicando con los defaults, 4/h, sin que nadie lo notara.
+
+Dos corrienes lo sostienen:
+
+- **`mergePublishConfig()`** mezcla `ai`, `facebook` y `agenda` campo por campo. Los tres
+  van por separado porque los formularios mandan subconjuntos: Ajustes manda `agenda` con
+  solo tres claves, y con reemplazo entero cada guardado devolvía `lote_desde` a `''`,
+  reiniciando la rotación de los 163 grupos desde el primero.
+- **`backend/lib/secrets.js`** deja la API key en `.env` (ya ignorado por git) y la
+  reinyecta al arrancar **solo si la base no trae key**. La base manda: si fuera al revés,
+  un valor viejo en `.env` pisaría una key nueva y correcta, que es la pérdida que esto
+  viene a evitar.
+
+`DANIMARVIS_DB` y `DANIMARVIS_ENV_PATH` apuntan la base y el `.env` a otro archivo para
+que las pruebas arranquen el `initDB()` real sin tocar producción.
+`scripts/test-persistencia-config.mjs` verifica que la config sobreviva a un reinicio y
+que una base dañada recupere la key; también falla si toca el `.env` del proyecto.
+
+> Orden de migraciones: `migrateGroupFbId()` consulta `facebook_groups`, que crea
+> `migrateFacebookGroups()`. Con el orden viejo, una instalación **nueva** reventaba en
+> el arranque con `no such table: facebook_groups` y el servidor no levantaba. Solo
+> funcionaba porque en la base que ya existía la tabla estaba de antes. Corregido, y la
+> migración quedó defendida.
 
 ### La evidencia del fallo
 
@@ -216,6 +271,48 @@ que el poster vio: si encontró el compositor, si el botón estaba deshabilitado
 (`aria-disabled` o `disabled`), qué alerta había visible, y la captura
 `%TEMP%/danimarvis_fallo_check.png` cuando no se pudo publicar. Antes ese diagnóstico
 se perdía y un `error` no distinguía "no había botón" de "el botón estaba apagado".
+
+### El lote, que era invisible
+
+`notaLote()` (`groupPublisher.js`) escribe en `notes` **qué grupos se tickearon de
+verdad** en el compositor: `lote: 9/163 grupos [...]`, o `lote: NO se tildó ningún grupo
+extra` cuando la lista vino vacía.
+
+Antes esa información no se podía ver en ninguna parte. El poster siempre devolvía
+`lote_grupos`, pero en un post exitoso **`result.message` no se guarda en la cola**, y
+ahí era donde venía ese texto. La propagación a los N grupos quedaba invisible: ni en
+la cola ni en los logs, porque el stdout del poster se descarta y solo se parsean sus
+líneas JSON. Un post que salió a un grupo y uno que salió a nueve se veían idénticos.
+
+Que se escriba incluso con la lista vacía es a propósito: **"se pidió lote y no se tildó
+ninguno" es justo lo que distingue los dos casos**, y es la señal más barata de
+throttling en silencio. Se ve en el log como `SIN_LOTE=1` al cerrar la corrida.
+
+El texto va limitado a 240 chars porque `notes` se corta a 500 al final y con 300 el
+lote se comía la nota de imágenes. El conteo va primero, así que si trunca sobrevive el
+dato que importa.
+
+### Los logs
+
+Una corrida tiene que poder auditarse con una línea, sin abrir la UI:
+
+```
+[agenda] ELEGIDO destino=82107d5b prog=2026-10-05T02:21:00.000Z grupo="Revolico de colón s.s" motivo=ok () intentos_ultima_hora=6/12
+[publish] INICIO corrida=dd14d044 origen=agenda modo=publish destinos=1
+[publish] FIN    corrida=dd14d044 origen=agenda dur=1m46s ok=1 err=0  Revolico de colón s.s:ok (lote 9/120)
+```
+
+- **`origen`** es explícito en los tres caminos: `agenda`, `worker`, `manual`. Vive en
+  `currentRun.origen` y en `lastResult.origen`.
+- **`ELEGIDO`** dice por qué se pudo publicar AHORA, no solo cuántas. Sin el motivo no
+  había forma de distinguir un tick que obedeció el freno de uno que lo pasó por alto.
+- **`SIN PUBLICAR`** solo se imprime cuando cambia el motivo (`logSaltoAgenda()`
+  recuerda el último). Un freno que se alterna con publicaciones volvería a loguearse.
+
+> ⚠️ `runGroupPublish()` **reemplaza** el objeto `currentRun` que arma
+> `startGroupPublish()`, así que el `origen` hay que reusarlo explícitamente. Sin eso
+> el log de cierre salía con `origen=?` justo cuando sí importaba, que fue lo que pasó
+> en una corrida real del 2026-10-04. Hay test de regresión para eso.
 
 ---
 
