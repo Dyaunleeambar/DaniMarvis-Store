@@ -121,6 +121,7 @@ function renderPage(container, settings, categories, providerStyles) {
                 <div class="form-group">
                   <label>Modelo</label>
                   <input type="text" name="ai_model" class="form-control" value="${escAttr(ai.model || 'nex-agi/nex-n2.5-mini:free')}" placeholder="nex-agi/nex-n2.5-mini:free" />
+                  <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">Para importar por IA en Importar/Sincronizar, el modelo debe soportar <b>visión</b>. Probado: <code>inclusionai/ling-3.0-flash-vl</code>. Si no, usá el motor Local (OCR).</small>
                 </div>
               </div>
               <div class="form-group">

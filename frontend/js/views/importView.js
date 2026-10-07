@@ -27,6 +27,7 @@ function updateEyeIcon(btn, card) {
 
 const FOLDER_KEY = 'danimarvis_import_folder';
 const PROVIDER_KEY = 'danimarvis_import_provider';
+const ENGINE_KEY = 'danimarvis_import_engine';
 
 function sanitizeFolderName(name) {
   return String(name || '').replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, '_').replace(/_+/g, '_').replace(/^_|$/g, '');
@@ -50,6 +51,7 @@ function renderForm(container, providers) {
   let providerId = localStorage.getItem(PROVIDER_KEY) || providers[0]?.id || '';
   const selectedProvider = providers.find(p => p.id === providerId);
   const folder = localStorage.getItem(FOLDER_KEY) || (selectedProvider ? getProviderFolder(selectedProvider.name) : '');
+  let engine = localStorage.getItem(ENGINE_KEY) || 'local';
   let analyzeResult = null;
   let busy = false;
 
@@ -80,6 +82,16 @@ function renderForm(container, providers) {
             <label style="font-size:.82rem;color:var(--text-secondary);display:block;margin-bottom:4px">Carpeta con las imágenes</label>
             <input type="text" id="imp-folder" class="form-control" value="${escHtml(folder)}" />
           </div>
+          <div>
+            <label style="font-size:.82rem;color:var(--text-secondary);display:block;margin-bottom:4px">Motor de lectura</label>
+            <select id="imp-engine" class="form-control">
+              <option value="local" ${engine === 'local' ? 'selected' : ''}>Local (OCR, sin internet)</option>
+              <option value="vision" ${engine === 'vision' ? 'selected' : ''}>IA · visión (varios productos por imagen)</option>
+            </select>
+            <p style="margin:4px 0 0;font-size:.72rem;color:var(--text-muted)">
+              IA usa la API de Ajustes &gt; Publicaciones y necesita un modelo con visión. Es más preciso y detecta varios productos en una misma foto.
+            </p>
+          </div>
           <div style="display:flex;align-items:center;gap:10px">
             <button class="btn btn--primary" id="imp-analyze">Analizar imágenes</button>
             <span id="imp-status" style="font-size:.78rem;color:var(--text-muted)"></span>
@@ -108,12 +120,16 @@ function renderForm(container, providers) {
     const btn = document.getElementById('imp-analyze');
     if (!folderVal) { showToast('Indicá la carpeta con las imágenes', 'error'); return; }
     if (!providerId) { showToast('Elegí el proveedor', 'error'); return; }
+    const engineVal = document.getElementById('imp-engine').value;
     localStorage.setItem(FOLDER_KEY, folderVal);
+    localStorage.setItem(ENGINE_KEY, engineVal);
     busy = true;
     btn.disabled = true;
-    status.textContent = 'Analizando imágenes (OCR)... puede tardar un poco';
+    status.textContent = engineVal === 'vision'
+      ? 'Analizando con IA (visión)... puede tardar unos minutos'
+      : 'Analizando imágenes (OCR)... puede tardar un poco';
     try {
-      const data = await api.importAnalyze({ folder: folderVal, provider_id: providerId });
+      const data = await api.importAnalyze({ folder: folderVal, provider_id: providerId, engine: engineVal });
       analyzeResult = data;
       status.textContent = '';
       renderResults(container, data);
@@ -170,8 +186,10 @@ function renderResults(container, data) {
               <input type="checkbox" class="imp-apply" ${checked} /> Aplicar
             </label>
             ${matchBadge}
+            ${it.origen === 'vision' ? '<span style="font-size:.68rem;padding:2px 7px;border-radius:10px;background:rgba(99,102,241,.12);color:#6366f1">IA · visión</span>' : ''}
             <span style="font-size:.72rem;color:var(--text-muted);word-break:break-all;flex:1">${escHtml(it.filename)}</span>
           </div>
+          ${it.detected_name ? `<div style="font-size:.75rem;color:var(--text-secondary)">Nombre detectado: <b>${escHtml(it.detected_name)}</b></div>` : ''}
           <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
             <div style="display:flex;gap:6px;align-items:center;flex:1;min-width:320px">
               <select class="imp-filter-cat form-control form-control--small" style="max-width:120px;flex-shrink:0" title="Filtrar productos por categoría">
@@ -194,7 +212,7 @@ function renderResults(container, data) {
             <span class="imp-current" style="font-size:.78rem;color:var(--text-muted)">actual: ${current}</span>
           </div>
           <details style="font-size:.72rem;color:var(--text-muted)">
-            <summary style="cursor:pointer">Texto detectado por OCR</summary>
+            <summary style="cursor:pointer">${it.origen === 'vision' ? 'Respuesta del modelo' : 'Texto detectado por OCR'}</summary>
             <pre style="white-space:pre-wrap;font-family:inherit;margin:6px 0 0;max-height:120px;overflow:auto">${escHtml(it.text || '—')}</pre>
           </details>
         </div>
@@ -208,7 +226,7 @@ function renderResults(container, data) {
           <input type="checkbox" id="imp-toggle-all" checked /> Marcar / desmarcar todos
         </label>
         <div style="font-size:.85rem;color:var(--text-secondary)">
-          Proveedor: <b>${escHtml(data.provider)}</b> · ${data.items.length} imagen(es)
+          Proveedor: <b>${escHtml(data.provider)}</b> · ${new Set(data.items.filter(i => i.filename && !i.error).map(i => i.filename)).size} imagen(es) · ${data.items.filter(i => !i.error).length} producto(s) detectado(s)
         </div>
       </div>
       <label style="display:flex;align-items:center;gap:6px;font-size:.82rem;cursor:pointer">
@@ -318,7 +336,7 @@ function renderResults(container, data) {
           images: it.url ? [it.url] : [],
           previewImage: it.url || '',
           catalogVisible: card.dataset.visible !== '0',
-          name: suggestName(it.text),
+          name: it.detected_name || suggestName(it.text),
           price: price || undefined,
           onCreated: async (newId) => {
             const created = await api.getProduct(newId);
