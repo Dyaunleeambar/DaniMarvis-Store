@@ -10,7 +10,7 @@
 // de publicaciones desaparecía de un golpe. Estos tests fijan lo contrario: el
 // origen queda intacto y la copia es lo único que aparece nuevo.
 import { abrirMemoria } from './helpers/sqljs.mjs';
-import { planDuplicacionDia, duplicarPublicacion, acotarPlan } from '../backend/lib/duplicarDia.js';
+import { planDuplicacionDia, duplicarPublicacion, acotarPlan, contextoRotacion, offsetRotacion } from '../backend/lib/duplicarDia.js';
 import { transaccion } from '../backend/lib/transaccion.js';
 
 let fallos = 0;
@@ -345,6 +345,74 @@ ok('las no marcadas siguen sin copia',
 ok('las copias son de lo marcado y sólo de eso',
    db.prepare('SELECT COUNT(*) AS n FROM publication_clones WHERE hasta = ? AND origen_id NOT IN (?,?,?)')
      .get(H, elegidas[0], elegidas[1], elegidas[2]).n === 0);
+
+// ── reordenar horarios y rotar destinos ─────────────────────────────────────
+// Ambas opciones sirven para que el día nuevo no sea calcado del origen. La
+// previa y el apply comparten la semilla origen→destino, así que son
+// deterministas: pedir el mismo par de días da siempre el mismo plan.
+console.log('reordenar y rotar destinos');
+db.exec(`CREATE TABLE IF NOT EXISTS facebook_groups (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, url TEXT DEFAULT '', sort_order INTEGER DEFAULT 0)`);
+const catalogoSeed = ['Grupo A', 'Grupo B', 'Grupo C', 'Grupo D', 'Grupo E',
+  'Grupo F', 'Grupo G', 'Grupo H', 'Revolico Matanzas', 'Revolico Habana', 'Revolico Santiago'];
+catalogoSeed.forEach((name, i) => db.prepare(
+  'INSERT INTO facebook_groups (id, name, url, sort_order) VALUES (?,?,?,?)'
+).run('g' + i, name, 'https://fb/' + name, i));
+
+const R = '2026-12-01';
+const baseR = planDuplicacionDia(db, D, R);
+const reorden = planDuplicacionDia(db, D, R, null, { reordenar: true });
+
+ok('reordenar no cambia el conjunto de horas: es una permutación',
+   eq([...reorden.duplicadas.map(d => d.a_iso)].sort(), [...baseR.duplicadas.map(d => d.a_iso)].sort()));
+ok('reordenar sí cambia el orden de las filas',
+   !eq(reorden.duplicadas.map(d => d.a_iso), baseR.duplicadas.map(d => d.a_iso)));
+ok('reordenar es determinista (misma semilla, mismo resultado)',
+   eq(reorden.duplicadas.map(d => d.a_iso),
+      planDuplicacionDia(db, D, R, null, { reordenar: true }).duplicadas.map(d => d.a_iso)));
+
+const rotar = planDuplicacionDia(db, D, R, null, { rotar_destinos: true });
+const filaMixta = rotar.duplicadas.find(d => d.id === pMixta);
+ok('rotar expone los grupos nuevos por publicación',
+   Array.isArray(filaMixta.grupos_nuevos) && filaMixta.grupos_nuevos.length === 5,
+   JSON.stringify(filaMixta.grupos_nuevos));
+ok('rotar mueve CADA destino a un grupo distinto',
+   filaMixta.grupos_nuevos.every((g, i) => g !== filaMixta.grupos[i]),
+   JSON.stringify([filaMixta.grupos, filaMixta.grupos_nuevos]));
+ok('rotar mantiene los destinos distintos entre sí (es una biyección)',
+   new Set(filaMixta.grupos_nuevos).size === filaMixta.grupos_nuevos.length);
+ok('rotar conserva la cantidad de destinos por publicación',
+   rotar.duplicadas.every(d => d.destinos === 0 || d.grupos_nuevos.length === d.destinos));
+ok('rotar es determinista',
+   eq(rotar.duplicadas.find(d => d.id === pMixta).grupos_nuevos, filaMixta.grupos_nuevos));
+ok('sin la opción no hay grupos nuevos', baseR.duplicadas.every(d => d.grupos_nuevos === undefined));
+ok('el plan recuerda las opciones aplicadas',
+   reorden.reordenar === true && reorden.rotar_destinos === false
+   && rotar.rotar_destinos === true && rotar.reordenar === false
+   && baseR.reordenar === false && baseR.rotar_destinos === false);
+ok('el corrimiento nunca es 0 con más de un grupo',
+   [2, 3, 5, 11].every(m => offsetRotacion(D, R, m) >= 1 && offsetRotacion(D, R, m) <= m - 1));
+ok('no hay rotación posible con 0 o 1 grupos',
+   offsetRotacion(D, R, 0) === 0 && offsetRotacion(D, R, 1) === 0);
+
+// La copia real tiene que caer en los grupos que mostró la previa: previa y apply
+// comparten `contextoRotacion`, así que no pueden discrepar.
+const RT = '2026-12-02';
+const planRT = planDuplicacionDia(db, D, RT, null, { reordenar: true, rotar_destinos: true });
+const rot = contextoRotacion(db, D, RT);
+transaccion(db, () => {
+  for (const d of planRT.duplicadas) duplicarPublicacion(db, d.id, d.a_iso, D, RT, rot);
+});
+const clonRT = db.prepare('SELECT clon_id FROM publication_clones WHERE origen_id = ? AND hasta = ?').get(pMixta, RT)?.clon_id;
+const previsto = planRT.duplicadas.find(d => d.id === pMixta);
+ok('la copia cae en los grupos que mostró la previa',
+   eq(cola(clonRT).map(d => d.group_name).sort(), [...previsto.grupos_nuevos].sort()),
+   JSON.stringify(cola(clonRT).map(d => d.group_name)));
+ok('la copia rotada conserva el resto de la fila (variante, imágenes)',
+   cola(clonRT).every(d => d.variant_text === 'texto del destino' && d.images === '[]'));
+ok('el origen no se movió de grupos',
+   eq(cola(pMixta).map(d => d.group_name).sort(),
+      ['Grupo A', 'Grupo B', 'Grupo C', 'Grupo D', 'Grupo E'].sort()));
 
 console.log(fallos ? `\n${fallos} FALLA(S)` : '\ntodo ok');
 process.exit(fallos ? 1 : 0);

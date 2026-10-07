@@ -848,6 +848,19 @@ window._agendaDuplicarDia = function (fecha) {
           respecto de ella, así el bloque no se deforma.
         </small>
       </div>
+      <div class="form-group" style="margin-bottom:12px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:.82rem">
+          <input type="checkbox" id="dup-reordenar" style="cursor:pointer" />
+          Barajar los horarios (que los productos salgan en otro orden)
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:.82rem;margin-top:6px">
+          <input type="checkbox" id="dup-rotar" style="cursor:pointer" />
+          Cambiar los destinos (correr cada publicación a los grupos siguientes del catálogo)
+        </label>
+        <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">
+          Para que el día nuevo no sea una copia calcada del anterior. Es determinista: el mismo par de días da siempre el mismo resultado.
+        </small>
+      </div>
       <div id="dup-previa"></div>
     </div>
     <div class="form-actions">
@@ -861,6 +874,20 @@ window._agendaDuplicarDia = function (fecha) {
   const horaEl = document.getElementById('dup-hora');
   const previaEl = document.getElementById('dup-previa');
   const okEl = document.getElementById('dup-ok');
+  const reordenarEl = document.getElementById('dup-reordenar');
+  const rotarEl = document.getElementById('dup-rotar');
+
+  // Las opciones se leen del DOM en el momento de pedir el plan y de aplicar: así
+  // la previa y el apply mandan el mismo par de valores sin tener que sincronizar
+  // una copia aparte.
+  const opciones = () => ({ reordenar: !!reordenarEl?.checked, rotar_destinos: !!rotarEl?.checked });
+
+  // Lista de grupos abreviada: una publicación puede tener 13 destinos y volcar
+  // los 13 en la fila la haría ilegible. Muestra los primeros y cuenta el resto.
+  const listaCorta = (arr, n = 4) => {
+    const a = (arr || []).filter(Boolean);
+    return a.length > n ? `${a.slice(0, n).join(', ')} +${a.length - n}` : a.join(', ');
+  };
 
   const aviso = (texto) => `<div class="agenda-aviso agenda-aviso--warn">${texto}</div>`;
 
@@ -983,6 +1010,7 @@ window._agendaDuplicarDia = function (fecha) {
         <span style="flex:1;min-width:0;cursor:default;text-align:left;border:0;background:none;padding:0;font:inherit;color:inherit">
           <div class="agenda-destino-nombre">${escHtml(nombreDe(d))}</div>
           <div class="agenda-destino-notas">${escHtml(d.de_hora || '—:—')} → <b>${escHtml(d.a_hora || '—:—')}</b>${d.a_fecha && d.a_fecha !== plan.hasta ? ` <span style="color:var(--warning)">del ${escHtml(formatDate(d.a_fecha))}</span>` : ''} · ${escHtml(etiquetaEstado(d.estado))} · ${d.destinos || 0} destino(s)${d.publicados ? `, ${d.publicados} ya publicado(s)` : ''}</div>
+          ${d.grupos_nuevos && d.grupos_nuevos.length ? `<div class="agenda-destino-notas" style="color:var(--text-muted)">destinos: ${escHtml(listaCorta(d.grupos))} → <b>${escHtml(listaCorta(d.grupos_nuevos))}</b></div>` : ''}
         </span>
         <input type="checkbox" data-dup-check="${escAttr(d.id)}" checked style="flex:none;margin-top:5px;cursor:pointer" title="Llevar esta al día destino" />
       </label>`).join('');
@@ -1020,7 +1048,7 @@ window._agendaDuplicarDia = function (fecha) {
     cargando = true;
     pintarPrevia();
     try {
-      plan = await api.previewDuplicateAgendaDay(fecha, hasta, horaEl.value);
+      plan = await api.previewDuplicateAgendaDay(fecha, hasta, horaEl.value, opciones());
       confirmarRepeticion = false;
       // Viene todo marcado: el botón dice "Duplicar todo el día" y desmarcar es
       // la excepción, no al revés.
@@ -1041,6 +1069,10 @@ window._agendaDuplicarDia = function (fecha) {
   // filas se mueven, así que mostrar los viejos sería mostrar una preview que no
   // es la que se va a aplicar.
   horaEl.addEventListener('change', pedirPlan);
+  // Reordenar y rotar también recalculan el plan: cambian horas y destinos de las
+  // filas, así que mostrar los viejos sería una preview que no es la que se aplica.
+  reordenarEl.addEventListener('change', pedirPlan);
+  rotarEl.addEventListener('change', pedirPlan);
 
   // Un solo listener delegado para toda la lista, y puesto UNA vez: la lista se
   // redibuja cada vez que cambia el día destino, y atar el listener al render
@@ -1088,7 +1120,7 @@ window._agendaDuplicarDia = function (fecha) {
     okEl.disabled = true;
     okEl.textContent = 'Duplicando…';
     try {
-      const r = await api.duplicateAgendaDay(fecha, hasta, elegidas, horaEl.value);
+      const r = await api.duplicateAgendaDay(fecha, hasta, elegidas, horaEl.value, opciones());
       await cargar();
       mostrarListo(r, hasta);
     } catch (err) {

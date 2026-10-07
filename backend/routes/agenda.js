@@ -4,7 +4,7 @@ import { v4 as uuid } from 'uuid';
 import { getDB, transaccion } from '../db/database.js';
 import { startGroupPublish, agendaSchedulerState, classifyFailure, CAUSAS } from '../lib/groupPublisher.js';
 import { registrarPlan } from '../lib/plans.js';
-import { planDuplicacionDia, duplicarPublicacion, acotarPlan, deshacerDuplicacion } from '../lib/duplicarDia.js';
+import { planDuplicacionDia, duplicarPublicacion, acotarPlan, deshacerDuplicacion, contextoRotacion } from '../lib/duplicarDia.js';
 import { aggregateEstado } from '../lib/agendaEstado.js';
 
 // La normalización de nombres de grupo vive en el compositor (es la que hace
@@ -451,14 +451,23 @@ function leerFechas(req, res) {
   // se calcula a una hora y se aplica a otra, la vista previa miente.
   const hora = typeof req.body?.hora_inicio === 'string' ? req.body.hora_inicio : req.query.hora_inicio;
   const hora_inicio = /^\d{1,2}:\d{2}$/.test(String(hora || '')) ? String(hora) : null;
-  return { desde, hasta, hora_inicio };
+  // Opciones de la vista previa. Vienen del query (GET) y del body (POST) y, como
+  // la hora, tienen que coincidir en los dos lados: si la previa se calcula con
+  // rotación y el apply sin ella, el modal muestra destinos que no se aplican.
+  // Se acepta 1/'1'/'true' (query strings) además del booleano del body.
+  const flag = (v) => v === true || v === 1 || v === '1' || v === 'true';
+  const opciones = {
+    reordenar: flag(req.body?.reordenar) || flag(req.query?.reordenar),
+    rotar_destinos: flag(req.body?.rotar_destinos) || flag(req.query?.rotar_destinos),
+  };
+  return { desde, hasta, hora_inicio, opciones };
 }
 
 /** Vista previa: lo mismo que se va a aplicar, sin escribir nada. */
 router.get('/duplicar-dia', (req, res) => {
   const args = leerFechas(req, res);
   if (!args) return;
-  res.json(planDuplicacionDia(getDB(), args.desde, args.hasta, args.hora_inicio));
+  res.json(planDuplicacionDia(getDB(), args.desde, args.hasta, args.hora_inicio, args.opciones));
 });
 
 /**
@@ -481,15 +490,20 @@ router.post('/duplicar-dia', (req, res) => {
   const args = leerFechas(req, res);
   if (!args) return;
 
-  const plan = acotarPlan(planDuplicacionDia(db, args.desde, args.hasta, args.hora_inicio), req.body?.ids);
+  const plan = acotarPlan(planDuplicacionDia(db, args.desde, args.hasta, args.hora_inicio, args.opciones), req.body?.ids);
   if (!plan.duplicadas.length) {
     return res.json({ ...plan, aplicado: true, duplicadas: [] });
   }
 
+  // El contexto de rotación se arma UNA vez con el mismo helper que usó el plan
+  // para la vista previa. Si se recalculara distinto (otro orden de catálogo, otro
+  // offset) la copia iría a grupos que el modal nunca mostró.
+  const rotacion = args.opciones.rotar_destinos ? contextoRotacion(db, args.desde, args.hasta) : null;
+
   try {
     transaccion(db, () => {
       for (const d of plan.duplicadas) {
-        d.clon_id = duplicarPublicacion(db, d.id, d.a_iso, args.desde, args.hasta);
+        d.clon_id = duplicarPublicacion(db, d.id, d.a_iso, args.desde, args.hasta, rotacion);
       }
     });
   } catch (err) {

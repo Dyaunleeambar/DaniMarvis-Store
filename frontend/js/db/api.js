@@ -133,12 +133,26 @@ export const api = {
   // `horaInicio` corre el día como bloque desde esa hora ("HH:MM"): la primera
   // publicación cae ahí y las demás conservan su intervalo. Sin valor, cada una
   // conserva su propia hora.
-  previewDuplicateAgendaDay: (desde, hasta, horaInicio) =>
+  //
+  // `opciones` ({ reordenar, rotar_destinos }) rompe la fotocopia del día: baraja
+  // las horas entre las publicaciones y/o corre cada destino a los grupos
+  // siguientes del catálogo. Va tanto en la previa como en el apply, y tiene que
+  // ser el MISMO objeto: la previa y la copia comparten la semilla origen→destino,
+  // así que lo que se ve es lo que se aplica.
+  previewDuplicateAgendaDay: (desde, hasta, horaInicio, opciones = {}) =>
     request('GET', `/agenda/duplicar-dia?desde=${encodeURIComponent(desde)}&hasta=${encodeURIComponent(hasta)}` +
-      (horaInicio ? `&hora_inicio=${encodeURIComponent(horaInicio)}` : '')),
-  duplicateAgendaDay: (desde, hasta, ids, horaInicio) =>
+      (horaInicio ? `&hora_inicio=${encodeURIComponent(horaInicio)}` : '') +
+      (opciones.reordenar ? '&reordenar=1' : '') +
+      (opciones.rotar_destinos ? '&rotar_destinos=1' : '')),
+  duplicateAgendaDay: (desde, hasta, ids, horaInicio, opciones = {}) =>
     request('POST', '/agenda/duplicar-dia',
-      { desde, hasta, ...(ids ? { ids } : {}), ...(horaInicio ? { hora_inicio: horaInicio } : {}) }),
+      {
+        desde, hasta,
+        ...(ids ? { ids } : {}),
+        ...(horaInicio ? { hora_inicio: horaInicio } : {}),
+        ...(opciones.reordenar ? { reordenar: true } : {}),
+        ...(opciones.rotar_destinos ? { rotar_destinos: true } : {}),
+      }),
   undoDuplicateAgendaDay: (clones) => request('POST', '/agenda/duplicar-dia/deshacer', { clones }),
 
   // AI

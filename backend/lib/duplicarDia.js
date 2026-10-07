@@ -30,6 +30,92 @@ import { aggregateEstado } from './agendaEstado.js';
 const require_ = createRequire(import.meta.url);
 const { normGrupo } = require_('../../utilidades/fb-ranking/lote_grupos.js');
 
+// ── Aleatoriedad determinista ───────────────────────────────────────────────
+//
+// El plan se calcula DOS veces: una para la vista previa del modal (GET) y otra
+// para aplicar (POST). Si "reordenar" usara Math.random, lo que el usuario ve en
+// el modal no sería lo que se aplica. Por eso todo se deriva de una semilla fija
+// a partir de origen→destino: el mismo par de días da siempre el mismo resultado,
+// así la previa y el apply coinciden y repetir la operación es reproducible.
+
+function semillaDe(desde, hasta) {
+  let h = 2166136261;
+  for (const c of `${desde}->${hasta}`) {
+    h ^= c.charCodeAt(0);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/** PRNG determinista (mulberry32) sembrado con el par origen→destino. */
+function rngDe(desde, hasta) {
+  let a = semillaDe(desde, hasta);
+  return () => {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Permutación de posiciones para reordenar los horarios.
+ *
+ * Fisher–Yates sembrado, y si sale la identidad se intercambian las dos primeras
+ * para garantizar que el orden SIEMPRE cambie cuando hay más de una publicación.
+ * Una permutación es una biyección: es exactamente el mismo conjunto de franjas,
+ * repartido entre las publicaciones en otro orden, sin crear ni perder horas.
+ */
+function permutacionReordenar(n, rng) {
+  const idx = Array.from({ length: n }, (_, i) => i);
+  for (let i = n - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [idx[i], idx[j]] = [idx[j], idx[i]];
+  }
+  if (n > 1 && idx.every((v, i) => v === i)) {
+    [idx[0], idx[1]] = [idx[1], idx[0]];
+  }
+  return idx;
+}
+
+/** Desplazamiento en el catálogo, en [1, N-1]. 0 = no se puede rotar. */
+export function offsetRotacion(desde, hasta, n) {
+  if (!n || n <= 1) return 0;
+  return 1 + (semillaDe(desde, hasta) % (n - 1));
+}
+
+/**
+ * Contexto de rotación de destinos: el catálogo, el índice por nombre normalizado
+ * y el desplazamiento. Devuelve null si no hay a dónde rotar (0 o 1 grupos).
+ *
+ * Se centraliza acá para que la vista previa y el apply usen exactamente el mismo
+ * catálogo y el mismo offset; si cada uno lo calculara por su lado, lo que se
+ * muestra y lo que se aplica podrían diferir.
+ */
+export function contextoRotacion(db, desde, hasta) {
+  const catalogo = db.prepare('SELECT name, url FROM facebook_groups ORDER BY sort_order, name').all();
+  const offset = offsetRotacion(desde, hasta, catalogo.length);
+  if (!offset) return null;
+  const indice = new Map(catalogo.map((g, i) => [normGrupo(g.name), i]));
+  return { catalogo, indice, offset };
+}
+
+/**
+ * Grupo al que va un destino tras correr `offset` posiciones en el catálogo.
+ *
+ * Sumar una constante módulo N es inyectivo: dos grupos distintos de una misma
+ * publicación siguen siendo distintos después de correr, así que no se crean
+ * choques nuevos. Si el grupo del origen no está en el catálogo (lo borraron), se
+ * deja tal cual: no hay a dónde correrlo.
+ */
+export function grupoRotado(nombre, url, catalogo, indice, offset) {
+  if (!offset || !catalogo.length) return { group_name: nombre, group_url: url || '' };
+  const pos = indice.get(normGrupo(nombre));
+  if (pos == null) return { group_name: nombre, group_url: url || '' };
+  const g = catalogo[(pos + offset) % catalogo.length];
+  return { group_name: g.name, group_url: g.url || '' };
+}
+
 /** "HH:MM" en hora local del servidor, igual que el `hora_local` del GET /. */
 function horaLocalDe(iso) {
   if (!iso) return '';
@@ -114,7 +200,7 @@ function primeraImagen(raw) {
  * (published, error, cancelled, archived): ese estado no se pierde, sigue
  * intacto en el día de origen, que es justo lo que la copia promete no tocar.
  */
-export function duplicarPublicacion(db, pubId, iso, desde, hasta) {
+export function duplicarPublicacion(db, pubId, iso, desde, hasta, rotacion = null) {
   const orig = db.prepare('SELECT * FROM publications WHERE id = ?').get(pubId);
   if (!orig) throw new Error(`la publicación ${pubId} ya no existe`);
   const destinos = db.prepare('SELECT * FROM publication_queue WHERE publication_id = ?').all(pubId);
@@ -129,11 +215,22 @@ export function duplicarPublicacion(db, pubId, iso, desde, hasta) {
 
   const colsDest = columnasParaCopiar(db, 'publication_queue',
     ['id', 'publication_id', 'status', 'published_at', 'scheduled_at', 'created_at', 'updated_at']);
+  const iGrupo = colsDest.indexOf('group_name');
+  const iUrl = colsDest.indexOf('group_url');
   for (const d of destinos) {
+    const valores = colsDest.map(c => d[c] ?? null);
+    // Con `rotacion`, cada destino salta a los grupos siguientes del catálogo.
+    // Se conserva el resto de la fila (variante, imágenes, pending_approval): sólo
+    // cambia a qué grupo apunta.
+    if (rotacion) {
+      const r = grupoRotado(d.group_name, d.group_url, rotacion.catalogo, rotacion.indice, rotacion.offset);
+      if (iGrupo >= 0) valores[iGrupo] = r.group_name;
+      if (iUrl >= 0) valores[iUrl] = r.group_url;
+    }
     db.prepare(`
       INSERT INTO publication_queue (id, publication_id, status, published_at, scheduled_at, ${colsDest.join(', ')})
       VALUES (?, ?, 'pending', NULL, ?, ${colsDest.map(() => '?').join(', ')})
-    `).run(uuid(), clonId, iso, ...colsDest.map(c => d[c] ?? null));
+    `).run(uuid(), clonId, iso, ...valores);
   }
 
   db.prepare(`
@@ -171,7 +268,7 @@ export function duplicarPublicacion(db, pubId, iso, desde, hasta) {
  *    el modal dibujara su propio estado con otra cuenta, el usuario no sabría cuál
  *    de los dos miente.
  */
-export function planDuplicacionDia(db, desde, hasta, horaInicio) {
+export function planDuplicacionDia(db, desde, hasta, horaInicio, opciones = {}) {
   const origen = limitesDiaLocal(desde);
   const pubs = db.prepare(`
     SELECT id, product_name, publish_text, images, publication_date
@@ -245,6 +342,39 @@ export function planDuplicacionDia(db, desde, hasta, horaInicio) {
     });
   }
 
+  // ── Cambiar los horarios de orden (opcional) ──────────────────────────────
+  //
+  // Se permutan las franjas horarias entre las publicaciones: el mismo conjunto
+  // de horas, repartido en otro orden. Si el día destino es fotocopia del origen,
+  // esto rompe el patrón sin mover el rango del día (la primera franja sigue
+  // siendo la misma). Determinista por origen→destino, así la previa coincide con
+  // el apply y repetir da lo mismo.
+  if (opciones.reordenar && duplicadas.length > 1) {
+    const franjas = duplicadas.map(d => d.a_iso);
+    const perm = permutacionReordenar(franjas.length, rngDe(desde, hasta));
+    duplicadas.forEach((d, i) => {
+      d.a_iso = franjas[perm[i]];
+      d.a_hora = horaLocalDe(d.a_iso);
+      d.a_fecha = fechaLocalDe(d.a_iso);
+    });
+  }
+
+  // ── Cambiar los destinos (opcional) ───────────────────────────────────────
+  //
+  // Cada destino salta a los grupos siguientes del catálogo, conservando cuántos
+  // tiene cada publicación. `grupos_nuevos` es lo que muestra el modal y también
+  // lo que aplica la copia: un solo contexto de rotación para ambos, para que no
+  // pueda diferir lo que se ve de lo que se hace.
+  const rotacion = opciones.rotar_destinos ? contextoRotacion(db, desde, hasta) : null;
+  if (opciones.rotar_destinos) {
+    for (const d of duplicadas) {
+      const destinos = destinosPorPub.get(d.id) || [];
+      d.grupos_nuevos = rotacion
+        ? destinos.map(x => grupoRotado(x.group_name, x.group_url, rotacion.catalogo, rotacion.indice, rotacion.offset).group_name)
+        : [];
+    }
+  }
+
   // Conflictos contra lo que YA está en el día destino, en los mismos grupos y
   // dentro de la ventana de 2h que ya usa /conflicts. Las copias aún no existen
   // así que no hace falta excluirlas: entre ellas no chocan, se crean juntas.
@@ -273,7 +403,11 @@ export function planDuplicacionDia(db, desde, hasta, horaInicio) {
     for (const d of duplicadas) {
       const tMs = new Date(d.a_iso).getTime();
       const vistos = new Set();
-      for (const g of new Set(d.grupos.map(normGrupo))) {
+      // Con rotación de destinos, el choque hay que medirlo en los grupos NUEVOS:
+      // ahí es donde va a caer la copia. Usar los viejos avisaría de conflictos
+      // que no van a existir y ocultaría los que sí.
+      const gruposEfectivos = (d.grupos_nuevos && d.grupos_nuevos.length) ? d.grupos_nuevos : d.grupos;
+      for (const g of new Set(gruposEfectivos.map(normGrupo))) {
         for (const f of porGrupo.get(g) || []) {
           const dif = Math.abs(new Date(String(f.scheduled_at).replace(' ', 'T')).getTime() - tMs);
           if (dif > VENTANA) continue;
@@ -303,6 +437,9 @@ export function planDuplicacionDia(db, desde, hasta, horaInicio) {
   const sinDestinos = duplicadas.filter(d => d.destinos === 0).length;
   if (sinDestinos) {
     avisos.push(`${sinDestinos} publicación(es) no tienen ningún destino: la copia queda sin agendar.`);
+  }
+  if (opciones.rotar_destinos && !rotacion) {
+    avisos.push('No hay grupos suficientes en el catálogo para rotar: los destinos quedarían iguales.');
   }
   // El bloque puede no entrar en el día: si la hora de arranque es tarde y el día
   // spanned varias horas, las últimas se caen al día siguiente (o al anterior, si
@@ -334,6 +471,7 @@ export function planDuplicacionDia(db, desde, hasta, horaInicio) {
 
   return {
     desde, hasta, hora_inicio: arranque ? horaInicio : null,
+    reordenar: !!opciones.reordenar, rotar_destinos: !!opciones.rotar_destinos,
     duplicadas, conflictos, avisos, ya_duplicada: yaDuplicada,
   };
 }
