@@ -414,5 +414,20 @@ ok('el origen no se movió de grupos',
    eq(cola(pMixta).map(d => d.group_name).sort(),
       ['Grupo A', 'Grupo B', 'Grupo C', 'Grupo D', 'Grupo E'].sort()));
 
+console.log('reubicar en huecos (reubicarDuplicadas)');
+const RPH = '2026-12-04';
+const planHuecos = planDuplicacionDia(db, D, RPH);
+const horasPlan = planHuecos.duplicadas.map(d => new Date(d.a_iso).getTime()).sort((a, b) => a - b);
+const huecos = [horasPlan[0] - 3600000, horasPlan[horasPlan.length - 1] - 600000];
+reubicarDuplicadas(planHuecos, huecos);
+ok('aplica los horarios del coordinador a las primeras ordenadas',
+  planHuecos.duplicadas[0].a_iso === new Date(huecos[0]).toISOString(),
+  planHuecos.duplicadas[0].a_iso);
+ok('el plan queda ordenado por hora',
+  planHuecos.duplicadas.every((d, i, arr) => i === 0 || new Date(arr[i - 1].a_iso) <= new Date(d.a_iso)));
+ok('guarda cuántas se reubicaron', planHuecos.distribuidas === huecos.length);
+ok('las que sobran conservan su hora original',
+  planHuecos.duplicadas.slice(huecos.length).every(d => new Date(d.a_iso).getTime() >= Math.min(...horasPlan)));
+
 console.log(fallos ? `\n${fallos} FALLA(S)` : '\ntodo ok');
 process.exit(fallos ? 1 : 0);

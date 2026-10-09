@@ -120,6 +120,33 @@ export function localAdvanceDestinos(k) {
   return { cursor: nuevo, total };
 }
 
+// ------------------------------------------------------------- catálogo ---
+// La lista de grupos destino vive en A. B la espeja para poder mostrar los
+// grupos y resolver el `grupo_id` que le manda su propia UI (que no tiene el
+// catálogo en su base).
+export function localCatalogo() {
+  const db = getDB();
+  return db.prepare('SELECT id, name, url, sort_order FROM facebook_groups ORDER BY sort_order ASC, name ASC').all();
+}
+
+export function upsertCatalogo(grupos) {
+  if (!Array.isArray(grupos) || !grupos.length) return 0;
+  const db = getDB();
+  let n = 0;
+  for (const g of grupos) {
+    if (!g || !g.id) continue;
+    db.prepare(`
+      INSERT INTO facebook_groups (id, name, url, sort_order, updated_at)
+      VALUES (?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name, url = excluded.url,
+        sort_order = excluded.sort_order, updated_at = datetime('now')
+    `).run(g.id, g.name || '', g.url || '', Number(g.sort_order) || 0);
+    n++;
+  }
+  return n;
+}
+
 // --------------------------------------------------- ventana de A (huecos) ---
 // Horarios en que A ya tiene algo agendado dentro de [ini, fin] (ms). Son los
 // "obstáculos" en los que B no debe caer.
@@ -207,4 +234,11 @@ export async function advanceDestinos(k) {
 export async function distribuir({ ini, fin, cantidad, minGapMs = 0 } = {}) {
   if (isClient()) return http('/api/coordination/distribuir', { method: 'POST', body: { ini, fin, cantidad, minGapMs } });
   return localDistribuir({ ini, fin, cantidad, minGapMs });
+}
+
+// Catálogo completo de grupos destino. En el coordinador sale de su base; en B,
+// por HTTP, para espejarlo.
+export async function catalogo() {
+  if (isClient()) return http('/api/coordination/catalogo');
+  return { grupos: localCatalogo() };
 }

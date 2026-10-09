@@ -75,6 +75,14 @@ coord.localAdvanceDestinos(3);
 ok('advance(3) mueve el cursor', coord.localPeekDestinos(1).inicio === 3);
 ok('peek(4) da la vuelta', coord.localPeekDestinos(4).grupos.map(g => g.name).join(',') === 'Delta,Epsilon,Alpha,Beta');
 
+console.log('coordinación: catálogo compartido (espejo de B)');
+ok('localCatalogo lista los grupos',
+  coord.localCatalogo().map(g => g.name).join(',') === 'Alpha,Beta,Gamma,Delta,Epsilon');
+coord.upsertCatalogo([{ id: 'g0', name: 'Alpha 2', url: 'u', sort_order: 0 }, { id: 'gz', name: 'Zeta', url: 'zu', sort_order: 9 }]);
+const cat = coord.localCatalogo();
+ok('upsert actualiza por id sin duplicar', cat.filter(g => g.id === 'g0').length === 1 && cat.find(g => g.id === 'g0').name === 'Alpha 2');
+ok('upsert agrega los nuevos', cat.some(g => g.id === 'gz' && g.name === 'Zeta'));
+
 console.log('coordinación: reparto en huecos (distribuir)');
 const t = (s) => new Date(s).getTime();
 db.prepare("INSERT INTO publication_queue (id, publication_id, group_name, status, scheduled_at) VALUES ('qa1','pa','G1','pending','2026-10-05 10:00:00')").run();
@@ -115,6 +123,8 @@ const distHttp = await (await fetch(base + '/distribuir', {
   body: JSON.stringify({ ini: t('2026-10-05T09:00:00'), fin: t('2026-10-05T11:00:00'), cantidad: 2 }),
 })).json();
 ok('POST /distribuir devuelve los horarios', Array.isArray(distHttp.dentro) && distHttp.dentro.length === 2);
+const catHttp = await (await fetch(base + '/catalogo', { headers: tok })).json();
+ok('GET /catalogo devuelve los grupos', Array.isArray(catHttp.grupos) && catHttp.grupos.length >= 5);
 
 console.log('coordinación: fachada cliente (B) por HTTP');
 process.env.COORD_URL = 'http://coord.local:9999';
@@ -122,7 +132,7 @@ let ultimo = null;
 const originalFetch = global.fetch;
 global.fetch = async (url, opts = {}) => {
   ultimo = { url, method: opts.method || 'GET', headers: opts.headers || {}, body: opts.body };
-  return { ok: true, status: 200, json: async () => ({ lote_desde: 'W', ok: true, owner: 'B', grupos: [], cursor: 0, total: 0 }) };
+  return { ok: true, status: 200, json: async () => ({ lote_desde: 'W', ok: true, owner: 'B', grupos: [{ id: 'k', name: 'K' }], cursor: 0, total: 0 }) };
 };
 const loteCliente = await coord.getLote();
 ok('cliente GET /lote con token', loteCliente === 'W'
@@ -134,6 +144,8 @@ await coord.commitLote('Nuevo');
 ok('cliente POST /lote/commit', ultimo.url.endsWith('/lote/commit') && JSON.parse(ultimo.body).ultimo === 'Nuevo');
 await coord.advanceDestinos(2);
 ok('cliente POST /destinos/advance', ultimo.url.endsWith('/destinos/advance') && JSON.parse(ultimo.body).k === 2);
+const catCliente = await coord.catalogo();
+ok('cliente GET /catalogo', ultimo.url.endsWith('/catalogo') && catCliente.grupos[0].name === 'K');
 global.fetch = fetch;
 delete process.env.COORD_URL;
 

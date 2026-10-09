@@ -3,6 +3,7 @@ import { v4 as uuid } from 'uuid';
 import { getDB } from '../db/database.js';
 import { publishToFacebook, publishToInstagram } from '../lib/facebook.js';
 import { registrarPlan } from '../lib/plans.js';
+import { advanceDestinos, catalogo, upsertCatalogo } from '../lib/coordination.js';
 
 const router = Router();
 
@@ -209,7 +210,7 @@ router.post('/:id/duplicate', (req, res) => {
  * quedaron atrás a propósito y el usuario los sigue teniendo a la vista en el
  * detalle de la original.
  */
-router.post('/:id/planificar', (req, res) => {
+router.post('/:id/planificar', async (req, res) => {
   const db = getDB();
   const orig = db.prepare('SELECT * FROM publications WHERE id = ?').get(req.params.id);
   if (!orig) return res.status(404).json({ error: 'Publicación no encontrada' });
@@ -226,7 +227,15 @@ router.post('/:id/planificar', (req, res) => {
   // se mantiene el comportamiento de siempre (copiar los destinos vivos).
   const grupoId = typeof req.body?.grupo_id === 'string' ? req.body.grupo_id : '';
   if (grupoId) {
-    const grupo = db.prepare('SELECT id, name, url FROM facebook_groups WHERE id = ?').get(grupoId);
+    let grupo = db.prepare('SELECT id, name, url FROM facebook_groups WHERE id = ?').get(grupoId);
+    // En B el catálogo no vive en su base: sale de A. Se espeja una vez y queda.
+    if (!grupo) {
+      try {
+        const cat = await catalogo();
+        upsertCatalogo(cat?.grupos || []);
+        grupo = db.prepare('SELECT id, name, url FROM facebook_groups WHERE id = ?').get(grupoId);
+      } catch { /* si A no responde, se reporta abajo */ }
+    }
     if (!grupo) return res.status(400).json({ error: 'El grupo de rotación no existe' });
 
     const id = uuid();
@@ -242,7 +251,12 @@ router.post('/:id/planificar', (req, res) => {
         (id, publication_id, group_name, group_url, status, scheduled_at,
          variant_index, variant_text, images, pending_approval)
       VALUES (?, ?, ?, ?, 'pending', ?, 0, '', NULL, 0)
-    `).run(uuid(), id, grupo.name, grupo.url || '', iso);
+    `    ).run(uuid(), id, grupo.name, grupo.url || '', iso);
+
+    // El grupo del catálogo queda consumido: avanza el cursor compartido para
+    // que la próxima copia (la publique A o B) siga por el siguiente, sin
+    // importar quién tenga el turno. `rotacion-grupos` da la misma secuencia.
+    try { await advanceDestinos(1); } catch { /* si A no responde, el cursor local igual quedó */ }
 
     const copy = db.prepare('SELECT * FROM publications WHERE id = ?').get(id);
     try { copy.images = JSON.parse(copy.images || '[]'); } catch { copy.images = []; }

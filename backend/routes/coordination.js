@@ -5,6 +5,7 @@ import {
   localGetLote, localCommitLote,
   localPeekDestinos, localAdvanceDestinos,
   localDistribuir,
+  localCatalogo,
   localState,
 } from '../lib/coordination.js';
 
@@ -69,6 +70,10 @@ router.get('/destinos', (req, res) => {
 router.post('/destinos/advance', (req, res) => {
   const k = Number(req.body?.k) || 0;
   res.json(localAdvanceDestinos(k));
+});
+
+router.get('/catalogo', (req, res) => {
+  res.json({ grupos: localCatalogo() });
 });
 
 router.post('/distribuir', (req, res) => {

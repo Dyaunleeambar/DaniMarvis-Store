@@ -1,21 +1,11 @@
 import { Router } from 'express';
-import { createRequire } from 'module';
 import { v4 as uuid } from 'uuid';
 import { getDB, transaccion } from '../db/database.js';
 import { startGroupPublish, agendaSchedulerState, classifyFailure, CAUSAS } from '../lib/groupPublisher.js';
 import { registrarPlan } from '../lib/plans.js';
 import { planDuplicacionDia, duplicarPublicacion, acotarPlan, deshacerDuplicacion, contextoRotacion, reubicarDuplicadas } from '../lib/duplicarDia.js';
 import { aggregateEstado } from '../lib/agendaEstado.js';
-import { isCoordinator, distribuir } from '../lib/coordination.js';
-
-// La normalización de nombres de grupo vive en el compositor (es la que hace
-// que el cursor encuentre el grupo aunque cambie de emoji o acento). Se importa
-// el archivo tal cual en vez de reimplementarla acá: si el compositor y la
-// agenda no normalizan igual, el cursor se descoloca en silencio. Va por
-// createRequire porque ese archivo es CommonJS (lo comparte el poster) y este
-// backend es ESM.
-const require_ = createRequire(import.meta.url);
-const { normGrupo } = require_('../../utilidades/fb-ranking/lote_grupos.js');
+import { isCoordinator, distribuir, peekDestinos } from '../lib/coordination.js';
 
 const router = Router();
 
@@ -340,7 +330,7 @@ router.get('/uso-dia', (req, res) => {
  * previo a esta distribución, no las copias que se están por crear. Volver a
  * repartir más tarde ve esas copias ya en la cola y continúa después.
  */
-router.get('/rotacion-grupos', (req, res) => {
+router.get('/rotacion-grupos', async (req, res) => {
   const db = getDB();
   const fecha = typeof req.query.fecha === 'string' ? req.query.fecha : '';
   const n = Math.max(1, Math.min(500, Number(req.query.n) || 1));
@@ -348,11 +338,21 @@ router.get('/rotacion-grupos', (req, res) => {
     return res.status(400).json({ error: 'Fecha inválida (YYYY-MM-DD)' });
   }
 
-  const grupos = db.prepare(
-    'SELECT id, name, url FROM facebook_groups ORDER BY sort_order ASC, name ASC'
-  ).all();
+  // La secuencia sale del cursor COMPARTIDO (coordination): en A es local, en B
+  // viaja a A. Así las dos cuentas reparten el mismo catálogo de forma
+  // consecutiva, sin importar quién tenga el turno. `peek` no avanza: el cursor
+  // recién se mueve cuando la copia se agenda (POST /publications/:id/planificar).
+  let peek;
+  try {
+    peek = await peekDestinos(n);
+  } catch (err) {
+    return res.status(502).json({ error: 'No se pudo consultar el catálogo de la cuenta A: ' + err.message });
+  }
+  const grupos = Array.isArray(peek?.grupos) ? peek.grupos : [];
   if (!grupos.length) return res.json({ fecha, total: 0, inicio: 0, usados: 0, grupos: [] });
 
+  // `usados` queda como dato informativo (cuántos grupos ya están ocupados hoy
+  // en esta base); el reparto real lo manda el cursor compartido.
   const desdeIso = new Date(`${fecha}T00:00:00`).toISOString();
   const hastaIso = new Date(new Date(`${fecha}T00:00:00`).getTime() + 86400000).toISOString();
   const usados = db.prepare(`
@@ -361,19 +361,9 @@ router.get('/rotacion-grupos', (req, res) => {
       AND group_name IS NOT NULL AND group_name <> ''
       AND scheduled_at IS NOT NULL AND scheduled_at >= ? AND scheduled_at < ?
       AND status IN ('pending','published','error')
-  `).all(desdeIso, hastaIso).map((r) => r.group_name);
+  `).all(desdeIso, hastaIso).length;
 
-  const usadosNorm = new Set(usados.map((g) => normGrupo(g)));
-  let ultimo = -1;
-  grupos.forEach((g, i) => { if (usadosNorm.has(normGrupo(g.name))) ultimo = i; });
-  const inicio = ultimo + 1;               // puede ser total: se envuelve con %
-
-  // Si se piden más copias que grupos, se da la vuelta y se repiten: cada copia
-  // tiene que caer en algún lado. Es el mismo wrap que el compositor.
-  const salida = [];
-  for (let k = 0; k < n; k++) salida.push(grupos[(inicio + k) % grupos.length]);
-
-  res.json({ fecha, total: grupos.length, inicio, usados: usados.length, grupos: salida });
+  res.json({ fecha, total: Number(peek.total) || grupos.length, inicio: Number(peek.inicio) || 0, usados, grupos });
 });
 
 // ══════════════════════════════ duplicar un día entero ════════════════════
