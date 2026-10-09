@@ -16,16 +16,30 @@
  */
 import { spawn } from 'child_process';
 import fs from 'fs';
+import { getAccountConfig } from './accountConfig.js';
 
-const DEBUG_PORT = Number(process.env.FB_DEBUG_PORT) || 9222;
 const CHROME_PATHS = [
   process.env.CHROME_PATH,
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
   'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
   'C:/Users/Dani/AppData/Local/Google/Chrome/Application/chrome.exe',
 ].filter(Boolean);
-const FB_DEBUG_PROFILE = process.env.FB_DEBUG_PROFILE || 'C:/Users/Dani/fb-leave/fb-debug-perfil';
 const CONTENT_LIBRARY_URL = 'https://www.facebook.com/professional_dashboard/content/content_library/';
+
+/**
+ * Resuelve a qué Chrome apuntar. Sin argumentos usa la config de la cuenta
+ * actual (entorno): puerto 9222, perfil histórico y sin proxy para A. La
+ * segunda instancia (B) solo cambia por entorno. Con argumentos explícitos se
+ * puede apuntar a otra cuenta (p. ej. desde un coordinador).
+ */
+function resolveTarget({ port, profileDir, proxy } = {}) {
+  const acc = getAccountConfig();
+  return {
+    port: Number(port) || acc.debugPort,
+    profileDir: profileDir || acc.profileDir,
+    proxy: proxy !== undefined ? String(proxy || '').trim() : acc.proxy,
+  };
+}
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -110,8 +124,9 @@ async function portRespondsConTargetVivo(port, timeoutMs = 6000) {
  * Para que la UI pueda mostrar el estado sin disparar un arranque.
  * Timeout corto a propósito: se consulta en cada poll de /group-publish/status.
  */
-export async function debugChromeReachable() {
-  return portResponds(DEBUG_PORT, 800);
+export async function debugChromeReachable(port) {
+  const p = Number(port) || getAccountConfig().debugPort;
+  return portResponds(p, 800);
 }
 
 async function waitForPort(port, timeoutMs) {
@@ -127,7 +142,8 @@ async function waitForPort(port, timeoutMs) {
  * @returns {{ok:boolean, status:string, port:number, error?:string}}
  *  status: 'already_running' | 'launched' | 'no_chrome' | 'launch_error' | 'timeout'
  */
-export async function ensureDebugChrome({ launch = true } = {}) {
+export async function ensureDebugChrome({ launch = true, port, profileDir, proxy } = {}) {
+  const t = resolveTarget({ port, profileDir, proxy });
   // los consumidores se connectan a un Chrome EXISTENTE por CDP: si el puerto
   // ya responde, no se relanza nada (ni se toca el Chrome del usuario).
   //
@@ -135,49 +151,53 @@ export async function ensureDebugChrome({ launch = true } = {}) {
   // sigue contestando /json/version y colgaría al poster hasta su timeout de
   // 280 s. Por eso, si ya hay uno, se verifica que tenga un target de página que
   // responda de verdad antes de darlo por bueno.
-  if (await portResponds(DEBUG_PORT)) {
-    if (await portRespondsConTargetVivo(DEBUG_PORT)) {
-      return { ok: true, status: 'already_running', port: DEBUG_PORT };
+  if (await portResponds(t.port)) {
+    if (await portRespondsConTargetVivo(t.port)) {
+      return { ok: true, status: 'already_running', port: t.port };
     }
-    console.warn('[ChromeLauncher] el puerto responde pero el navegador no sirve (renderer trabado). Relanzando...');
-    await cerrarChromeAtascado(DEBUG_PORT);
+    console.warn(`[ChromeLauncher] el puerto ${t.port} responde pero el navegador no sirve (renderer trabado). Relanzando...`);
+    await cerrarChromeAtascado(t.port);
   }
-  if (!launch) return { ok: false, status: 'not_running', port: DEBUG_PORT };
+  if (!launch) return { ok: false, status: 'not_running', port: t.port };
 
   const exe = CHROME_PATHS.find(p => p && fs.existsSync(p));
   if (!exe) {
-    return { ok: false, status: 'no_chrome', port: DEBUG_PORT, error: 'Chrome no encontrado' };
+    return { ok: false, status: 'no_chrome', port: t.port, error: 'Chrome no encontrado' };
   }
-  if (!fs.existsSync(FB_DEBUG_PROFILE)) {
+  if (!fs.existsSync(t.profileDir)) {
     // si el perfil no existe lo crea Chrome; warning para que sepan que hay que
     // darle la sesión en el primer arranque.
-    console.warn(`[ChromeLauncher] perfil no existe aún, se creará: ${FB_DEBUG_PROFILE}`);
+    console.warn(`[ChromeLauncher] perfil no existe aún, se creará: ${t.profileDir}`);
   }
 
   const args = [
-    `--remote-debugging-port=${DEBUG_PORT}`,
-    `--user-data-dir=${FB_DEBUG_PROFILE}`,
+    `--remote-debugging-port=${t.port}`,
+    `--user-data-dir=${t.profileDir}`,
     '--no-first-run',
     '--no-default-browser-check',
     '--remote-allow-origins=*',
-    CONTENT_LIBRARY_URL,
   ];
+  // Proxy por cuenta: es lo que le da una IP distinta a cada cuenta. Sin esto,
+  // las dos salen por la IP del host (mismo host, misma IP pública).
+  if (t.proxy) args.push(`--proxy-server=${t.proxy}`);
+  args.push(CONTENT_LIBRARY_URL);
 
   let child;
   try {
     child = spawn(exe, args, { detached: true, stdio: 'ignore' });
     child.unref();
   } catch (err) {
-    return { ok: false, status: 'launch_error', port: DEBUG_PORT, error: err.message };
+    return { ok: false, status: 'launch_error', port: t.port, error: err.message };
   }
 
-  const up = await waitForPort(DEBUG_PORT, 45000);
+  const up = await waitForPort(t.port, 45000);
   if (up) {
-    console.log(`[ChromeLauncher] Chrome lanzado (pid ${child.pid}) con puerto ${DEBUG_PORT} y perfil ${FB_DEBUG_PROFILE}`);
-    return { ok: true, status: 'launched', port: DEBUG_PORT };
+    console.log(`[ChromeLauncher] Chrome lanzado (pid ${child.pid}) con puerto ${t.port}`
+      + ` y perfil ${t.profileDir}${t.proxy ? ` (proxy ${t.proxy})` : ''}`);
+    return { ok: true, status: 'launched', port: t.port };
   }
   return {
-    ok: false, status: 'timeout', port: DEBUG_PORT,
-    error: `Chrome lanzado pero el puerto ${DEBUG_PORT} no respondió en 45s`,
+    ok: false, status: 'timeout', port: t.port,
+    error: `Chrome lanzado pero el puerto ${t.port} no respondió en 45s`,
   };
 }

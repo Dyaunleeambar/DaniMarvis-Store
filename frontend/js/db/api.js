@@ -143,7 +143,8 @@ export const api = {
     request('GET', `/agenda/duplicar-dia?desde=${encodeURIComponent(desde)}&hasta=${encodeURIComponent(hasta)}` +
       (horaInicio ? `&hora_inicio=${encodeURIComponent(horaInicio)}` : '') +
       (opciones.reordenar ? '&reordenar=1' : '') +
-      (opciones.rotar_destinos ? '&rotar_destinos=1' : '')),
+      (opciones.rotar_destinos ? '&rotar_destinos=1' : '') +
+      (opciones.distribuir ? '&distribuir=1' : '')),
   duplicateAgendaDay: (desde, hasta, ids, horaInicio, opciones = {}) =>
     request('POST', '/agenda/duplicar-dia',
       {
@@ -152,6 +153,7 @@ export const api = {
         ...(horaInicio ? { hora_inicio: horaInicio } : {}),
         ...(opciones.reordenar ? { reordenar: true } : {}),
         ...(opciones.rotar_destinos ? { rotar_destinos: true } : {}),
+        ...(opciones.distribuir ? { distribuir: true } : {}),
       }),
   undoDuplicateAgendaDay: (clones) => request('POST', '/agenda/duplicar-dia/deshacer', { clones }),
 

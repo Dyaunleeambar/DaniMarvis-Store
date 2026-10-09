@@ -15,7 +15,6 @@ const fs = require('fs');
 const path = require('path');
 
 const URL = 'https://www.facebook.com/professional_dashboard/content/content_library/';
-const DEBUG_PORT = 9222;
 
 const args = process.argv.slice(2);
 function val(list, flag) {
@@ -24,6 +23,8 @@ function val(list, flag) {
   const inline = list.find(a => a.startsWith(flag + '='));
   return inline ? inline.slice(flag.length + 1) : null;
 }
+// Puerto del Chrome de ESTA cuenta: A usa 9222; B usa otro. Por argumento o entorno.
+const DEBUG_PORT = parseInt(val(args, '--debug-port') || process.env.FB_DEBUG_PORT || '9222', 10) || 9222;
 const TARGET_DATE = (val(args, '--date') || (() => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;

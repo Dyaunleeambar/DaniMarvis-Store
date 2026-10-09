@@ -22,9 +22,12 @@ import fs from 'fs';
 import path from 'path';
 
 const URL_JOINS = 'https://www.facebook.com/groups/joins/?nav_source=tab&ordering=viewer_added';
-const DEBUG_URL = 'http://127.0.0.1:9222';
 
 const args = process.argv.slice(2);
+// Puerto del Chrome de ESTA cuenta: A usa 9222; B usa otro. Por argumento o entorno.
+const portArg = args.find(a => a.startsWith('--debug-port='))?.slice('--debug-port='.length);
+const DEBUG_PORT = parseInt(portArg || process.env.FB_DEBUG_PORT || '9222', 10) || 9222;
+const DEBUG_URL = `http://127.0.0.1:${DEBUG_PORT}`;
 const dry = args.includes('--dry');
 const outArg = args.indexOf('--out');
 const OUT = outArg >= 0 ? args[outArg + 1] : path.join(process.cwd(), 'grupos-suscritos.json');

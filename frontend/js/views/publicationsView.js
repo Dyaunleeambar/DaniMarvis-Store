@@ -860,6 +860,14 @@ window._agendaDuplicarDia = function (fecha) {
         <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">
           Para que el día nuevo no sea una copia calcada del anterior. Es determinista: el mismo par de días da siempre el mismo resultado.
         </small>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:.82rem;margin-top:10px">
+          <input type="checkbox" id="dup-distribuir" style="cursor:pointer" />
+          Repartir en los huecos de la otra cuenta (evita publicar a la misma hora)
+        </label>
+        <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">
+          Solo tiene efecto en la cuenta B: mete estas publicaciones entre las de la cuenta A. Lo que no entra
+          conserva la hora del plan.
+        </small>
       </div>
       <div id="dup-previa"></div>
     </div>
@@ -876,11 +884,12 @@ window._agendaDuplicarDia = function (fecha) {
   const okEl = document.getElementById('dup-ok');
   const reordenarEl = document.getElementById('dup-reordenar');
   const rotarEl = document.getElementById('dup-rotar');
+  const distribuirEl = document.getElementById('dup-distribuir');
 
   // Las opciones se leen del DOM en el momento de pedir el plan y de aplicar: así
   // la previa y el apply mandan el mismo par de valores sin tener que sincronizar
   // una copia aparte.
-  const opciones = () => ({ reordenar: !!reordenarEl?.checked, rotar_destinos: !!rotarEl?.checked });
+  const opciones = () => ({ reordenar: !!reordenarEl?.checked, rotar_destinos: !!rotarEl?.checked, distribuir: !!distribuirEl?.checked });
 
   // Lista de grupos abreviada: una publicación puede tener 13 destinos y volcar
   // los 13 en la fila la haría ilegible. Muestra los primeros y cuenta el resto.

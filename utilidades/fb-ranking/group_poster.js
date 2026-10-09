@@ -26,8 +26,6 @@ const fs = require('fs');
 const path = require('path');
 const { elegirIndicesLote } = require('./lote_grupos.js');
 
-const DEBUG_PORT = 9222;
-
 const args = process.argv.slice(2);
 function val(list, flag) {
   const exact = list.indexOf(flag);
@@ -50,6 +48,11 @@ const DEBUG = !!val(args, '--debug');
 // apunta al mismo grupo.
 const LOTE_N = parseInt(val(args, '--lote-n') || '0', 10) || 0;
 const LOTE_DESDE = val(args, '--lote-desde') || '';
+
+// Puerto de depuración del Chrome de ESTA cuenta. A usa 9222 (default); B usa
+// otro (p.ej. 9223). Se resuelve por argumento y, si no viene, por entorno. Así
+// el poster se conecta al Chrome de la cuenta correcta y no siempre al de A.
+const DEBUG_PORT = parseInt(val(args, '--debug-port') || process.env.FB_DEBUG_PORT || '9222', 10) || 9222;
 
 const splitList = (raw, sep = ';') => String(raw || '').split(sep).map(s => s.trim()).filter(Boolean);
 const groups = splitList(GROUPS_RAW, ';');

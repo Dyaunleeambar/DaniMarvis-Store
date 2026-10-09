@@ -10,7 +10,7 @@
 // de publicaciones desaparecía de un golpe. Estos tests fijan lo contrario: el
 // origen queda intacto y la copia es lo único que aparece nuevo.
 import { abrirMemoria } from './helpers/sqljs.mjs';
-import { planDuplicacionDia, duplicarPublicacion, acotarPlan, contextoRotacion, offsetRotacion } from '../backend/lib/duplicarDia.js';
+import { planDuplicacionDia, duplicarPublicacion, acotarPlan, contextoRotacion, offsetRotacion, reubicarDuplicadas } from '../backend/lib/duplicarDia.js';
 import { transaccion } from '../backend/lib/transaccion.js';
 
 let fallos = 0;

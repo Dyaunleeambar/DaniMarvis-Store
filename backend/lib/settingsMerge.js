@@ -78,7 +78,12 @@ function aplicarSecreto(destino, nombre, incoming, vigente, quitar) {
  */
 export function mergePublishConfig(existing = {}, incoming = {}) {
   const actual = existing && typeof existing === 'object' ? existing : {};
-  const nuevo = incoming && typeof incoming === 'object' ? incoming : {};
+  // `coordination` (cursores compartidos + candado de turno A/B) lo escribe el
+  // publicador en caliente, no el formulario. Si el front reenvía su copia
+  // completa de Ajustes, se descarta la entrante para no pisar el estado vivo
+  // (cursores, dueño del turno) con un valor que ya quedó viejo.
+  const { coordination: _omitCoord, ...nuevo } =
+    (incoming && typeof incoming === 'object') ? incoming : {};
 
   const ai = { ...(actual.ai || {}), ...(nuevo.ai || {}) };
   const facebook = { ...(actual.facebook || {}), ...(nuevo.facebook || {}) };

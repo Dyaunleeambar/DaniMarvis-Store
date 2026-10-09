@@ -4,8 +4,9 @@ import { v4 as uuid } from 'uuid';
 import { getDB, transaccion } from '../db/database.js';
 import { startGroupPublish, agendaSchedulerState, classifyFailure, CAUSAS } from '../lib/groupPublisher.js';
 import { registrarPlan } from '../lib/plans.js';
-import { planDuplicacionDia, duplicarPublicacion, acotarPlan, deshacerDuplicacion, contextoRotacion } from '../lib/duplicarDia.js';
+import { planDuplicacionDia, duplicarPublicacion, acotarPlan, deshacerDuplicacion, contextoRotacion, reubicarDuplicadas } from '../lib/duplicarDia.js';
 import { aggregateEstado } from '../lib/agendaEstado.js';
+import { isCoordinator, distribuir } from '../lib/coordination.js';
 
 // La normalización de nombres de grupo vive en el compositor (es la que hace
 // que el cursor encuentre el grupo aunque cambie de emoji o acento). Se importa
@@ -459,15 +460,50 @@ function leerFechas(req, res) {
   const opciones = {
     reordenar: flag(req.body?.reordenar) || flag(req.query?.reordenar),
     rotar_destinos: flag(req.body?.rotar_destinos) || flag(req.query?.rotar_destinos),
+    // Repartir las copias en los huecos que deja la agenda de A (solo tiene
+    // efecto en la instancia B, que es la que consulta al coordinador).
+    distribuir: flag(req.body?.distribuir) || flag(req.query?.distribuir),
   };
   return { desde, hasta, hora_inicio, opciones };
 }
 
+/**
+ * Si esta instancia es B y el usuario pidió repartir, mueve los horarios del
+ * plan a los huecos que deja A. A no se reparte en sí misma (es la referencia).
+ *
+ * La ventana es el rango propio del plan (de su primera a su última
+ * publicación), así B no se escapa a horas en las que no quería publicar; dentro
+ * de ese rango A manda dónde hay lugar. Si el coordinador no responde, el plan
+ * queda como estaba y se avisa: nunca se cae la duplicación por esto.
+ */
+async function repartirEnHuecosDeA(plan, opciones) {
+  if (!opciones.distribuir || isCoordinator()) return plan;
+  const ms = (plan.duplicadas || []).map(d => new Date(d.a_iso).getTime()).filter(Number.isFinite);
+  if (!ms.length) return plan;
+  const ini = Math.min(...ms);
+  const fin = Math.max(...ms);
+  try {
+    const r = await distribuir({ ini, fin, cantidad: plan.duplicadas.length });
+    if (Array.isArray(r?.dentro) && r.dentro.length) reubicarDuplicadas(plan, r.dentro);
+    plan.ventanas = {
+      huecos: Number(r?.huecosA) || 0,
+      colocadas: Array.isArray(r?.dentro) ? r.dentro.length : 0,
+      excedente: Number(r?.excedente) || 0,
+    };
+  } catch (err) {
+    plan.ventanas = { error: err.message };
+    plan.avisos = [...(plan.avisos || []), `No se pudo repartir en los huecos de la cuenta A: ${err.message}. Se usaron los horarios propios.`];
+  }
+  return plan;
+}
+
 /** Vista previa: lo mismo que se va a aplicar, sin escribir nada. */
-router.get('/duplicar-dia', (req, res) => {
+router.get('/duplicar-dia', async (req, res) => {
   const args = leerFechas(req, res);
   if (!args) return;
-  res.json(planDuplicacionDia(getDB(), args.desde, args.hasta, args.hora_inicio, args.opciones));
+  const plan = planDuplicacionDia(getDB(), args.desde, args.hasta, args.hora_inicio, args.opciones);
+  await repartirEnHuecosDeA(plan, args.opciones);
+  res.json(plan);
 });
 
 /**
@@ -485,12 +521,13 @@ router.get('/duplicar-dia', (req, res) => {
  * Va en transaccion() y no en BEGIN/COMMIT a mano por el motivo que explica
  * database.js: guardar el archivo cierra la transacción con rollback.
  */
-router.post('/duplicar-dia', (req, res) => {
+router.post('/duplicar-dia', async (req, res) => {
   const db = getDB();
   const args = leerFechas(req, res);
   if (!args) return;
 
   const plan = acotarPlan(planDuplicacionDia(db, args.desde, args.hasta, args.hora_inicio, args.opciones), req.body?.ids);
+  await repartirEnHuecosDeA(plan, args.opciones);
   if (!plan.duplicadas.length) {
     return res.json({ ...plan, aplicado: true, duplicadas: [] });
   }

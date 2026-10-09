@@ -5,7 +5,7 @@
   "scripts": {
     "start": "node backend/server.js",
     "dev": "node --watch backend/server.js",
-    "check": "node scripts/check-imports.mjs && node scripts/check-carga.mjs && node scripts/test-lote-grupos.mjs && node scripts/test-transaccion.mjs && node scripts/test-duplicar-dia.mjs && node scripts/test-agenda-duplicar-modal.mjs && node scripts/test-limites-agenda.mjs && node scripts/test-settings-merge.mjs && node scripts/test-persistencia-config.mjs && node scripts/test-modal-acciones.mjs && node scripts/test-ocr-psm.mjs && node scripts/test-ocr-estructura.mjs && node scripts/test-vision.mjs"
+    "check": "node scripts/check-imports.mjs && node scripts/check-carga.mjs && node scripts/test-lote-grupos.mjs && node scripts/test-transaccion.mjs && node scripts/test-duplicar-dia.mjs && node scripts/test-agenda-duplicar-modal.mjs && node scripts/test-limites-agenda.mjs && node scripts/test-settings-merge.mjs && node scripts/test-persistencia-config.mjs && node scripts/test-modal-acciones.mjs && node scripts/test-coordinacion.mjs && node scripts/test-ventanas.mjs && node scripts/test-ocr-psm.mjs && node scripts/test-ocr-estructura.mjs && node scripts/test-vision.mjs"
   },
   "dependencies": {
     "compression": "^1.8.2",

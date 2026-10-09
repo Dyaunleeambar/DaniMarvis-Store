@@ -5,11 +5,15 @@ import { fileURLToPath } from 'url';
 import { getDB } from '../db/database.js';
 import { resolveLocalUpload } from './imageUtils.js';
 import { ensureDebugChrome, debugChromeReachable } from './chromeLauncher.js';
+import { getAccountConfig, getUploadsDir } from './accountConfig.js';
+import { claimTurn, releaseTurn, getLote, commitLote } from './coordination.js';
 import { v4 as uuid } from 'uuid';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const POSTER_JS = path.join(__dirname, '..', '..', 'utilidades', 'fb-ranking', 'group_poster.js');
-const UPLOADS_DIR = path.join(__dirname, '..', 'uploads');
+// Carpeta de uploads de esta instancia. A usa backend/uploads; B la suya, para
+// no mezclar imágenes ni dejar temporales en la de A.
+const UPLOADS_DIR = getUploadsDir();
 
 export const DEFAULT_AUTO_PUBLISH = {
   enabled: false,
@@ -714,8 +718,12 @@ export function parsePosterOutput(stdout, { err = null, allText = '' } = {}) {
   };
 }
 
-function spawnPoster({ groupUrl, messageFile, imageFiles, mode, label, debug = false, loteN = 0, loteDesde = '' }) {
+function spawnPoster({ groupUrl, messageFile, imageFiles, mode, label, debug = false, loteN = 0, loteDesde = '', debugPort = 0 }) {
   return new Promise((resolve) => {
+    // El poster es un proceso hijo: sin el puerto explícito siempre se conecta
+    // al 9222 (el Chrome de A). Acá se le pasa el de ESTA cuenta para que la
+    // cuenta B hable con su propio Chrome.
+    const port = Number(debugPort) || getAccountConfig().debugPort;
     const args = [
       '--no-sandbox',
       '--groups=' + groupUrl,
@@ -723,6 +731,7 @@ function spawnPoster({ groupUrl, messageFile, imageFiles, mode, label, debug = f
       '--mode=' + mode,
       '--label=' + label,
       '--max-seconds=300',
+      '--debug-port=' + port,
     ];
     if (debug) args.push('--debug=1');
     if (imageFiles.length) args.push('--images=' + imageFiles.join(';'));
@@ -1022,6 +1031,25 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
 
     currentRun.total = items.length;
     currentRun.phase = 'publishing';
+    // Candado de turno (A/B): solo una cuenta publica a la vez. A lo pide local;
+    // B lo pide por HTTP al coordinador. `claimTurn` renueva el lease cuando ya
+    // es nuestro (heartbeat). Si lo tiene la otra cuenta, esta corrida se aborta
+    // SIN tocar la cola: se reintenta en el próximo tick, cuando la otra libere.
+    const accountId = getAccountConfig().id;
+    let turno;
+    try {
+      turno = await claimTurn(accountId);
+    } catch (err) {
+      turno = { ok: false, error: `no se pudo consultar el turno (${err.message})` };
+    }
+    if (!turno.ok) {
+      const r = { ok: true, processed: 0, message: `Turno ocupado por ${turno.owner || 'la otra cuenta'}${turno.retry_min ? ` (~${turno.retry_min} min)` : ''}: se espera para no publicar en simultáneo.`, reason: 'turno', started: startedAt };
+      lastResult = r;
+      currentRun.phase = 'waiting_turn';
+      currentRun.finished = toIsoUtc(new Date()).slice(0, 19);
+      logFinCorrida(r);
+      return r;
+    }
     const results = [];
     const temps = [];
     let pausedByMaster = false;
@@ -1041,6 +1069,9 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
       // fuera 1/(gap + duración de la corrida): con 1m35s de media, un gap de
       // 8 min daba 6,3/h y el tope de 6/h era el que nunca mandaba.
       marcarIntentoAhora();
+      // Heartbeat del turno: renueva el lease mientras dure la corrida para que
+      // la otra cuenta no lo reclame por vencimiento a mitad de camino.
+      try { await claimTurn(accountId); } catch { /* el próximo ítem reintenta */ }
       const groupUrl = resolveGroupUrl(item);
       const imageFiles = await resolveImages(item.images);
       const messageFile = writeMessageFile(item);
@@ -1054,14 +1085,15 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
         label: item.group_name,
         debug,
         loteN: agendaCfg.grupos_por_post,
-        loteDesde: agendaCfg.lote_desde,
+        loteDesde: await getLote(),
       });
       // El cursor avanza SOLO si el lote se tildó de verdad. Si el botón no
       // apareció, o si no se pudo tildar nada, se deja donde estaba: avanzar a
       // ciegas saltaría 9 grupos y el reparto perdería ese tramo para siempre.
+      // Se commitea al coordinador para que el próximo lote (lo publique A o B)
+      // siga desde acá. Como el turno es exclusivo, no hay carrera.
       if (Array.isArray(result.lote_grupos) && result.lote_grupos.length) {
-        setLoteCursor(result.lote_grupos[result.lote_grupos.length - 1]);
-        agendaCfg.lote_desde = result.lote_grupos[result.lote_grupos.length - 1];
+        await commitLote(result.lote_grupos[result.lote_grupos.length - 1]);
       }
       const escritura = updateQueue(item, result, effectiveMode);
       // Corte automático: cuenta fallos CONSECUTIVOS de cualquier origen (worker,
@@ -1107,6 +1139,10 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
         currentRun.phase = 'publishing';
       }
     }
+
+    // Liberar el turno para que la otra cuenta publique en el próximo hueco.
+    // Si no se llega aquí (excepción), el lease vence solo y no queda trabado.
+    try { await releaseTurn(accountId); } catch { /* el lease expira solo */ }
 
     deleteTempFiles(temps);
     const r = {

@@ -477,6 +477,33 @@ export function planDuplicacionDia(db, desde, hasta, horaInicio, opciones = {}) 
 }
 
 /**
+ * Reubica las publicaciones del plan en los horarios que da el coordinador (los
+ * huecos de A). Recibe `tiemposMs` (ms, ya ordenados) y los aplica a las
+ * publicaciones ordenadas por su hora actual; las que no entran (excedente) se
+ * quedan con la suya. Reordena el plan por hora y corrige la hora que muestran
+ * los conflictos, que se calcularon con los horarios viejos.
+ */
+export function reubicarDuplicadas(plan, tiemposMs) {
+  if (!Array.isArray(tiemposMs) || !tiemposMs.length) return plan;
+  const orden = [...plan.duplicadas].sort((a, b) => new Date(a.a_iso) - new Date(b.a_iso));
+  const horaPorId = new Map();
+  tiemposMs.forEach((ms, k) => {
+    const d = orden[k];
+    if (!d) return;
+    d.a_iso = new Date(ms).toISOString();
+    d.a_hora = horaLocalDe(d.a_iso);
+    d.a_fecha = fechaLocalDe(d.a_iso);
+    horaPorId.set(d.id, d.a_hora);
+  });
+  plan.duplicadas.sort((a, b) => new Date(a.a_iso) - new Date(b.a_iso));
+  for (const c of plan.conflictos || []) {
+    if (horaPorId.has(c.de_id)) c.hora = horaPorId.get(c.de_id);
+  }
+  plan.distribuidas = tiemposMs.length;
+  return plan;
+}
+
+/**
  * Acota el plan a las publicaciones marcadas en la vista previa.
  *
  * `ids` viene del front (los checks de la lista). Si no viene array —un cliente

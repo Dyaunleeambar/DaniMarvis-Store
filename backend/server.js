@@ -20,6 +20,7 @@ import pubQueueRouter from './routes/pubQueue.js';
 import groupPublishRouter from './routes/groupPublish.js';
 import agendaRouter from './routes/agenda.js';
 import groupsRouter from './routes/groups.js';
+import coordinationRouter from './routes/coordination.js';
 import rankingsRouter from './routes/rankingsRouter.js';
 import promptEngineRouter from './routes/promptEngine.js';
 import providerStylesRouter from './routes/providerStyles.js';
@@ -28,6 +29,7 @@ import { generateCatalogFile } from './lib/catalogGenerator.js';
 import { ensureWebp } from './lib/imageUtils.js';
 import { getWarrantyReminders } from './lib/warranty.js';
 import { mergePublishConfig, MASCARA, pareceSecretoValido } from './lib/settingsMerge.js';
+import { getUploadsDir } from './lib/accountConfig.js';
 import { startGroupPublishScheduler, rescheduleGroupPublish, groupPublishSchedulerState, startAgendaScheduler, rescheduleAgenda, agendaSchedulerState } from './lib/groupPublisher.js';
 import { createBackup, scheduleBackups } from './scripts/backup.js';
 
@@ -37,7 +39,9 @@ const __dirname = dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3456;
 
-const uploadsDir = join(__dirname, 'uploads');
+// Carpeta de uploads por instancia: A usa backend/uploads; B la suya (env
+// DANIMARVIS_UPLOADS), sin mezclar archivos entre cuentas.
+const uploadsDir = getUploadsDir();
 if (!existsSync(uploadsDir)) mkdirSync(uploadsDir, { recursive: true });
 
 const storage = multer.diskStorage({
@@ -95,6 +99,10 @@ function rateLimit({ windowMs, max }) {
 
 const loginLimiter = rateLimit({ windowMs: 60 * 1000, max: 5 });
 const imageLimiter = rateLimit({ windowMs: 60 * 1000, max: 10 });
+
+// Coordinación A/B: va ANTES del authMiddleware porque B no tiene sesión de
+// usuario; se protege con X-Coord-Token. Solo responde en el coordinador (A).
+app.use('/api/coordination', coordinationRouter);
 
 app.use('/api', authMiddleware);
 
@@ -438,7 +446,6 @@ app.post('/api/generate-catalog', async (req, res) => {
     }
 
     const catalogDir = join(__dirname, '..', 'public-catalog');
-    const uploadsDir = join(__dirname, 'uploads');
     await generateCatalogFile(products, catalogDir, uploadsDir);
 
     res.json({
