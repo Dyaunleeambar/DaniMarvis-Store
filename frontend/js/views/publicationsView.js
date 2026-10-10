@@ -823,6 +823,7 @@ window._agendaDuplicarDia = function (fecha) {
   openModal(`
     <div class="modal-header">
       <h2>Duplicar el ${escHtml(formatDate(fecha))} en otro día</h2>
+      <span id="dup-cuenta" style="font-size:.78rem;color:var(--text-muted);margin-left:8px">Cargando…</span>
       <button class="modal-close" onclick="closeModal()">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
@@ -886,7 +887,17 @@ window._agendaDuplicarDia = function (fecha) {
   const rotarEl = document.getElementById('dup-rotar');
   const distribuirEl = document.getElementById('dup-distribuir');
 
-  // Las opciones se leen del DOM en el momento de pedir el plan y de aplicar: así
+  // Mostrar a qué cuenta se está agendando
+  const cuentaDupEl = document.getElementById('dup-cuenta');
+  (async () => {
+    if (!cuentaDupEl) return;
+    try {
+      const st = await fetch('/api/status');
+      const j = st && st.ok ? await st.json() : null;
+      if (j) cuentaDupEl.textContent = `Cuenta ${j.account || ''} · ${j.role || ''}`;
+      else cuentaDupEl.textContent = '';
+    } catch { cuentaDupEl.textContent = ''; }
+  })();
   // la previa y el apply mandan el mismo par de valores sin tener que sincronizar
   // una copia aparte.
   const opciones = () => ({ reordenar: !!reordenarEl?.checked, rotar_destinos: !!rotarEl?.checked, distribuir: !!distribuirEl?.checked });
@@ -1388,6 +1399,7 @@ window._agendaDistribuir = function () {
   openModal(`
     <div class="modal-header">
       <h2>Distribuir en el día</h2>
+      <span id="dist-cuenta" style="font-size:.78rem;color:var(--text-muted);margin-left:8px">Cargando…</span>
       <button class="modal-close" onclick="closeModal()">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg>
       </button>
@@ -1497,6 +1509,17 @@ window._agendaDistribuir = function () {
     else excluidas.add(cb.dataset.id);
     pintarLista();
   });
+  // Mostrar a qué cuenta se está agendando
+  const cuentaEl = document.getElementById('dist-cuenta');
+  (async () => {
+    if (!cuentaEl) return;
+    try {
+      const st = await fetch('/api/status');
+      const j = st && st.ok ? await st.json() : null;
+      if (j) cuentaEl.textContent = `Cuenta ${j.account || ''} · ${j.role || ''}`;
+      else cuentaEl.textContent = '';
+    } catch { cuentaEl.textContent = ''; }
+  })();
   pintarLista();
 
   guardarEl.addEventListener('click', async () => {

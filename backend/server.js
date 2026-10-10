@@ -3,10 +3,15 @@ import cors from 'cors';
 import multer from 'multer';
 import compression from 'compression';
 import { fileURLToPath } from 'url';
-import { basename, dirname, join, extname } from 'path';
-import { existsSync, mkdirSync, unlinkSync } from 'fs';
+import { dirname, join, extname } from 'path';
+import { existsSync, mkdirSync, renameSync } from 'fs';
 import { v4 as uuid } from 'uuid';
-import { initDB, getDB, verifyPassword, isLegacyPlaintext, hashPassword, signToken, verifyToken } from './db/database.js';
+import { initDB, getDB, verifyToken, listTables, saveDB, getAuthSecret } from './db/database.js';
+import { mergePublishConfig, MASCARA, pareceSecretoValido } from './lib/settingsMerge.js';
+import { rescheduleGroupPublish, groupPublishSchedulerState, startGroupPublishScheduler, stopGroupPublishScheduler } from './lib/groupPublisher.js';
+
+import { reconciliarApiKey, respaldarApiKey } from './lib/secrets.js';
+// Schedulers opcionales: solo se importan si existen, para evitar romper el start.
 import productsRouter from './routes/products.js';
 import providersRouter from './routes/providers.js';
 import salesRouter from './routes/sales.js';
@@ -14,23 +19,14 @@ import categoriesRouter from './routes/categories.js';
 import backupRouter from './routes/backup.js';
 import publicationsRouter from './routes/publications.js';
 import exportsRouter from './routes/exports.js';
-import importImagesRouter from './routes/images.js';
 import importRouter from './routes/import.js';
-import pubQueueRouter from './routes/pubQueue.js';
+import importImagesRouter from './routes/images.js';
 import groupPublishRouter from './routes/groupPublish.js';
 import agendaRouter from './routes/agenda.js';
 import groupsRouter from './routes/groups.js';
 import coordinationRouter from './routes/coordination.js';
 import rankingsRouter from './routes/rankingsRouter.js';
-import promptEngineRouter from './routes/promptEngine.js';
-import providerStylesRouter from './routes/providerStyles.js';
-import warrantyRulesRouter from './routes/warrantyRules.js';
-import { generateCatalogFile } from './lib/catalogGenerator.js';
-import { ensureWebp } from './lib/imageUtils.js';
-import { getWarrantyReminders } from './lib/warranty.js';
-import { mergePublishConfig, MASCARA, pareceSecretoValido } from './lib/settingsMerge.js';
-import { getUploadsDir } from './lib/accountConfig.js';
-import { startGroupPublishScheduler, rescheduleGroupPublish, groupPublishSchedulerState, startAgendaScheduler, rescheduleAgenda, agendaSchedulerState } from './lib/groupPublisher.js';
+import { getUploadsDir, getAccountConfig } from './lib/accountConfig.js';
 import { createBackup, scheduleBackups } from './scripts/backup.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -496,9 +492,16 @@ async function start() {
     }
   } catch { /* sin settings: no hay nada que avisar */ }
 
-  app.listen(PORT, () => {
-    console.log(`[Server] Panel DaniMarvis corriendo en http://localhost:${PORT}`);
+app.get('/api/status', (req, res) => {
+  const acc = getAccountConfig();
+  res.json({
+    account: acc.id,
+    role: (acc.isCoordinator || !String(process.env.COORD_URL || '').trim()) ? 'coordinador' : 'cliente',
+    port: acc.port || PORT,
+    debugPort: acc.debugPort,
+    uploadsDir,
   });
+});
 
   // El worker automático de publicación de grupos. Antes no existía: la etiqueta
   // de Ajustes prometía una corrida cada 5 minutos pero nada la disparaba. Se
