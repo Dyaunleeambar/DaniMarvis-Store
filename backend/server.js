@@ -6,9 +6,9 @@ import { fileURLToPath } from 'url';
 import { dirname, join, extname } from 'path';
 import { existsSync, mkdirSync, renameSync } from 'fs';
 import { v4 as uuid } from 'uuid';
-import { initDB, getDB, verifyToken, listTables, saveDB, getAuthSecret } from './db/database.js';
+import { initDB, getDB, verifyToken, listTables, saveDB, getAuthSecret, verifyPassword, signToken } from './db/database.js';
 import { mergePublishConfig, MASCARA, pareceSecretoValido } from './lib/settingsMerge.js';
-import { rescheduleGroupPublish, groupPublishSchedulerState, startGroupPublishScheduler, stopGroupPublishScheduler } from './lib/groupPublisher.js';
+import { rescheduleGroupPublish, groupPublishSchedulerState, startGroupPublishScheduler, stopGroupPublishScheduler, startAgendaScheduler, rescheduleAgenda, agendaSchedulerState } from './lib/groupPublisher.js';
 
 import { reconciliarApiKey, respaldarApiKey } from './lib/secrets.js';
 // Schedulers opcionales: solo se importan si existen, para evitar romper el start.
@@ -26,6 +26,11 @@ import agendaRouter from './routes/agenda.js';
 import groupsRouter from './routes/groups.js';
 import coordinationRouter from './routes/coordination.js';
 import rankingsRouter from './routes/rankingsRouter.js';
+import pubQueueRouter from './routes/pubQueue.js';
+import promptEngineRouter from './routes/promptEngine.js';
+import providerStylesRouter from './routes/providerStyles.js';
+import { getWarrantyReminders } from './lib/warranty.js';
+import warrantyRulesRouter from './routes/warrantyRules.js';
 import { getUploadsDir, getAccountConfig } from './lib/accountConfig.js';
 import { createBackup, scheduleBackups } from './scripts/backup.js';
 
@@ -507,6 +512,9 @@ app.get('/api/status', (req, res) => {
   // de Ajustes prometía una corrida cada 5 minutos pero nada la disparaba. Se
   // arranca acá (y no dentro del listen) para que quede después de que la BD
   // terminó de cargar en el start() de arriba.
+  app.listen(PORT, () => {
+    console.log('[Server] Panel DaniMarvis corriendo en http://localhost:' + PORT);
+  });
   startGroupPublishScheduler();
 
   // El disparador por fecha, que es el que hace que "18:00" signifique 18:00.
