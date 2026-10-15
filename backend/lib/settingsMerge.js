@@ -103,5 +103,31 @@ export function mergePublishConfig(existing = {}, incoming = {}) {
   delete ai.remove_ai_key;
   delete facebook.remove_fb_token;
 
-  return { ...actual, ...nuevo, ai, facebook, agenda };
+  const salida = { ...actual, ...nuevo, ai, facebook, agenda };
+
+  // `cuentas` (perfil/puerto/proxy de las dos cuentas de Facebook) se mezcla
+  // cuenta por cuenta por la misma razón que `agenda`: el formulario manda A y B
+  // completos, y con `{...actual, ...nuevo}` entero se pisaría lo que falte (p.
+  // ej. el proxy de B si solo editaron A). Se escribe SÓLO si una de las dos
+  // partes lo tiene, para que un guardado que no lo menciona no lo invente.
+  const tieneCuentas = 'cuentas' in actual || 'cuentas' in nuevo;
+  if (tieneCuentas) {
+    const actualCuentas = actual.cuentas && typeof actual.cuentas === 'object' ? actual.cuentas : {};
+    const nuevoCuentas = nuevo.cuentas && typeof nuevo.cuentas === 'object' ? nuevo.cuentas : {};
+    const cuentas = { ...actualCuentas };
+    for (const id of ['A', 'B']) {
+      if (nuevoCuentas[id] && typeof nuevoCuentas[id] === 'object') {
+        cuentas[id] = { ...(actualCuentas[id] || {}), ...nuevoCuentas[id] };
+      }
+    }
+    // `modo` y `ultima` son controladores de rotación, no campos por formulario:
+    // sólo se guardan si llegan como string válido, para no materializar claves
+    // basura que después getAccountConfig no podría leer.
+    for (const clave of ['modo', 'ultima']) {
+      if (typeof nuevoCuentas[clave] === 'string' && nuevoCuentas[clave]) cuentas[clave] = nuevoCuentas[clave];
+    }
+    salida.cuentas = cuentas;
+  }
+
+  return salida;
 }

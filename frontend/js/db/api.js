@@ -76,6 +76,11 @@ export const api = {
   getSettings: () => request('GET', '/settings'),
   updateSettings: (data) => request('PUT', '/settings', data),
 
+  // Estado de la instancia: qué cuenta de Facebook publica y cómo están
+  // configuradas A y B. Requiere token (va por el wrapper, no por fetch crudo:
+  // con fetch crudo devolvía 401 y el rótulo de "Cuenta" quedaba vacío).
+  getStatus: () => request('GET', '/status'),
+
   // Upload
   uploadImage: async (file) => {
     const formData = new FormData();

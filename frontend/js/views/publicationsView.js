@@ -892,10 +892,8 @@ window._agendaDuplicarDia = function (fecha) {
   (async () => {
     if (!cuentaDupEl) return;
     try {
-      const st = await fetch('/api/status');
-      const j = st && st.ok ? await st.json() : null;
-      if (j) cuentaDupEl.textContent = `Cuenta ${j.account || ''} · ${j.role || ''}`;
-      else cuentaDupEl.textContent = '';
+      const j = await api.getStatus();
+      cuentaDupEl.textContent = `Cuenta ${j.label || j.account || ''} · ${j.role || ''}`;
     } catch { cuentaDupEl.textContent = ''; }
   })();
   // la previa y el apply mandan el mismo par de valores sin tener que sincronizar
@@ -1514,10 +1512,8 @@ window._agendaDistribuir = function () {
   (async () => {
     if (!cuentaEl) return;
     try {
-      const st = await fetch('/api/status');
-      const j = st && st.ok ? await st.json() : null;
-      if (j) cuentaEl.textContent = `Cuenta ${j.account || ''} · ${j.role || ''}`;
-      else cuentaEl.textContent = '';
+      const j = await api.getStatus();
+      cuentaEl.textContent = `Cuenta ${j.label || j.account || ''} · ${j.role || ''}`;
     } catch { cuentaEl.textContent = ''; }
   })();
   pintarLista();

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import { getDB } from '../db/database.js';
 import { resolveLocalUpload } from './imageUtils.js';
 import { ensureDebugChrome, debugChromeReachable } from './chromeLauncher.js';
-import { getAccountConfig, getUploadsDir } from './accountConfig.js';
+import { getAccountConfig, getUploadsDir, getCuentasConfig, setCuentaActiva } from './accountConfig.js';
 import { claimTurn, releaseTurn, getLote, commitLote } from './coordination.js';
 import { v4 as uuid } from 'uuid';
 
@@ -974,6 +974,25 @@ function classifyFailure(message) {
 export { classifyFailure };
 
 /**
+ * ¿Con qué cuenta de Facebook publica esta corrida?
+ *
+ * Un solo proceso, dos perfiles de Chrome: cada corrida se hace con UNA cuenta
+ * y con esa se abren su Chrome, su perfil y su proxy (la IP distinta por
+ * cuenta). En `alternado` las corridas se dan la mano — A, B, A, B… — para que
+ * las dos cuentas publiquen sin pisarse. En `A` o `B` fija siempre la misma.
+ *
+ * Arranca en A a propósito: `ultimaCuenta` está vacía y cualquier cuenta que
+ * no sea A es "la siguiente". En memoria basta porque el alternador se decide
+ * corrida por corrida, no por cada item.
+ */
+let ultimaCuenta = null;
+function elegirCuenta() {
+  const modo = String(getCuentasConfig().modo || 'alternado').toUpperCase();
+  if (modo === 'A' || modo === 'B') return modo;
+  return ultimaCuenta === 'A' ? 'B' : 'A';
+}
+
+/**
  * Trabajo real de la corrida. NO await-ear desde una ruta: usar
  * startGroupPublish(), que devuelve de inmediato. Va dejando el avance en
  * currentRun para que groupPublishStatus() lo sirva por polling.
@@ -986,11 +1005,19 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
   const agendaCfg = getAgendaConfig();
   const effectiveMode = mode || cfg.mode;
   const startedAt = toIsoUtc(new Date()).slice(0, 19);
+  // Cuenta que va a publicar esta corrida: fija el suyo ANTES de cualquier uso
+  // para que spawnPoster, chromeLauncher y /api/status hablen todos de la misma.
+  const cuenta = elegirCuenta();
+  ultimaCuenta = cuenta;
+  setCuentaActiva(cuenta);
+  const acc = getAccountConfig(cuenta);
   currentRun = {
     runId, started: startedAt, startedMs: Date.now(), finished: null,
     phase: 'starting', total: 0, done: 0, ok: 0, errors: 0,
     current_group: null, mode: effectiveMode, results: [],
     sesion: false, noBrowser: false, error: null,
+    // Qué cuenta (y qué perfil/proxy) publicó: se ve en el log y en la UI.
+    account: acc.id, account_label: acc.label, account_port: acc.debugPort,
     // `origen` viene del `startGroupPublish` y hay que reusarlo acá: este objeto
     // REEMPLAZA al que arma ahí, y sin copiarlo el log de cierre salía con
     // `origen=?` justo cuando sí importaba (lo detectó una corrida real).
@@ -998,14 +1025,14 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
   };
 
   try {
-    // Garantiza Chrome con debugging remoto (puerto 9222) y el perfil con la
-    // sesión de Facebook ANTES de publicar. Antes esto solo sondeaba el puerto
-    // y abortaba: había que abrirlo a mano. Si el puerto ya responde no se toca
+    // Garantiza Chrome con debugging remoto y el perfil de ESTA cuenta ANTES de
+    // publicar. Se le pasa el puerto/perfil/proxy explícitos: sin eso siempre
+    // apuntaría al 9222 del perfil de A. Si el puerto ya responde no se toca
     // nada (no interfiere con el Chrome del usuario ni con el scraper).
     currentRun.phase = 'starting_chrome';
-    const chrome = await ensureDebugChrome({ launch: true });
+    const chrome = await ensureDebugChrome({ launch: true, port: acc.debugPort, profileDir: acc.profileDir, proxy: acc.proxy });
     if (!chrome.ok) {
-      const r = { ok: false, error: `Chrome no disponible (${chrome.error || chrome.status}). Se necesita Chrome con --remote-debugging-port=9222 y la sesión de Facebook abierta en ese perfil.`, noBrowser: true, started: startedAt };
+      const r = { ok: false, error: `Chrome no disponible para ${acc.label} (${chrome.error || chrome.status}). Se necesita Chrome con --remote-debugging-port=${acc.debugPort}, perfil ${acc.profileDir} y la sesión de Facebook abierta en ese perfil.`, noBrowser: true, started: startedAt };
       lastResult = r;
       currentRun.phase = 'error';
       currentRun.noBrowser = true;
@@ -1035,7 +1062,7 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
     // B lo pide por HTTP al coordinador. `claimTurn` renueva el lease cuando ya
     // es nuestro (heartbeat). Si lo tiene la otra cuenta, esta corrida se aborta
     // SIN tocar la cola: se reintenta en el próximo tick, cuando la otra libere.
-    const accountId = getAccountConfig().id;
+    const accountId = acc.id;
     let turno;
     try {
       turno = await claimTurn(accountId);
@@ -1086,6 +1113,9 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
         debug,
         loteN: agendaCfg.grupos_por_post,
         loteDesde: await getLote(),
+        // Puerto del Chrome de ESTA cuenta: sin esto el poster siempre hablaría
+        // con el 9222 del perfil de A aunque la corrida sea de B.
+        debugPort: acc.debugPort,
       });
       // El cursor avanza SOLO si el lote se tildó de verdad. Si el botón no
       // apareció, o si no se pudo tildar nada, se deja donde estaba: avanzar a

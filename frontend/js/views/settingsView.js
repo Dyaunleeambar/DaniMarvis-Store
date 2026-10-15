@@ -9,13 +9,18 @@ export async function render(container) {
   container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-secondary)">Cargando configuración...</div>';
 
   try {
-    const [settings, categories, providerStyles] = await Promise.all([
+    const [settings, categories, providerStyles, status] = await Promise.all([
       api.getSettings(),
       api.getCategories(),
       api.getProviderStyles(),
+      // El estado trae los valores efectivos de las cuentas A y B (base →
+      // entorno → default). Se usa solo para PINTAR los campos: si no hay
+      // sesión o el endpoint falla, la sección de cuentas se pinta con los
+      // defaults de la config guardada.
+      api.getStatus().catch(() => null),
     ]);
     currentSettings = settings;
-    renderPage(container, settings, categories, providerStyles);
+    renderPage(container, settings, categories, providerStyles, status);
   } catch (err) {
     container.innerHTML = `<div class="empty-state"><h3>Error</h3><p>${err.message}</p></div>`;
   }
@@ -33,7 +38,97 @@ function limite(valor, def, min, max) {
   return Math.max(min, Math.min(max, Math.round(n)));
 }
 
-function renderPage(container, settings, categories, providerStyles) {
+/**
+ * Valores a pintar para una cuenta: lo guardado si realmente está configurado,
+ * o si no, el efectivo que informó el servidor (que ya mezcló base, entorno y
+ * default).
+ *
+ * Lo que se pinta es lo que se va a reenviar, así que un campo "sin configurar"
+ * tiene que pintarse con el valor que el servidor YA está usando: si se pintara
+ * vacío, el primer "Guardar cuentas" congelaría en la base lo que hoy viene del
+ * entorno y que nadie estaba editando.
+ *
+ * El proxy es la excepción a propósito: un string vacío guardado es "sin proxy"
+ * explícito, y tiene que pintarse vacío, no heredar el de otro lado.
+ */
+function pintarCuenta(id, guardada, efectivas) {
+  const g = guardada && typeof guardada === 'object' ? guardada : {};
+  const e = efectivas.find((c) => c && c.id === id) || {};
+  const portN = Number(g.debugPort);
+  const portOk = Number.isFinite(portN) && portN >= 1024 && portN <= 65535;
+  const perfilOk = typeof g.profileDir === 'string' && g.profileDir.trim() !== '';
+  return {
+    label: (typeof g.label === 'string' && g.label.trim()) || e.label || `Cuenta ${id}`,
+    profileDir: perfilOk ? g.profileDir.trim() : (e.profileDir ?? ''),
+    debugPort: portOk ? portN : (e.debugPort ?? ''),
+    proxy: typeof g.proxy === 'string' ? g.proxy.trim() : (e.proxy ?? ''),
+  };
+}
+
+function bloqueCuenta(id, c) {
+  return `
+    <fieldset style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-top:12px">
+      <legend style="font-weight:600;font-size:.85rem;padding:0 6px">${id === 'A' ? '👤' : '👥'} Cuenta ${id}</legend>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Nombre / etiqueta</label>
+          <input type="text" name="ct_${id}_label" class="form-control" value="${esc(c.label)}" placeholder="Cuenta ${id}" />
+        </div>
+        <div class="form-group">
+          <label>Puerto de depuración de Chrome</label>
+          <input type="number" name="ct_${id}_port" class="form-control" min="1024" max="65535" value="${esc(c.debugPort)}" />
+          <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">Cada cuenta abre su Chrome en su propio puerto (9222 / 9223).</small>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Perfil de Chrome (sesión de Facebook)</label>
+        <input type="text" name="ct_${id}_profile" class="form-control" value="${esc(c.profileDir)}" placeholder="C:/Users/Dani/fb-leave/fb-debug-perfil${id === 'B' ? '-b' : ''}" />
+        <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">Ruta del <code>--user-data-dir</code>: ahí vive la sesión de Facebook de esa cuenta. Las dos rutas tienen que ser DISTINTAS.</small>
+      </div>
+      <div class="form-group">
+        <label>Proxy (opcional, para IP distinta por cuenta)</label>
+        <input type="text" name="ct_${id}_proxy" class="form-control" value="${esc(c.proxy)}" placeholder="http://usuario:clave@host:puerto" />
+        <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">Vacío = sale por la IP de esta máquina.</small>
+      </div>
+    </fieldset>`;
+}
+
+/** Sección de Ajustes con las dos cuentas de Facebook que usa el publicador. */
+function cuentasCardHTML(CUENTAS) {
+  return `
+      <div class="card" style="margin-top:16px">
+        <h3 style="margin:0 0 4px">Cuentas de Facebook (A y B)</h3>
+        <p style="margin:0 0 12px;font-size:.82rem;color:var(--text-secondary)">
+          Cada corrida publica con <strong>una</strong> cuenta, y con ella se abre su Chrome, su
+          perfil de Facebook y su proxy. El <strong>modo</strong> decide cuál: en <em>alternar</em>,
+          una corrida A, la siguiente B. Los cambios se aplican al volver a publicar, sin reiniciar.
+        </p>
+        <form id="cuentas-form">
+          <div class="form-group">
+            <label>Cuenta que publica</label>
+            <select name="ct_modo" class="form-control">
+              <option value="alternado" ${CUENTAS.modo === 'alternado' ? 'selected' : ''}>Alternar entre A y B (una corrida A, la siguiente B)</option>
+              <option value="A" ${CUENTAS.modo === 'A' ? 'selected' : ''}>Siempre la cuenta A</option>
+              <option value="B" ${CUENTAS.modo === 'B' ? 'selected' : ''}>Siempre la cuenta B</option>
+            </select>
+          </div>
+          ${bloqueCuenta('A', CUENTAS.A)}
+          ${bloqueCuenta('B', CUENTAS.B)}
+          <div class="form-actions" style="margin-top:16px">
+            <button type="submit" class="btn btn--primary">Guardar cuentas</button>
+          </div>
+        </form>
+      </div>`;
+}
+
+/** Escapa el valor para poder meterlo en un atributo del template. */
+function esc(v) {
+  return String(v ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function renderPage(container, settings, categories, providerStyles, status) {
   const pc = settings.publish_config || {};
   const template = pc.template || '';
   const ai = pc.ai || {};
@@ -51,6 +146,19 @@ function renderPage(container, settings, categories, providerStyles) {
   };
   const ms = pc.master || { on: true };
   const rk = pc.ranking || {};
+
+  // Cuentas de Facebook (A y B): lo que se guarda en `publish_config.cuentas`.
+  // Se prefilan con los valores EFECTIVOS que devuelve /api/status (base →
+  // entorno → default), así quien llega con variables de entorno ve lo que está
+  // usando en vez de campos vacíos.
+  const savedCuentas = (pc.cuentas && typeof pc.cuentas === 'object') ? pc.cuentas : {};
+  const efectivas = (status && Array.isArray(status.cuentas)) ? status.cuentas : [];
+  const CUENTAS = {
+    modo: ['alternado', 'A', 'B'].includes(savedCuentas.modo) ? savedCuentas.modo
+      : ['alternado', 'A', 'B'].includes(status?.modo) ? status.modo : 'alternado',
+    A: pintarCuenta('A', savedCuentas.A, efectivas),
+    B: pintarCuenta('B', savedCuentas.B, efectivas),
+  };
 
   container.innerHTML = `
     <div class="page">
@@ -378,6 +486,8 @@ function renderPage(container, settings, categories, providerStyles) {
         </form>
       </div>
 
+      ${cuentasCardHTML(CUENTAS)}
+
       <div class="card" style="margin-top:16px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px">
           <div>
@@ -565,6 +675,53 @@ function renderPage(container, settings, categories, providerStyles) {
       });
       currentSettings = res;
       showToast('Plantilla de publicación guardada', 'success');
+      render(container);
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+
+  // Cuentas de Facebook: se manda SOLO `cuentas`, y el merge del servidor lo
+  // fusiona cuenta por cuenta sobre lo ya guardado (no toca plantilla, IA ni
+  // agenda, y ningún temporizador se rearma porque no vienen ni autopublish
+  // ni agenda en este envío).
+  document.getElementById('cuentas-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const leer = (id) => {
+      // Puerto vacío = "usar el default de esta cuenta": se manda 0 y el backend
+      // lo descarta (fuera de rango) y cae en el default. Si se enviara '' o
+      // 1024 forzado, un campo en blanco dejaría esa cuenta sin funcionar.
+      const port = String(fd.get(`ct_${id}_port`) || '').trim();
+      return {
+        label: String(fd.get(`ct_${id}_label`) || '').trim(),
+        profileDir: String(fd.get(`ct_${id}_profile`) || '').trim(),
+        debugPort: port ? limite(port, 0, 1024, 65535) : 0,
+        proxy: String(fd.get(`ct_${id}_proxy`) || '').trim(),
+      };
+    };
+    const A = leer('A');
+    const B = leer('B');
+    const modo = ['alternado', 'A', 'B'].includes(fd.get('ct_modo')) ? fd.get('ct_modo') : 'alternado';
+
+    // Dos Chrome no pueden arrancar con el mismo perfil (el segundo ve el lock
+    // y le entrega la URL al que ya está abierto) ni en el mismo puerto.
+    if (A.profileDir && B.profileDir && A.profileDir.toLowerCase() === B.profileDir.toLowerCase()) {
+      showToast('A y B comparten la ruta de perfil: las dos cuentas necesitan rutas distintas.', 'error');
+      return;
+    }
+    if (A.debugPort && A.debugPort === B.debugPort) {
+      showToast('A y B comparten el puerto de depuración: usá dos puertos distintos (p. ej. 9222 y 9223).', 'error');
+      return;
+    }
+
+    try {
+      const res = await api.updateSettings({
+        exchange_rate: currentSettings?.exchange_rate || settings?.exchange_rate || 61000,
+        publish_config: { cuentas: { modo, A, B } },
+      });
+      currentSettings = res;
+      showToast('Cuentas de Facebook guardadas', 'success');
       render(container);
     } catch (err) {
       showToast(err.message, 'error');

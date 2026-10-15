@@ -790,6 +790,31 @@ La cola de publicaciones (`publication_queue`) puede publicarse sola en grupos d
 
 Usa `--user-data-dir` con un **perfil separado y persistente**, no `--incognito`. Es lo que permite conservar la sesión de Facebook entre corridas. Efecto práctico parecido al del Chrome personal (no lo toca, no lo cierra), pero el estado vive en otra carpeta.
 
+### Dos cuentas de Facebook (A y B)
+
+El publicador puede trabajar con **dos cuentas de Facebook** desde el **mismo proceso**: cada corrida publica con una sola cuenta, y con ella se abre su Chrome, su perfil (su sesión de Facebook) y su proxy. Así las dos cuentas tienen IP distinta (vía `PROXY_SERVER` por cuenta) y sesiones de Facebook separadas.
+
+Se configuran en **Ajustes → "Cuentas de Facebook (A y B)"**, sin tocar variables de entorno ni reiniciar:
+
+| Campo | Qué es |
+|-------|--------|
+| **Cuenta que publica** | `alternado` (una corrida A, la siguiente B), o fijar `A` / `B` |
+| **Nombre / etiqueta** | Cómo se muestra la cuenta en los modales |
+| **Puerto de depuración de Chrome** | Puerto CDP de esa cuenta (`9222` para A, `9223` para B). Deben ser **distintos**. |
+| **Perfil de Chrome** | Ruta del `--user-data-dir` donde vive la sesión de Facebook de esa cuenta. Deben ser **distintas** (dos Chrome no comparten perfil). |
+| **Proxy** | Opcional. Le da a esa cuenta una IP de salida distinta. Vacío = IP de la máquina. |
+
+**Precedencia**: lo guardado en Ajustes **gana**; si un campo está vacío se usa la variable de entorno (`ACCOUNT_ID`, `FB_DEBUG_PORT`, `FB_DEBUG_PROFILE`, `PROXY_SERVER`); y si tampoco hay, el default histórico (A: perfil `C:\Users\Dani\fb-leave\fb-debug-perfil`, 9222; B: `...-b`, 9223). El entorno solo aplica a la cuenta que declara `ACCOUNT_ID` (por defecto A), así que los defaults de A no se le cuelan a B.
+
+Defaults por cuenta (`backend/lib/accountConfig.js`, `ACCOUNT_DEFAULTS`):
+
+| Cuenta | Puerto | Perfil |
+|--------|--------|--------|
+| A | `9222` | `C:/Users/Dani/fb-leave/fb-debug-perfil` |
+| B | `9223` | `C:/Users/Dani/fb-leave/fb-debug-perfil-b` |
+
+La cuenta activa se ve en `GET /api/status` (`account`, `label`, `cuentas[]`, `modo`) y en los modales de **Distribuir en el día** y **Duplicar día a otro** (rótulo "Cuenta …").
+
 ### Corridas asíncronas
 
 Una corrida no se espera: `POST /run` responde **202** con un `runId` en ~5ms y el trabajo sigue en background. El frontend hace **polling cada 2s** a `/group-publish/status` y dibuja la barra de progreso con fase, grupo actual, publicados y errores.

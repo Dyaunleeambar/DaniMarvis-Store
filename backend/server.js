@@ -31,7 +31,7 @@ import promptEngineRouter from './routes/promptEngine.js';
 import providerStylesRouter from './routes/providerStyles.js';
 import { getWarrantyReminders } from './lib/warranty.js';
 import warrantyRulesRouter from './routes/warrantyRules.js';
-import { getUploadsDir, getAccountConfig } from './lib/accountConfig.js';
+import { getUploadsDir, getAccountConfig, getCuentasConfig, ACCOUNT_IDS } from './lib/accountConfig.js';
 import { createBackup, scheduleBackups } from './scripts/backup.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -461,6 +461,31 @@ app.post('/api/generate-catalog', async (req, res) => {
   }
 });
 
+app.get('/api/status', (req, res) => {
+  const acc = getAccountConfig();
+  const cuentasCfg = getCuentasConfig();
+  res.json({
+    account: acc.id,
+    label: acc.label,
+    // El rol depende de si esta instancia es un CLIENTE de un coordinador A/B
+    // (COORD_URL) o de si manda por su cuenta. En un solo proceso sin COORD_URL
+    // es siempre coordinador.
+    role: String(process.env.COORD_URL || '').trim() ? 'cliente' : 'coordinador',
+    port: PORT,
+    debugPort: acc.debugPort,
+    proxy: acc.proxy,
+    uploadsDir,
+    // Cómo elige el publicador la cuenta de Facebook que publica.
+    modo: String(cuentasCfg.modo || 'alternado'),
+    // Las dos cuentas configuradas, para que la UI pueda mostrar qué perfil y
+    // qué puerto usa cada una (y con eso, qué sesión de Facebook).
+    cuentas: ACCOUNT_IDS.map((id) => {
+      const c = getAccountConfig(id);
+      return { id, label: c.label, profileDir: c.profileDir, debugPort: c.debugPort, proxy: c.proxy };
+    }),
+  });
+});
+
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'Ruta no encontrada' });
   res.sendFile(join(__dirname, '..', 'frontend', 'index.html'));
@@ -496,17 +521,6 @@ async function start() {
       }
     }
   } catch { /* sin settings: no hay nada que avisar */ }
-
-app.get('/api/status', (req, res) => {
-  const acc = getAccountConfig();
-  res.json({
-    account: acc.id,
-    role: (acc.isCoordinator || !String(process.env.COORD_URL || '').trim()) ? 'coordinador' : 'cliente',
-    port: acc.port || PORT,
-    debugPort: acc.debugPort,
-    uploadsDir,
-  });
-});
 
   // El worker automático de publicación de grupos. Antes no existía: la etiqueta
   // de Ajustes prometía una corrida cada 5 minutos pero nada la disparaba. Se
