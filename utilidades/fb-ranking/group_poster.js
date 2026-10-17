@@ -25,6 +25,7 @@ const puppeteer = require('puppeteer-core');
 const fs = require('fs');
 const path = require('path');
 const { elegirIndicesLote } = require('./lote_grupos.js');
+const { pistaSinCompositor, decidirEnvio } = require('./diagnostico_fb.js');
 
 const args = process.argv.slice(2);
 function val(list, flag) {
@@ -68,14 +69,28 @@ const rand = (min, max) => min + Math.random() * (max - min);
 // Carga de adjuntos. Los tiempos están calculados para que el peor caso quepa en
 // MAX_SECONDS (300s por grupo) incluso con 10 imágenes: 10 x 2 intentos x 6
 // sondeos x 1s = 120s de espera de adjunto, y ensureMediaReady se lleva como
-// máximo 33s. Antes una sola imagen agotaba 12s y una sola falla cortaba todo
-// el loop, así que 6 imágenes no llegaban nunca.
+// máximo 33s. A eso se suman la espera al botón Publicar (hasta 20s) y la
+// confirmación del envío antes de cerrar la pestaña (hasta 75s). Antes una sola
+// imagen agotaba 12s y una sola falla cortaba todo el loop, así que 6 imágenes
+// no llegaban nunca.
 const ATTACH_ATTEMPTS = 2;   // intentos por imagen, cada uno con input fresco
 const ATTACH_POLL_MS = 1000; // intervalo entre sondeos de miniatura
 const ATTACH_WAIT_POLLS = 6; // sondeos por intento (6s)
 const READY_BASE_MS = 8000;  // presupuesto de "listo" = base + 2.5s x imagen
 const READY_PER_IMAGE_MS = 2500;
 const READY_MAX_MS = 45000;  // tope absoluto del presupuesto de "listo"
+// Cuánto esperar a que el botón Publicar exista y se habilite. Con imágenes,
+// Facebook lo mantiene deshabilitado hasta terminar de procesarlas: una sola
+// lectura (lo anterior) lo veía deshabilitado y devolvía "No se encontró el
+// botón Publicar" aunque el post estuviera por salir.
+const PUBLISH_WAIT_MS = 20000;
+const PUBLISH_POLL_MS = 700;
+// Tras el clic, cuánto esperar a que el envío termine de verdad antes de cerrar
+// la pestaña. Con imágenes FB se toma su tiempo subiendo; cerrar antes aborta el
+// post. El presupuesto es generoso pero con corte: si nunca se confirma, se
+// sigue (no se cuelga la corrida entera).
+const ENVIO_CONFIRM_MS = 75000;
+const ENVIO_POLL_MS = 1500;
 
 // ---------------------------------------------------------------- helpers ---
 function out(obj) {
@@ -117,7 +132,14 @@ async function findComposer(page) {
       return /escrib[eí]|public[aá]|comparte|write something|compartir|algo/.test(label);
     });
 
-    const pick = byPh[0] || postCands[0] || null;
+    // El compositor de post se abre como modal ([role="dialog"]). Preferir el
+    // editor que vive DENTRO de un diálogo evita anclarse a la caja inline del
+    // muro o a restos de comentarios que sobrevivieron al filtro isComment. El
+    // 2026-10-16 el ancla cayó en cajas de comentarios ("Haz un comentario…") y
+    // el fallo salía como "No se encontró el botón Publicar".
+    const enDialogo = (el) => !!el.closest('[role="dialog"]');
+    const pick = byPh.find(enDialogo) || byPh[0]
+      || postCands.find(enDialogo) || postCands[0] || null;
     if (!pick) return null;
     pick.dataset.pgpComposer = '1';
     pick.scrollIntoView({ block: 'center' });
@@ -427,10 +449,15 @@ async function composerAnchor(page) {
     };
     let editable = document.querySelector('[data-pgp-composer="1"]');
     if (!editable || !vis(editable)) {
-      editable = null;
-      for (const el of document.querySelectorAll('[contenteditable="true"],[role="textbox"]')) {
-        if (vis(el)) { editable = el; break; }
-      }
+      // Mismo criterio que findComposer: nada de cajas de comentarios (viven
+      // dentro de articles/feeditems) y, si hay un diálogo abierto, el editor de
+      // adentro. Antes caía al primer contenteditable visible y terminaba anclado
+      // a la caja de comentarios del feed: el fallo "No se encontró el botón
+      // Publicar" mostraba botones de "Haz un comentario…" (2026-10-16 10:29).
+      const cands = Array.from(document.querySelectorAll('[contenteditable="true"],[role="textbox"]'))
+        .filter(vis)
+        .filter(el => !el.closest('[role="article"]') && !el.closest('[role="feeditem"]'));
+      editable = cands.find(el => el.closest('[role="dialog"]')) || cands[0] || null;
     }
     if (!editable) return null;
     let node = editable;
@@ -610,7 +637,11 @@ async function currentComposerLen(page) {
       return cs.visibility !== 'hidden' && cs.display !== 'none' && cs.opacity !== '0';
     };
     const conTexto = Array.from(document.querySelectorAll('[contenteditable="true"]'))
-      .filter(el => vis(el) && (el.innerText || '').trim().length > 0);
+      .filter(el => vis(el) && (el.innerText || '').trim().length > 0)
+      // Excluir cajas de comentarios: si el compositor se cerró al publicar pero
+      // quedó un comentario con texto en el feed, contarlo daba "el texto sigue
+      // en el compositor" y el post se marcaba como no enviado (2026-10-16).
+      .filter(el => !el.closest('[role="article"]') && !el.closest('[role="feeditem"]'));
     if (!conTexto.length) return 0;
     let mejor = conTexto[0];
     let area = -1;
@@ -727,24 +758,48 @@ async function ensureMediaReady(page, composer, expected, rect) {
 }
 
 // Click en "Publicar" + manejo del tooltip "Publicando como..."
-async function clickPublish(page, dryRun) {
-  if (dryRun) return { clicked: false, tooltip: false, dry: true };
-  const btn = await page.evaluate(() => {
-    const norm = (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+/**
+ * Busca el botón "Publicar" del compositor. Devuelve el botón con su rect o
+ * null. La propiedad `enabled` distingue "existe pero está deshabilitado"
+ * (Facebook todavía procesa las imágenes) de "no está": antes esa diferencia se
+ * perdía en un `isPub` que exigía `aria-disabled !== 'true'`, y las dos cosas
+ * terminaban en el mismo "No se encontró el botón Publicar".
+ */
+async function findPublishButton(page) {
+  return page.evaluate(() => {
+    // OJO: \s NO cubre el espacio de ancho cero (\u200b) ni otros invisibles que
+    // Facebook mete en el texto de sus botones. Sin sacarlos, `innerText ===
+    // 'publicar'` falla por un carácter que no se ve y el botón "no aparece"
+    // aunque esté en pantalla. Es un fallo real: se pierde el clic y el post.
+    const norm = (s) => (s || '')
+      .replace(/[\u200b-\u200f\u2028\u2029\u2060\ufeff]/g, '')
+      .replace(/\s+/g, ' ').trim().toLowerCase();
     const vis = (el) => {
       const r = el.getBoundingClientRect();
       if (r.width <= 0 || r.height <= 0) return false;
       const cs = getComputedStyle(el);
       return cs.visibility !== 'hidden' && cs.display !== 'none' && cs.opacity !== '0';
     };
+    // A propósito NO filtra por aria-disabled: se quiere encontrar también el
+    // botón deshabilitado para poder informarlo y esperar a que se habilite.
     const isPub = (el) => {
-      if (!vis(el) || el.getAttribute('aria-disabled') === 'true') return false;
+      if (!vis(el)) return false;
       const t = norm(el.innerText), a = norm(el.getAttribute('aria-label'));
       return t === 'publicar' || a === 'publicar';
     };
-    const rectInfo = (el) => {
+    const info = (el, extra) => {
       const r = el.getBoundingClientRect();
-      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), w: Math.round(r.width), h: Math.round(r.height) };
+      return Object.assign({
+        label: 'publicar',
+        aria: (el.getAttribute('aria-label') || '').slice(0, 40),
+        dis: el.getAttribute('aria-disabled') || 'null',
+        enabled: el.getAttribute('aria-disabled') !== 'true',
+        x: Math.round(r.left + r.width / 2),
+        y: Math.round(r.top + r.height / 2),
+        w: Math.round(r.width),
+        h: Math.round(r.height),
+        area: r.width * r.height,
+      }, extra || {});
     };
     // 1) el editor al que escribimos (contenteditable visible con texto)
     let editable = null;
@@ -753,7 +808,11 @@ async function clickPublish(page, dryRun) {
       const t = (el.innerText || '').trim();
       if (t.length >= 2) { editable = el; break; }
     }
-    // 2) subir por ancestros hasta un panel que contenga un botón exacto "publicar"
+    // 2) subir por ancestros hasta un panel que contenga un botón exacto
+    // "publicar". Se prefiere el HABILITADO: si el del panel está deshabilitado
+    // (Facebook procesando), se sigue subiendo por si hay uno habilitado y, si
+    // no aparece ninguno, se guarda el deshabilitado para informarlo y esperar.
+    let deshabilitado = null;
     if (editable) {
       let node = editable;
       while (node && node !== document.body) {
@@ -763,21 +822,45 @@ async function clickPublish(page, dryRun) {
         if (r.width > 2600 || r.height > 2600) continue;
         const pub = Array.from(node.querySelectorAll('div[role="button"], span[role="button"], button')).find(isPub);
         if (pub) {
-          return Object.assign({ label: 'publicar', aria: (pub.getAttribute('aria-label') || '').slice(0, 40), dis: pub.getAttribute('aria-disabled') || 'null', scoped: true }, rectInfo(pub));
+          const found = info(pub, { scoped: true });
+          if (found.enabled) return found;
+          if (!deshabilitado) deshabilitado = found;
         }
       }
     }
-    // 3) fallback global: exactos "publicar", el más pequeño
-    let best = null;
+    // 3) fallback global: exactos "publicar", el más pequeño. El habilitado gana
+    // al deshabilitado aunque sea más grande.
+    let habilitado = null;
     for (const el of document.querySelectorAll('div[role="button"], span[role="button"], button')) {
       if (!isPub(el)) continue;
-      const r = el.getBoundingClientRect();
-      const area = r.width * r.height;
-      if (!best || area < best.area) best = Object.assign({ label: 'publicar', aria: (el.getAttribute('aria-label') || '').slice(0, 40), dis: el.getAttribute('aria-disabled') || 'null', scoped: false, area }, rectInfo(el));
+      const found = info(el, { scoped: false });
+      if (found.enabled) {
+        if (!habilitado || found.area < habilitado.area) habilitado = found;
+      } else if (!deshabilitado || found.area < deshabilitado.area) {
+        deshabilitado = found;
+      }
     }
-    return best || null;
+    return habilitado || deshabilitado || null;
   });
-  if (!btn) return { clicked: false, tooltip: false };
+}
+
+async function clickPublish(page, dryRun) {
+  if (dryRun) return { clicked: false, tooltip: false, dry: true };
+  // Sondea hasta PUBLISH_WAIT_MS: el botón puede no estar montado todavía o
+  // estar deshabilitado mientras Facebook termina de subir/procesar las
+  // imágenes. Se corta apenas aparece habilitado; si solo se ve deshabilitado
+  // se recuerda para el diagnóstico del fallo.
+  let btn = null;
+  let deshabilitado = null;
+  const deadline = Date.now() + PUBLISH_WAIT_MS;
+  for (;;) {
+    const found = await findPublishButton(page).catch(() => null);
+    if (found && found.enabled) { btn = found; break; }
+    if (found && !found.enabled) deshabilitado = found;
+    if (Date.now() >= deadline) break;
+    await sleep(PUBLISH_POLL_MS);
+  }
+  if (!btn) return { clicked: false, tooltip: false, disabled: !!deshabilitado, info: deshabilitado };
   console.error('[SUBMIT] ' + JSON.stringify(btn));
   // clic físico (eventos de puntero reales de Chromium), como haría una persona;
   // el clic sintético el.click() puede confirmar el post sin el adjunto.
@@ -848,7 +931,7 @@ async function seleccionarLoteGrupos(page, { n, desde } = {}) {
   // 1) el botón "Añadir grupos". Solo existe con al menos una imagen adjunta,
   //    y no trae aria-label: el texto es la única ancla estable. Las clases de
   //    sus ancestros son hashes de Facebook y cambian con cada rediseño.
-  const btn = await page.evaluate(() => {
+  const buscarBoton = () => page.evaluate(() => {
     const vis = (el) => {
       const r = el.getBoundingClientRect();
       if (r.width <= 0 || r.height <= 0) return false;
@@ -862,6 +945,17 @@ async function seleccionarLoteGrupos(page, { n, desde } = {}) {
     const r = el.getBoundingClientRect();
     return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
   });
+  // "Añadir grupos" puede tardar en montarse: Facebook lo muestra recién cuando
+  // termina de procesar los adjuntos, y el texto del botón cambia con el rediseño.
+  // Antes se buscaba UNA sola vez y si no estaba en ese instante el lote se daba
+  // por perdido en silencio. El 2026-10-16, 9 de los 36 posts publicados no se
+  // repartieron a los 9 grupos y quedaron registrados igual que un éxito. Se
+  // sondea hasta ~15s antes de rendirse.
+  let btn = null;
+  for (let i = 0; i < 12 && !btn; i++) {
+    btn = await buscarBoton();
+    if (!btn) await sleep(1250);
+  }
   if (!btn) return { seleccionados: [], total: 0, sinBoton: true };
 
   try {
@@ -1002,7 +1096,24 @@ async function seleccionarLoteGrupos(page, { n, desde } = {}) {
 
   if (DEBUG) await probeEtapa(page, 'picker-final');
 
-  return { seleccionados: verificado.map(i => items[i]), total, cargados, sinBoton: false, picker_cierre: cerrado.modo };
+  // El picker es un modal ENCIMA del compositor: si NO se cierra, tapa el botón
+  // Publicar y el clic de publicar cae en el picker (el post queda con el texto
+  // puesto y no sale; los fallos "no se envió" del 2026-10-16). Antes se intentaba
+  // "Atrás" una vez y no se verificaba el resultado. Ahora se comprueba que el
+  // diálogo se haya ido; si sigue, se fuerza con Escape.
+  const pickerAbierto = () => page.evaluate(() => {
+    const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    return Array.from(document.querySelectorAll('[role="dialog"]')).filter(vis)
+      .some(d => (d.innerText || '').includes('Añadir grupos'));
+  }).catch(() => false);
+  let cierreFinal = cerrado.modo;
+  if (await pickerAbierto()) {
+    await page.keyboard.press('Escape').catch(() => {});
+    await sleep(rand(1000, 1600));
+    cierreFinal = (await pickerAbierto()) ? 'sigue-abierto' : 'escape';
+  }
+
+  return { seleccionados: verificado.map(i => items[i]), total, cargados, sinBoton: false, picker_cierre: cierreFinal };
 }
 
 async function grabPostUrl(page) {
@@ -1069,8 +1180,32 @@ async function clickComposerButton(page) {
   });
 }
 
+// ¿Ya hay un compositor de post abierto (como diálogo)? Si es así, NO hay que
+// volver a clicar "Escribe algo…": cada clic de más abre OTRO compositor y deja
+// varios modales apilados (el bug reportado el 2026-10-16 de "se abren dos
+// compositores" en una misma corrida).
+async function hayDialogoCompositor(page) {
+  return page.evaluate(() => {
+    const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    for (const d of Array.from(document.querySelectorAll('[role="dialog"]')).filter(vis)) {
+      if (d.querySelector('input[type="file"]')) return true;
+      const t = (d.innerText || '').toLowerCase();
+      if (/escribe algo|escribir algo|crear publica|publica algo|add groups/.test(t)) return true;
+    }
+    return false;
+  }).catch(() => false);
+}
+
 async function isLoginRequired(page) {
-  return /\/login|checkpoint|cookie_consent/i.test(page.url());
+  if (/\/login|checkpoint|cookie_consent/i.test(page.url())) return true;
+  // FB a veces muestra el muro de login como modal sobre el grupo SIN cambiar
+  // la URL; antes eso se reportaba como "grupo cerrado". Se mira el texto
+  // visible junto con la presencia real de campos de credenciales.
+  return page.evaluate(() => {
+    const t = (document.body ? document.body.innerText : '').toLowerCase();
+    const campos = document.querySelectorAll('input[type="password"], input[name="pass"], input[name="email"]').length;
+    return campos > 0 && /inicia sesi[oó]n|iniciar sesi[oó]n|log in|log into|contrase[nñ]a|password/.test(t);
+  }).catch(() => false);
 }
 
 async function debugDump(page) {
@@ -1108,6 +1243,150 @@ async function debugDump(page) {
   } catch (e) {
     console.log('DEBUG error:', e.message);
   }
+}
+
+/**
+ * Recorte de lo que se ve en la página cuando algo falla: URL, título y las
+ * primeras palabras del texto visible. Distingue "el grupo está cerrado" de "se
+ * cayó la sesión" o de "Facebook bloqueó la cuenta por ritmo" sin depender de
+ * mirar la captura a mano.
+ */
+async function resumenPagina(page) {
+  try {
+    return await page.evaluate(() => {
+      const txt = (document.body ? document.body.innerText : '').replace(/\s+/g, ' ').trim();
+      return { url: location.href, title: document.title, texto: txt.slice(0, 240) };
+    });
+  } catch (e) {
+    return { url: page.url(), title: '', texto: '', error: e.message };
+  }
+}
+
+/**
+ * Volcado de los botones que SÍ están en el compositor cuando no se encontró el
+ * de "Publicar".
+ *
+ * El error "No se encontró el botón Publicar" no dice NADA por sí solo: puede
+ * ser que el botón diga otra cosa ("Publicar publicación", un ícono, o que
+ * Facebook haya reemplazado el compositor por un aviso de límite). Sin ver qué
+ * botones había, cada fallo obliga a adivinar. Con la lista en el log, el
+ * siguiente fallo se explica solo.
+ *
+ * Acotado al ancla del compositor para no listar media página; si no hay ancla,
+ * cae a un barrido global de los que huelan a "publicar".
+ */
+async function dumpPublishCandidates(page) {
+  try {
+    const anchor = await composerAnchor(page);
+    const recoger = (root) => {
+      const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+      const vis = (el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      };
+      const salida = [];
+      for (const el of root.querySelectorAll('div[role="button"], span[role="button"], button, [role="button"]')) {
+        if (!vis(el)) continue;
+        const t = norm(el.innerText);
+        const a = norm(el.getAttribute('aria-label'));
+        if (!t && !a) continue;
+        const r = el.getBoundingClientRect();
+        salida.push({ t: (t || ('aria:' + a)).slice(0, 30), dis: el.getAttribute('aria-disabled') || 'null', w: Math.round(r.width), h: Math.round(r.height) });
+        if (salida.length >= 15) break;
+      }
+      return salida;
+    };
+    if (anchor) {
+      const botones = await anchor.evaluate(recoger).catch(() => []);
+      await anchor.dispose?.().catch?.(() => {});
+      return { scoped: true, botones };
+    }
+    // Sin ancla: solo los que contengan "publicar" (global sería ruido puro).
+    const botones = await page.evaluate(() => {
+      const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+      const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+      const salida = [];
+      for (const el of document.querySelectorAll('div[role="button"], span[role="button"], button, [role="button"]')) {
+        if (!vis(el)) continue;
+        const t = norm(el.innerText).toLowerCase();
+        const a = norm(el.getAttribute('aria-label')).toLowerCase();
+        if (!t.includes('publicar') && !a.includes('publicar')) continue;
+        const r = el.getBoundingClientRect();
+        salida.push({ t: (norm(el.innerText) || ('aria:' + norm(el.getAttribute('aria-label')))).slice(0, 30), dis: el.getAttribute('aria-disabled') || 'null', w: Math.round(r.width), h: Math.round(r.height) });
+        if (salida.length >= 15) break;
+      }
+      return salida;
+    }).catch(() => []);
+    return { scoped: false, botones };
+  } catch (e) {
+    return { error: e.message || String(e) };
+  }
+}
+
+/**
+ * Espera a que Facebook TERMINE de enviar el post, no solo a que se vacíe el
+ * compositor.
+ *
+ * El compositor se vacía apenas se hace clic en Publicar, pero con imágenes la
+ * subida sigue después (FB muestra "Publicando..." y recién ahí manda el post).
+ * Si se cerraba la pestaña al ver el compositor vacío, se abortaba el envío a
+ * mitad: el síntoma era "la pestaña se cierra mientras publica".
+ *
+ * Se considera enviado cuando:
+ *  - el texto del post aparece en un [role="article"] del feed (confirmación
+ *    fuerte), o
+ *  - desaparecen los indicadores de subida/publicación Y el compositor sigue
+ *    vacío, sostenido 2 muestras seguidas (evita el parpadeo del re-render).
+ *
+ * Devuelve { ok, motivo }. `ok:false` es "no se pudo confirmar en el tiempo",
+ * que NO es lo mismo que "no se envió".
+ */
+async function esperarEnvioConfirmado(page, snippet, budgetMs) {
+  const limite = Date.now() + (budgetMs || ENVIO_CONFIRM_MS);
+  let vacioSostenido = 0;
+  let ultimo = { aparecio: false, enCurso: false, conTexto: 1 };
+  while (Date.now() < limite) {
+    ultimo = await page.evaluate((snip) => {
+      const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+      const s = norm(String(snip)).slice(0, 40);
+      const vis = (el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      };
+      // 1) ¿ya aparece el post en el feed? Es la señal más confiable.
+      let aparecio = false;
+      if (s) {
+        for (const art of document.querySelectorAll('[role="article"]')) {
+          if (norm(art.innerText || '').includes(s)) { aparecio = true; break; }
+        }
+      }
+      // 2) señales de que el envío sigue en curso.
+      let enCurso = false;
+      for (const el of document.querySelectorAll(
+        '[role="progressbar"], [data-visualcompletion="loading-dynamic"], ' +
+        '[aria-label*="Publicando" i], [aria-label*="Subiendo" i], [aria-label*="Cargando" i], ' +
+        '[aria-label*="Procesando" i], [aria-label*="Uploading" i], [aria-label*="Posting" i]'
+      )) {
+        if (vis(el)) { enCurso = true; break; }
+      }
+      if (!enCurso) {
+        for (const d of document.querySelectorAll('[role="dialog"]')) {
+          if (vis(d) && /publicando|subiendo|enviando|posting|uploading/i.test(d.innerText || '')) { enCurso = true; break; }
+        }
+      }
+      // 3) ¿quedó texto en algún compositor visible?
+      const conTexto = Array.from(document.querySelectorAll('[contenteditable="true"]'))
+        .filter(el => vis(el) && (el.innerText || '').trim().length > 0).length;
+      return { aparecio, enCurso, conTexto };
+    }, snippet).catch(() => ({ aparecio: false, enCurso: true, conTexto: 1, error: true }));
+
+    if (ultimo.aparecio) return { ok: true, motivo: 'el post apareció en el feed' };
+    const paso = decidirEnvio(ultimo, vacioSostenido);
+    vacioSostenido = paso.vacioSostenido;
+    if (paso.done) return { ok: true, motivo: paso.motivo };
+    await sleep(ENVIO_POLL_MS);
+  }
+  return { ok: false, motivo: 'no se pudo confirmar el envío a tiempo', ultimo };
 }
 
 // ---------------------------------------------------------------- grupos ---
@@ -1153,13 +1432,36 @@ async function processGroup(browser, groupUrl, label) {
 
     let composer = await findComposer(page);
     for (let attempt = 0; attempt < 4 && !composer; attempt++) {
-      await clickComposerButton(page);
-      await sleep(rand(2200, 3200));
+      // Si ya hay un compositor abierto, NO clicar otra vez: cada clic de más
+      // abre OTRO compositor. Antes el loop clicaba a ciegas hasta 4 veces y
+      // dejaba varios modales apilados (el "más de un compositor" del 2026-10-16).
+      if (await hayDialogoCompositor(page)) {
+        await sleep(rand(1200, 2000));
+      } else {
+        await clickComposerButton(page);
+        await sleep(rand(2200, 3200));
+      }
       composer = await findComposer(page);
     }
     if (!composer) {
       if (DEBUG) { console.log('--- DEBUG: no composer encontrado ---'); await debugDump(page); }
-      return out({ group_url: groupUrl, ok: false, status: 'error', message: 'No se encontró el compositor del grupo (¿grupo cerrado/archivado?).' });
+      // Antes esta salida no dejaba NINGUNA evidencia (ni captura ni texto): la
+      // causa más frecuente hoy no se podía distinguir de un grupo cerrado. Se
+      // captura la pantalla y se anota URL/título/recorte del texto visible.
+      const pag = await resumenPagina(page);
+      if (pag.texto) console.error('[NO-COMPOSER] ' + JSON.stringify(pag));
+      let captura = '';
+      try {
+        const nombre = 'danimarvis_fallo_composer.png';
+        await page.screenshot({ path: require('path').join(require('os').tmpdir(), nombre) });
+        captura = nombre;
+      } catch (_) { /* la captura es un extra */ }
+      return out({
+        group_url: groupUrl, ok: false, status: 'error',
+        message: 'No se encontró el compositor del grupo (¿grupo cerrado/archivado?).' + pistaSinCompositor(pag.texto),
+        page_url: pag.url || '', page_title: pag.title || '',
+        screenshot: captura,
+      });
     }
 
     // clic físico sobre el compositor de post (foco real para el typing)
@@ -1197,17 +1499,27 @@ async function processGroup(browser, groupUrl, label) {
     // tildados para que el usuario solo tenga que darle Publicar, y en
     // dry-run los reporta sin publicar nada.
     let lote = { seleccionados: [], total: 0, sinBoton: false };
+    // Estado del lote para que el backend y el panel distingan "no aplica" (sin
+    // imágenes o lote apagado) de "se intentó y falló". Sin este campo, un post
+    // que salió solo al grupo destino se registraba idéntico a uno repartido a
+    // nueve: el 2026-10-16 quedó asentado como 'published' sin recoger el fallo.
+    let loteEstado = 'no-aplicable';
     if (LOTE_N > 1 && imgs.images > 0) {
       lote = await seleccionarLoteGrupos(page, { n: LOTE_N, desde: LOTE_DESDE });
+      loteEstado = lote.seleccionados.length ? 'ok' : (lote.sinBoton ? 'sin-boton' : 'sin-grupos');
       if (lote.sinBoton) {
         console.log(`[${label}] el boton "Añadir grupos" no apareció.`);
       } else if (!lote.seleccionados.length) {
-        console.log(`[${label}] no se pudo tildar ningún grupo.`);
+        console.log(`[${label}] no se pudo tildar ningún grupo (picker_cierre=${lote.picker_cierre || '?'}).`);
       } else {
         console.log(`[${label}] LOTE (${lote.seleccionados.length}/${lote.total}): ${lote.seleccionados.join(' | ')}`);
       }
       await sleep(rand(800, 1600));
     }
+    // Campos del lote que viajan en TODOS los resultados terminales de este post
+    // (publicado, preparado, dry-run y los fallos posteriores al lote), para que
+    // la cola pueda decir si se repartió o no.
+    const loteCampos = { lote_grupos: lote.seleccionados, grupos_en_lista: lote.total, lote_estado: loteEstado };
     const loteTexto = lote.seleccionados.length
       ? ` Lote de ${lote.seleccionados.length} grupo(s) tildado(s).`
       : '';
@@ -1220,10 +1532,10 @@ async function processGroup(browser, groupUrl, label) {
       const aviso = imgs.images > 0 && imgs.attached === 0
         ? ` ATENCIÓN: se pidieron ${imgs.images} imagen(es) y NO se adjuntó ninguna.`
         : '';
-      return out({ group_url: groupUrl, ok: true, status: 'prepared', message: 'Post preparado en pestaña (revisar y publicar manualmente).' + aviso + loteTexto, imagen_adjunta: imgs.attached, imagenes_pedidas: imgs.images, texto_digits: lenBefore, lote_grupos: lote.seleccionados, grupos_en_lista: lote.total });
+      return out({ group_url: groupUrl, ok: true, status: 'prepared', message: 'Post preparado en pestaña (revisar y publicar manualmente).' + aviso + loteTexto, imagen_adjunta: imgs.attached, imagenes_pedidas: imgs.images, texto_digits: lenBefore, ...loteCampos });
     }
     if (MODE === 'dry-run') {
-      return out({ group_url: groupUrl, ok: true, status: 'dry-run', message: `Simulación ok: texto ${lenBefore} chars, ${imgs.images} imagen(es).${loteTexto}`, texto_digits: lenBefore, imagen_adjunta: imgs.attached, lote_grupos: lote.seleccionados, grupos_en_lista: lote.total });
+      return out({ group_url: groupUrl, ok: true, status: 'dry-run', message: `Simulación ok: texto ${lenBefore} chars, ${imgs.images} imagen(es).${loteTexto}`, texto_digits: lenBefore, imagen_adjunta: imgs.attached, ...loteCampos });
     }
 
     // Damos a FB su tiempo para terminar de procesar los adjuntos y PUBLICAMOS
@@ -1267,7 +1579,18 @@ async function processGroup(browser, groupUrl, label) {
         await page.screenshot({ path: require('path').join(require('os').tmpdir(), nombre) });
         captura = nombre;
       } catch (_) { /* nunca romper el resultado por una captura */ }
-      return out({ group_url: groupUrl, ok: false, status: 'error', message: 'No se encontró el botón Publicar.', clicks: pub, screenshot: captura });
+      const detalle = pub.disabled
+        ? ` El botón "Publicar" estaba DESHABILITADO (aria-disabled=${pub.info?.dis ?? 'true'}) después de ${Math.round(PUBLISH_WAIT_MS / 1000)}s: Facebook seguía procesando las imágenes o no aceptó el texto.`
+        : '';
+      // Qué botones había de verdad: sin esto, "no se encontró Publicar" no dice
+      // si el compositor no se abrió, si el botón dice otra cosa, o si Facebook
+      // lo reemplazó por un aviso. Va al stderr para que quede en las notas.
+      const cand = await dumpPublishCandidates(page);
+      if (!cand.error) console.error('[SUBMIT-CAND] ' + JSON.stringify(cand));
+      const pistaCand = cand && cand.botones && cand.botones.length
+        ? ` Botones en el compositor: ${cand.botones.map(b => `"${b.t}"${b.dis === 'true' ? '(deshab.)' : ''}`).join(', ')}.`
+        : ' No se encontró ningún botón dentro del compositor.';
+      return out({ group_url: groupUrl, ok: false, status: 'error', message: 'No se encontró el botón Publicar.' + detalle + pistaCand, clicks: pub, screenshot: captura, candidatos: cand, ...loteCampos });
     }
     if (!cleared) {
       // Diagnóstico para que el error diga POR QUÉ no se ve el envío y no haya
@@ -1301,7 +1624,7 @@ async function processGroup(browser, groupUrl, label) {
         // dos datos distintos y solo el segundo sirve para actuar.
         const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
         const normLow = (s) => norm(s).toLowerCase();
-        const possibles = Array.from(document.querySelectorAll(
+        const posibles = Array.from(document.querySelectorAll(
           'div[role="alert"], span[role="alert"], div[role="dialog"], [data-testid*="Dialog"]'
         )).filter(vis)
           .map(el => norm(el.innerText))
@@ -1321,22 +1644,26 @@ async function processGroup(browser, groupUrl, label) {
           // Para el log: cuántos carteles había, aunque ninguno fuera un aviso.
           carteles: posibles.length,
         };
-      }).catch(() => ({}));
+      }).catch((e) => ({ error: e.message || String(e) }));
       // Un post largo o con 6+ imágenes necesita bastante más que 30 s para
       // aparecer; el tiempo de espera era el otro mitad del problema.
       const otra = await currentComposerLen(page);
       if (otra === 0) {
         return out({ group_url: groupUrl, ok: true, status: 'published',
           message: 'Publicado (el compositor se vació, la primera lectura llegó tarde).' + loteTexto,
-          lote_grupos: lote.seleccionados, grupos_en_lista: lote.total,
           post_url: '', imagen_adjunta: imgs.attached, imagenes_pedidas: imgs.images,
-          adjuntos_confirmados: confirmados ? 1 : 0, texto_digits: lenBefore, toral_ms: Date.now() - t0 });
+          adjuntos_confirmados: confirmados ? 1 : 0, texto_digits: lenBefore, toral_ms: Date.now() - t0, ...loteCampos });
       }
       const porQuien = diag.bloqueo
         ? ` FB mostró un aviso: "${diag.bloqueo}".`
         : (diag.conTexto
             ? ' El texto sigue en el compositor: el post probablemente NO se envió.'
             : ' No se encontró el compositor al releer, así que no se puede confirmar el envío.');
+      // Si el propio diagnóstico falló (p.ej. la página navegó justo después del
+      // clic y se destruyó el contexto de ejecución), el "0 editores" NO prueba
+      // que el compositor esté vacío — es al revés: no se pudo mirar. Se anota
+      // para no volver a confundir "no miré" con "no hay".
+      const avisoDiag = diag.error ? ` (diagnóstico no disponible: ${diag.error})` : '';
       // Captura del FALLO. Antes solo se fotografiaba el éxito, que es justo lo
       // que no hace falta: cuando algo sale mal, la imagen de la pantalla es
       // often the only thing that shows a dialog, a spinner, a disabled button or
@@ -1350,16 +1677,26 @@ async function processGroup(browser, groupUrl, label) {
       } catch (_) { /* la captura es un extra: nunca debe romper el resultado */ }
       return out({
         group_url: groupUrl, ok: false, status: 'error',
-        message: `Se hizo clic en Publicar pero el post no se envió (${diag.conTexto || 0} editor(es) con texto, el mayor de ${diag.areaMax || 0}px²).${porQuien}`,
+        message: `Se hizo clic en Publicar pero el post no se envió (${diag.conTexto || 0} editor(es) con texto, el mayor de ${diag.areaMax || 0}px²).${porQuien}${avisoDiag}`,
         clicks: pub,
         alert_text: diag.bloqueo || '',
         carteles: diag.carteles || 0,
         screenshot: captura,
+        ...loteCampos,
       });
     }
+    // El compositor quedó vacío, pero eso NO garantiza que Facebook haya
+    // terminado de enviar: con imágenes el editor se vacía y la subida sigue
+    // después. Antes se cerraba la pestaña (en el finally) a los pocos segundos,
+    // abortando el envío a mitad: se veía como "la pestaña se cierra mientras
+    // publica". Se espera a que el envío termine de verdad.
+    const envio = await esperarEnvioConfirmado(page, text).catch(() => ({ ok: false, motivo: 'error al verificar el envío' }));
+    console.error('[ENVIO] ' + JSON.stringify(envio));
     // diagnosticar el post recién publicado (¿trae la foto?) en esta misma pestaña
     try {
-      await sleep(6000);
+      // La espera de arriba ya le dio tiempo a FB: solo un respiro mínimo antes
+      // de releer, no los 6s de antes.
+      await sleep(1200);
       const fresh = await page.evaluate((snippet) => {
         const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
         const s = norm(String(snippet)).slice(0, 40);
@@ -1389,10 +1726,13 @@ async function processGroup(browser, groupUrl, label) {
             ? ` (FB tomó los ${imgs.images} adjunto(s); el conteo exacto no se pudo verificar).`
             : ` ATENCIÓN: se pidieron ${imgs.images} imagen(es) y FB no mostró los controles de quitar foto, o sea que probablemente no las tomó.`))
         + (needsApproval ? ' Queda pendiente de aprobación del administrador.' : '')
+        + (envio.ok ? '' : ` (no se pudo confirmar el envío en el tiempo: ${envio.motivo}; revisá el grupo por si quedó publicado)` )
         + loteTexto,
       post_url: postUrl,
+      envio_confirmado: envio.ok ? 1 : 0,
       lote_grupos: lote.seleccionados,
       grupos_en_lista: lote.total,
+      lote_estado: loteEstado,
       imagen_adjunta: imgs.attached,
       imagenes_pedidas: imgs.images,
       adjuntos_confirmados: confirmados ? 1 : 0,

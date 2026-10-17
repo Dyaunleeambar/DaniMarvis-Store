@@ -49,7 +49,7 @@ Creada en `database.js:268-282`; `images` y `pending_approval` llegan por `ALTER
 | `variant_index` | INTEGER | Lo pone el front. **El backend no lo lee** |
 | `variant_text` | TEXT | Texto final. Si vacío, el publisher usa `p.publish_text` |
 | `images` | TEXT | **String JSON** de rutas `/uploads/...` o URLs. Máx 6 |
-| `notes` | TEXT | Log de la corrida. **Nunca se muestra en la UI** |
+| `notes` | TEXT | Log de la corrida. **No se muestra en la cola** (`pubQueueView`), pero **sí en el detalle de cada destino del calendario** (`publicationsView.js`), incluida la nota del lote (`ATENCIÓN lote: …`) |
 | `pending_approval` | INTEGER | `1` = el grupo exige aprobación del admin |
 | `created_at` / `updated_at` | TEXT | Orden secondary del "due" y auditoría |
 
@@ -272,25 +272,70 @@ que el poster vio: si encontró el compositor, si el botón estaba deshabilitado
 `%TEMP%/danimarvis_fallo_check.png` cuando no se pudo publicar. Antes ese diagnóstico
 se perdía y un `error` no distinguía "no había botón" de "el botón estaba apagado".
 
+### Un solo compositor, y no una caja de comentarios
+
+Dos fallos del 2026-10-16 salían de confundir "el compositor del post" con cualquier
+`[contenteditable]` visible:
+
+- **"No se encontró el botón Publicar" con botones de "Haz un comentario…"** — el ancla
+  (`composerAnchor`) caía al **primer** editable visible, que era una caja de comentarios
+  del feed. Ahora, al no encontrar `[data-pgp-composer="1"]`, filtra los que viven dentro
+  de `[role="article"]`/`[role="feeditem"]` y **prefiere el editor dentro de un
+  `[role="dialog"]`**. El mismo criterio usa `findComposer` y `currentComposerLen` (así un
+  comentario con texto ya no produce un falso "el texto sigue en el compositor").
+- **"Se abren dos compositores"** — el loop de reintento de `processGroup` clicaba
+  "Escribe algo…" hasta 4 veces a ciegas. Ahora, antes de volver a clicar, comprueba
+  `hayDialogoCompositor(page)`: si ya hay un diálogo con un `input[type=file]` o texto de
+  compositor, espera en vez de abrir otro.
+
 ### El lote, que era invisible
 
 `notaLote()` (`groupPublisher.js`) escribe en `notes` **qué grupos se tickearon de
-verdad** en el compositor: `lote: 9/163 grupos [...]`, o `lote: NO se tildó ningún grupo
-extra` cuando la lista vino vacía.
+verdad** en el compositor: `lote: 9/163 grupos [...]`, o un aviso fuerte cuando el
+reparto no salió.
 
-Antes esa información no se podía ver en ninguna parte. El poster siempre devolvía
-`lote_grupos`, pero en un post exitoso **`result.message` no se guarda en la cola**, y
-ahí era donde venía ese texto. La propagación a los N grupos quedaba invisible: ni en
-la cola ni en los logs, porque el stdout del poster se descarta y solo se parsean sus
-líneas JSON. Un post que salió a un grupo y uno que salió a nueve se veían idénticos.
-
-Que se escriba incluso con la lista vacía es a propósito: **"se pidió lote y no se tildó
-ninguno" es justo lo que distingue los dos casos**, y es la señal más barata de
-throttling en silencio. Se ve en el log como `SIN_LOTE=1` al cerrar la corrida.
+El poster siempre devolvió `lote_grupos`, pero en un post exitoso **`result.message` no se
+guarda en la cola**, y ahí era donde venía ese texto. La propagación a los N grupos quedaba
+invisible: ni en la cola ni en los logs, porque el stdout del poster se descarta y solo se
+parsean sus líneas JSON. Un post que salió a un grupo y uno que salió a nueve se veían idénticos.
 
 El texto va limitado a 240 chars porque `notes` se corta a 500 al final y con 300 el
 lote se comía la nota de imágenes. El conteo va primero, así que si trunca sobrevive el
 dato que importa.
+
+#### `lote_estado` — distinguir "no aplica" de "se intentó y falló"
+
+El poster ahora manda **`lote_estado`** en el resultado (`published`/`prepared`/`dry-run`),
+y `notaLote()` lo traduce:
+
+| `lote_estado` | Cuándo | Nota en `notes` |
+|---|---|---|
+| `ok` | Se tickearon grupos | `lote: 9/163 grupos [...]` |
+| `sin-boton` | No apareció "Añadir grupos" | `ATENCIÓN lote: el botón "Añadir grupos" no apareció; el post salió SOLO en el grupo destino` |
+| `sin-grupos` | Se abrió el picker pero no se tildó ninguno | `ATENCIÓN lote: no se pudo tildar ningún grupo de 163; el post salió SOLO en el grupo destino` |
+| `no-aplicable` | Sin imágenes o lote apagado | *(nada: no ensucia la nota)* |
+
+El caso que motivó esto: el **2026-10-16**, de 36 posts publicados, **9** solo salieron
+al grupo destino (no se repartieron a los 9) y quedaron registrados **idénticos** a los
+27 que sí se repartieron — `status: 'published'` y una nota tibia
+(`NO se tildó ningún grupo extra`) que no distinguía "se intentó y falló" de "no había
+imágenes". El `status` sigue siendo `published` (el post **sí** salió al grupo destino,
+marcarlo `error` sería falso), pero ahora la nota avisa fuerte y el calendario lo marca.
+
+`GET /api/agenda` y `GET /api/publications/...` derivan el flag
+**`lote_fallido`** (destino `published` con `ATENCIÓN lote:` en `notes`), y
+`publicationsView.js` pinta un aviso rojo **"OJO: no se pudo repartir a los grupos del
+lote; salió solo en este grupo"** debajo del tag, en vez de dejar que se pierda entre las
+notas grises.
+
+> **Reintento del botón.** El lote fallaba a menudo porque "Añadir grupos" se buscaba
+> **una sola vez**, justo cuando FB todavía no lo había montado (aparece recién cuando
+> termina de procesar los adjuntos). Ahora `seleccionarLoteGrupos()` lo **sondea ~15s**
+> antes de rendirse, y **verifica que el picker se haya cerrado** (si sigue, lo fuerza con
+> Escape): un picker abierto tapa el botón Publicar y el clic cae en el modal.
+
+En el log de cierre de la corrida, `SIN_LOTE=N` cuenta solo los lotes que **se intentaron
+y fallaron** (`sin-boton`/`sin-grupos`); un `no-aplicable` no ensucia el resumen.
 
 ### Los logs
 
@@ -542,6 +587,10 @@ Claves del resultado exitoso (`group_poster.js:836-845`):
 | `imagen_adjunta` | nº de miniaturas que FB muestra de verdad |
 | `imagenes_pedidas` | nº de paths que se le pasaron |
 | `adjuntos_confirmados` | `1`/`0`. Señal de confianza: FB tomó los adjuntos. **Ver abajo** |
+| `envio_confirmado` | `1`/`0`. Si `esperarEnvioConfirmado()` pudo confirmar que el envío terminó antes de cerrar la pestaña |
+| `lote_grupos` | Array de nombres tickeados en el lote (vacío si no aplica o si falló) |
+| `grupos_en_lista` | Total de grupos que el picker tenía cargados |
+| `lote_estado` | `ok` \| `sin-boton` \| `sin-grupos` \| `no-aplicable`. Gobierna `notaLote()` |
 | `texto_digits` | Longitud del texto que quedó en el compositor |
 | `requiere_aprobacion` | `1`/`0`, busca 3 frases de FB en el body (`:705-714`) |
 | `toral_ms` | Duración. **El typo es real** (`:849`), no `total_ms` |
@@ -590,9 +639,12 @@ Los que te importan para la UI: `'Sesión de Facebook requerida…'`, `'No se en
 compositor del grupo (¿grupo cerrado/archivado?).'` y `'Los adjuntos no quedaron subidos a
 tiempo en FB; no se publicó…'` (este último **ya no se emite**: el abort se eliminó).
 
-**`--max-seconds` no es un presupuesto global**: se reinicia en cada grupo (`:877`, dentro del
-bucle `for (const [i, groupUrl] of groups.entries())`), y además `execFile` mata el proceso a los
-280 s (`:291`), o sea que ese guard nunca llega a disparar por tiempo. El timeout real es 280 s.
+**`--max-seconds` no es un presupuesto global**: se reinicia en cada grupo (dentro del
+bucle `for (const [i, groupUrl] of groups.entries())`). `groupPublisher` pide
+`--max-seconds=300` y pone un timeout de `execFile` de **330 s**: el guard interno del
+poster (300) salta **antes** que el padre (330), así emite su JSON limpio de
+`Timeout de la operación en el grupo` en vez de que el proceso se mate a mitad y se
+pierda la salida. El timeout real de seguridad es 330 s.
 
 ---
 

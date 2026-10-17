@@ -492,11 +492,26 @@ console.log('\nformato del log: una línea tiene que bastar para auditar el post
     { runId: 'aaaa1111', startedMs: Date.now() - 3000, origen: 'manual', ok: 0, errors: 0, results: [] },
   )).includes('PAUSADO_POR_INTERRUPTOR'));
 
-  ok('marca cuando un post salió SOLO al destino y no al lote', capturar(() => logFinCorrida(
+  // SIN_LOTE solo cuenta los lotes que SE INTENTARON y fallaron. Un lote
+  // 'no-aplicable' (sin imágenes o lote apagado) no es un fallo y no debe meter
+  // ruido en el cierre. Antes el filtro era `lote === 0`, que contaba los dos.
+  ok('marca SIN_LOTE cuando el botón "Añadir grupos" no apareció', capturar(() => logFinCorrida(
     { ok: true },
     { runId: 'bbbb2222', startedMs: Date.now() - 1000, origen: 'agenda', ok: 1, errors: 0,
-      results: [{ group: 'G', ok: true, status: 'published', lote: 0, lote_total: 121 }] },
+      results: [{ group: 'G', ok: true, status: 'published', lote: 0, lote_total: 121, lote_estado: 'sin-boton' }] },
   )).includes('SIN_LOTE=1'));
+
+  ok('marca SIN_LOTE cuando el picker no tildó ningún grupo', capturar(() => logFinCorrida(
+    { ok: true },
+    { runId: 'bbbb2222', startedMs: Date.now() - 1000, origen: 'agenda', ok: 1, errors: 0,
+      results: [{ group: 'G', ok: true, status: 'published', lote: 0, lote_total: 121, lote_estado: 'sin-grupos' }] },
+  )).includes('SIN_LOTE=1'));
+
+  ok('NO mete SIN_LOTE si el lote no aplicaba (sin imágenes o apagado)', !capturar(() => logFinCorrida(
+    { ok: true },
+    { runId: 'bbbb2222', startedMs: Date.now() - 1000, origen: 'agenda', ok: 1, errors: 0,
+      results: [{ group: 'G', ok: true, status: 'published', lote: 0, lote_total: 0, lote_estado: 'no-aplicable' }] },
+  )).includes('SIN_LOTE'));
 
   const fallo = capturar(() => logFinCorrida({ ok: false, error: 'Chrome no disponible' },
     { runId: 'cccc3333', startedMs: Date.now() - 500, origen: 'manual', ok: 0, errors: 0, results: [] }));

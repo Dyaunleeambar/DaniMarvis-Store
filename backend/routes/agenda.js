@@ -158,6 +158,11 @@ router.get('/', (req, res) => {
           notes: x.notes || '',
           causa,
           pista: causa ? CAUSAS[causa] : null,
+          // El post salió pero NO se repartió a los grupos del lote: se guarda
+          // como 'published' (sí se publicó en el grupo destino) con una nota que
+          // empieza con "ATENCIÓN lote:". El panel necesita un flag para marcarlo
+          // visible, no dejar que se pierda entre las notas grises.
+          lote_fallido: x.status === 'published' && /ATENCIÓN lote:/.test(x.notes || ''),
           images: parseImages(x.images),
           variant_text: x.variant_text || '',
           pending_approval: !!x.pending_approval,

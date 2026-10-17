@@ -730,6 +730,12 @@ function spawnPoster({ groupUrl, messageFile, imageFiles, mode, label, debug = f
       '--message-file=' + messageFile,
       '--mode=' + mode,
       '--label=' + label,
+      // 300s < 330s (el timeout de execFile de abajo): así el GUARD interno del
+      // poster salta primero y emite su JSON limpio de "Timeout de la operación",
+      // en vez de que el proceso padre lo mate y se pierda la salida. Antes eran
+      // 300s > 280s, y el padre mataba al hijo antes: quedaba un "Command failed"
+      // sin ninguna pista de qué grupo ni por qué. (Se subió a 330s porque el
+      // poster ahora espera a confirmar el envío antes de cerrar la pestaña.)
       '--max-seconds=300',
       '--debug-port=' + port,
     ];
@@ -741,7 +747,7 @@ function spawnPoster({ groupUrl, messageFile, imageFiles, mode, label, debug = f
       args.push('--lote-n=' + loteN);
       if (loteDesde) args.push('--lote-desde=' + loteDesde);
     }
-    execFile(process.execPath, [POSTER_JS, ...args], { timeout: 280000 }, (err, stdout, stderr) => {
+    execFile(process.execPath, [POSTER_JS, ...args], { timeout: 330000 }, (err, stdout, stderr) => {
       const parsed = parsePosterOutput(stdout, { err, allText: `${stdout || ''}\n${stderr || ''}` });
       // El poster escribe en stderr justo lo que uno necesita para entender un
       // fallo: la línea [SUBMIT] con el botón que encontró (si estaba deshabilitado,
@@ -833,14 +839,38 @@ function notaDiagnostico(result) {
  * Función pura: se testea sin base ni navegador.
  */
 export function notaLote(result) {
-  if (!Array.isArray(result?.lote_grupos)) return '';
-  const grupos = result.lote_grupos.filter(Boolean);
-  const enLista = Number(result.grupos_en_lista) || 0;
-  if (!grupos.length) return ' | lote: NO se tildó ningún grupo extra';
-  // El tope es 240 y no 300 a propósito: `notes` se corta a 500 chars al final y
-  // con 300 el lote se comía la nota de imágenes. El conteo va primero, así que
-  // si trunca, lo que sobrevive es el dato que importa ("salió a 9 grupos").
-  return ` | lote: ${grupos.length}${enLista ? '/' + enLista : ''} grupos [${grupos.join(' | ')}]`.slice(0, 240);
+  const estado = result?.lote_estado;
+  const grupos = Array.isArray(result?.lote_grupos) ? result.lote_grupos.filter(Boolean) : null;
+  const enLista = Number(result?.grupos_en_lista) || 0;
+
+  // Sin `lote_estado` (corridas viejas o error antes de armar el lote) se cae al
+  // comportamiento anterior: se anota el conteo si hubo, y la ausencia de grupos
+  // solo se menciona si el poster sí mandó el array.
+  if (!estado) {
+    if (!Array.isArray(result?.lote_grupos)) return '';
+    if (!grupos.length) return ' | lote: NO se tildó ningún grupo extra';
+    return ` | lote: ${grupos.length}${enLista ? '/' + enLista : ''} grupos [${grupos.join(' | ')}]`.slice(0, 240);
+  }
+
+  if (estado === 'ok' && grupos && grupos.length) {
+    // El tope es 240 y no 300 a propósito: `notes` se corta a 500 chars al final y
+    // con 300 el lote se comía la nota de imágenes. El conteo va primero, así que
+    // si trunca, lo que sobrevive es el dato que importa ("salió a 9 grupos").
+    return ` | lote: ${grupos.length}${enLista ? '/' + enLista : ''} grupos [${grupos.join(' | ')}]`.slice(0, 240);
+  }
+
+  // Se intentó repartir y no se pudo: se avisa fuerte. El post SÍ salió (al grupo
+  // destino), así que el status sigue 'published', pero la nota tiene que dejar
+  // claro que NO se propagó a los N grupos. Sin esto, el 2026-10-16 nueve posts
+  // que solo salieron a un grupo quedaron indistinguibles de un éxito total.
+  if (estado === 'sin-boton') {
+    return ` | ATENCIÓN lote: el botón "Añadir grupos" no apareció; el post salió SOLO en el grupo destino`;
+  }
+  if (estado === 'sin-grupos') {
+    return ` | ATENCIÓN lote: no se pudo tildar ningún grupo${enLista ? ` de ${enLista}` : ''}; el post salió SOLO en el grupo destino`;
+  }
+  // 'no-aplicable': sin imágenes o lote apagado — no meter ruido en la nota.
+  return '';
 }
 
 function updateQueue(item, result, mode) {
@@ -1149,6 +1179,7 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
         // pero el log necesita el dato crudo para no tener que parsear texto.
         lote: Array.isArray(result.lote_grupos) ? result.lote_grupos.length : null,
         lote_total: result.grupos_en_lista || null,
+        lote_estado: result.lote_estado || null,
         warnings: Array.isArray(result.warnings) ? result.warnings : [],
       };
       // El aviso de sesión/Chrome puede aparecer en cualquier ítem: se marca
@@ -1232,7 +1263,11 @@ export function logFinCorrida(r, estado = null) {
     const lote = x.lote === null || x.lote === undefined ? '' : ` (lote ${x.lote}${x.lote_total ? '/' + x.lote_total : ''})`;
     return `${x.group || '?'}:${x.ok ? (x.status === 'prepared' ? 'preparado' : 'ok') : 'FALLÓ'}${lote}`;
   }).join(', ');
-  const sinLote = (c.results || []).filter((x) => x.lote === 0).length;
+  // SIN_LOTE cuenta solo los lotes que SE INTENTARON y fallaron (sin botón o sin
+  // tildar grupos). Un lote 'no-aplicable' (sin imágenes o lote apagado) no es un
+  // fallo: antes entraba por `lote===0` y el log metía ruido con posts que nunca
+  // debían repartirse.
+  const sinLote = (c.results || []).filter((x) => x.lote_estado === 'sin-boton' || x.lote_estado === 'sin-grupos').length;
   console.log(`[publish] FIN    corrida=${String(c.runId).slice(0, 8)} origen=${c.origen || '?'}`
     + ` dur=${mins ? mins + 'm' : ''}${dur % 60}s ok=${c.ok || 0} err=${c.errors || 0}`
     + (r && r.pausado_por_interruptor ? ' PAUSADO_POR_INTERRUPTOR' : '')

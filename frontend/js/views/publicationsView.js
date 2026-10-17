@@ -620,6 +620,7 @@ function destinoHTML(d) {
         ${notas ? '<br>' + escHtml(notas) : ''}
       </div>
       ${d.pending_approval ? '<div class="agenda-destino--aprobacion">Queda esperando al administrador del grupo</div>' : ''}
+      ${d.lote_fallido ? '<div class="agenda-destino--lote">OJO: no se pudo repartir a los grupos del lote; salió solo en este grupo</div>' : ''}
       ${d.pista ? `<div class="agenda-destino-pista"><b>Qué hacer:</b> ${escHtml(d.pista)}</div>` : ''}
       ${imgs}
     </div>

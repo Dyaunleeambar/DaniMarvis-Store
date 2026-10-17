@@ -782,7 +782,7 @@ La cola de publicaciones (`publication_queue`) puede publicarse sola en grupos d
 ### Cómo funciona
 
 1. **Chrome** — `backend/lib/chromeLauncher.js` (`ensureDebugChrome`) garantiza un Chrome con `--remote-debugging-port=9222` y el perfil de `C:\Users\Dani\fb-leave\fb-debug-perfil`. Si el puerto ya responde devuelve `already_running` y **no relanza ni toca nada** (no interfiere con tu Chrome personal ni con el scraper de rankings). Si no, lo arranca y espera hasta 45s.
-2. **Poster** — por cada ítem, `utilidades/fb-ranking/group_poster.js` abre el grupo en una pestaña, escribe el texto, adjunta imágenes y hace clic en Publicar.
+2. **Poster** — por cada ítem, `utilidades/fb-ranking/group_poster.js` abre el grupo en una pestaña, escribe el texto, adjunta imágenes y hace clic en Publicar. Después del clic **espera a que el envío termine de verdad** antes de cerrar la pestaña: el compositor se vacía apenas se hace clic, pero con imágenes Facebook sigue subiendo, y cerrar ahí abortaba el post ("la pestaña se cierra mientras publica").
 3. **Cola** — `updateQueue` marca el ítem como `published`/`prepared`, deja el post en `pending_approval` si el grupo pide aprobación del administrador, y anota el resultado en `notes`.
 4. **Ritmo** — entre posts consecutivos hay una separación aleatoria de 45-135s para simular flujo humano.
 
@@ -819,7 +819,7 @@ La cuenta activa se ve en `GET /api/status` (`account`, `label`, `cuentas[]`, `m
 
 Una corrida no se espera: `POST /run` responde **202** con un `runId` en ~5ms y el trabajo sigue en background. El frontend hace **polling cada 2s** a `/group-publish/status` y dibuja la barra de progreso con fase, grupo actual, publicados y errores.
 
-Motivo: el poster tiene `--max-seconds=300` con timeout de 280s, así que **incluso un solo ítem puede tardar ~4.7 minutos**, y con la separación entre posts una tanda completa mucho más. Antes la ruta esperaba todo eso y `api.js` no tiene timeout, así que el botón quedaba en "Corriendo..." sin saber si coltaba o trabajando.
+Motivo: el poster tiene `--max-seconds=300` con timeout de 330s, así que **incluso un solo ítem puede tardar ~5.5 minutos**, y con la separación entre posts una tanda completa mucho más. Antes la ruta esperaba todo eso y `api.js` no tiene timeout, así que el botón quedaba en "Corriendo..." sin saber si coltaba o trabajando.
 
 `GET /status` incluye `elapsed_s` calculado en el servidor a propósito: el timestamp `started` viene recortado a 19 chars sin la `Z`, así que el browser lo parsearía como hora local (4h desfasado en Venezuela).
 
@@ -872,6 +872,8 @@ Y se ancla al **arranque** de ese intento, no a su `published_at`. No es un deta
 > Con `min_gap_min: 5`, `grupos_por_post: 9` y un tick por minuto, el techo rondan las **10-11 publicaciones por hora** (≈100 interacciones con grupos por hora), no 12: el tick corre cada minuto, así que el intervalo efectivo es de 5 a 6 min según la fase, no 5 clavados. Para 12/h clavadas habría que bajar el gap a 4 y dejar que `max_per_hour` sea el que corta.
 >
 > Es un ritmo agresivo para Facebook y el sistema **no puede detectar** que la plataforma dejó de aceptar envíos en silencio. La señal más barata es ver `SIN_LOTE=1` en el cierre de las corridas, o que los posts salgan a 1 grupo cuando se pidieron 9.
+>
+> Cuando el reparto a los 9 grupos falla (no apareció "Añadir grupos", o el picker quedó abierto), el post **sí sale** al grupo destino pero queda marcado: en el detalle del calendario aparece en rojo **"OJO: no se pudo repartir a los grupos del lote; salió solo en este grupo"**. No es un fallo silencioso.
 
 > **Esto se puso el 2026-10-03 porque no existía.** El día duplicado dejó 190 destinos y el disparador los fue sacando a ~17 por hora, hasta que Facebook dejó de aceptar los envíos sin avisar nada. Los límites se agregan en `publish_config.agenda` y el estado del corte en `publish_config._breaker`.
 
