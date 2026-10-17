@@ -942,4 +942,6 @@ reintento lo duplicaría (Trampa 13).
 
 - [`../README.md`](../README.md) → sección **Publicador automático de grupos** (resumen de
   usuario final) y **API REST** (los endpoints).
+- [`../README.md#pruebas-automáticas`](../README.md#pruebas-automáticas) → cómo correr y qué
+  cubre `npm run check` (incluida la segunda pasada de `check-imports.mjs`).
 - `utilidades/fb-ranking/group_poster.js` → cabecera con el detalle de la sesión de Facebook.

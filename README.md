@@ -22,6 +22,7 @@ Panel de gestión para gestores de ventas que trabajan con importadores de elect
 - [Publicador automático de grupos](#publicador-automático-de-grupos)
 - [Ranking de grupos (Biblioteca de Contenido)](#ranking-de-grupos-biblioteca-de-contenido)
 - [Sistema de Respaldos](#sistema-de-respaldos)
+- [Pruebas automáticas](#pruebas-automáticas)
 - [Flujo de Trabajo](#flujo-de-trabajo)
 - [Personalización](#personalización)
 - [Roadmap](#roadmap)
@@ -983,6 +984,30 @@ GET /api/backup → archivo JSON
 POST /api/backup/restore
 Body: { "providers": [...], "products": [...], "sales": [...], ... }
 ```
+
+---
+
+## Pruebas automáticas
+
+Todo el proyecto se verifica con un solo comando:
+
+```bash
+npm run check
+```
+
+Corre los chequeos **en cadena** y sale con código distinto de 0 si algo no cuadra, así que sirve tal cual en un hook o en CI. Cubre tres frentes:
+
+- **Estático** — `check-imports.mjs`: que cada `import` resuelva, que el módulo exporte lo que se importa, y que no se use una función exportada sin importarla (ver abajo).
+- **Carga real** — `check-carga.mjs`: levanta el grafo real de las vistas del frontend con un DOM mínimo, que es lo que hace el navegador al importarlas.
+- **Comportamiento** — `test-*.mjs`: cada módulo con lógica no trivial tiene su test que importa **el módulo de verdad** (no una copia) y comprueba casos concretos: rotación de grupos, reparto del lote, límites del reloj, transacciones, duplicar el día, técnica de texto, catálogo, etc.
+
+### La trampa que ningún chequeo veía
+
+`node --check` solo parsea, y `check-imports.mjs` validaba que lo **importado** exista... pero ninguno miraba los identificadores que se **usan**. El 2026-10-17, al disparar *Generar catálogo*, saltó `generateCatalogFile is not defined`: la función existía y estaba exportada en `backend/lib/catalogGenerator.js`, pero `server.js` la llamaba sin importarla. Los dos chequeos quedaban verdes y el error solo aparecía al tocar la ruta en caliente. La misma revisión destapó tres hermanos más en `server.js`: `ensureWebp` (subida de imágenes) y `isLegacyPlaintext`/`hashPassword` (login legado).
+
+`check-imports.mjs` ahora tiene una **segunda pasada** (solo `backend`) que detecta funciones exportadas usadas sin importar. Se limita al backend a propósito: en el frontend hay nombres que llegan por HTML (`onclick="closeModal()"`), por `window` o por imports dinámicos, y daría falsos positivos. El escaneo usa un recorrido carácter a carácter para ignorar comentarios y strings, porque un `//` dentro de una URL o un apóstrofo dentro de un template partían las expresiones regulares y se comían código real.
+
+> Regla práctica: si agregás una función con lógica, agregale un `test-*.mjs` y registralo en el `check` de `package.json`. Los tests **importan el módulo real**; cuando algo solo se puede comprobar por texto (por ejemplo, que el poster use tal selector o que una ruta cablee tal función), se acepta una verificación de string en la fuente, pero solo como último recurso.
 
 ---
 
