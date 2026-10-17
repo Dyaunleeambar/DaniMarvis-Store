@@ -6,9 +6,11 @@ import { fileURLToPath } from 'url';
 import { dirname, join, extname } from 'path';
 import { existsSync, mkdirSync, renameSync } from 'fs';
 import { v4 as uuid } from 'uuid';
-import { initDB, getDB, verifyToken, listTables, saveDB, getAuthSecret, verifyPassword, signToken } from './db/database.js';
+import { initDB, getDB, verifyToken, listTables, saveDB, getAuthSecret, verifyPassword, signToken, hashPassword, isLegacyPlaintext } from './db/database.js';
 import { mergePublishConfig, MASCARA, pareceSecretoValido } from './lib/settingsMerge.js';
 import { rescheduleGroupPublish, groupPublishSchedulerState, startGroupPublishScheduler, stopGroupPublishScheduler, startAgendaScheduler, rescheduleAgenda, agendaSchedulerState } from './lib/groupPublisher.js';
+import { ensureWebp } from './lib/imageUtils.js';
+import { generateCatalogFile } from './lib/catalogGenerator.js';
 
 import { reconciliarApiKey, respaldarApiKey } from './lib/secrets.js';
 // Schedulers opcionales: solo se importan si existen, para evitar romper el start.

@@ -77,7 +77,105 @@ for (const file of archivos) {
   }
 }
 
+// --- Segunda pasada: se USA una función exportada sin importarla -------------
+// La pasada de arriba valida que lo IMPORTADO exista, pero no mira los
+// identificadores que se USAN. Ese fue el bug del 2026-10-17: `server.js` llamaba
+// `generateCatalogFile(...)` en la ruta /api/generate-catalog sin haberla
+// importado. La función existía y estaba exportada, así que `node --check` y la
+// primera pasada quedaron verdes; el error ("generateCatalogFile is not defined")
+// solo aparecía al tocar la ruta en caliente. Acá se caza ese caso.
+//
+// Se limita a `backend` a propósito: en el frontend los nombres llegan por HTML
+// (`onclick="closeModal()"`), por imports dinámicos o por `window`, y daría
+// falsos positivos. Los comentarios y los strings se reemplazan por espacios
+// antes de buscar, para que un `foo()` mencionado en un comentario no cuente.
+// Se hace con un recorrido carácter a carácter (y no con regex) porque un `//`
+// dentro de una URL (`http://…`) o un apóstrofo dentro de un template partían
+// las expresiones regulares y se comían código real.
+const esBackend = (f) => /^backend[\\/]/.test(f);
+
+function soloCodigo(src) {
+  let out = '';
+  let i = 0;
+  const n = src.length;
+  const blanco = (c) => (c === '\n' ? '\n' : ' ');
+  while (i < n) {
+    const c = src[i], d = src[i + 1];
+    if (c === '/' && d === '/') {
+      while (i < n && src[i] !== '\n') { out += ' '; i++; }
+      continue;
+    }
+    if (c === '/' && d === '*') {
+      out += '  '; i += 2;
+      while (i < n && !(src[i] === '*' && src[i + 1] === '/')) { out += blanco(src[i]); i++; }
+      if (i < n) { out += '  '; i += 2; }
+      continue;
+    }
+    if (c === "'" || c === '"' || c === '`') {
+      const q = c;
+      out += ' '; i++;
+      while (i < n) {
+        if (src[i] === '\\') { out += '  '; i += 2; continue; }
+        if (src[i] === q) { out += ' '; i++; break; }
+        out += blanco(src[i]); i++;
+      }
+      continue;
+    }
+    out += c; i++;
+  }
+  return out;
+}
+
+const expUnico = new Map();
+for (const f of archivos) {
+  if (!esBackend(f)) continue;
+  for (const n of cacheExport(f)) {
+    if (!expUnico.has(n)) expUnico.set(n, []);
+    expUnico.get(n).push(f);
+  }
+}
+
+for (const f of archivos) {
+  if (!esBackend(f)) continue;
+  const src = fs.readFileSync(path.join(RAIZ, f), 'utf8');
+  const cuerpo = soloCodigo(src);
+
+  const libres = new Set();
+  // imports estáticos (nombres, alias y default)
+  for (const m of src.matchAll(/import\s+([^'"]+?)\s+from\s+['"]/g)) {
+    const cl = m[1];
+    for (const br of cl.matchAll(/\{([^}]*)\}/g)) {
+      for (const p of br[1].split(',')) {
+        const orig = p.trim().split(/\s+as\s+/)[0].trim();
+        const alias = p.trim().split(/\s+as\s+/).pop().trim();
+        if (orig) libres.add(orig);
+        if (alias) libres.add(alias);
+      }
+    }
+    const def = cl.replace(/\{[^}]*\}/, '').replace(/^\s*,|,\s*$/g, '').trim();
+    if (def && !def.startsWith('*')) libres.add(def);
+  }
+  // imports dinámicos: traen los exports del módulo
+  for (const m of src.matchAll(/import\(\s*['"]([^'"]+)['"]\s*\)/g)) {
+    const esp = m[1];
+    if (!esp.startsWith('.')) continue;
+    const full = path.resolve(path.dirname(path.join(RAIZ, f)), esp);
+    if (!fs.existsSync(full)) continue;
+    const dest = path.relative(RAIZ, full).replace(/\\/g, '/');
+    for (const n of cacheExport(dest)) libres.add(n);
+  }
+  // declaraciones locales
+  for (const m of src.matchAll(/\b(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/g)) libres.add(m[1]);
+
+  for (const [nombre, duenos] of expUnico) {
+    if (duenos.length !== 1 || duenos[0] === f) continue;
+    if (libres.has(nombre)) continue;
+    const re = new RegExp('(?<![\\w.$])' + nombre + '\\s*\\(');
+    if (re.test(cuerpo)) err(`${f}: usa ${nombre}() (exportada por ${duenos[0]}) sin importarla`);
+  }
+}
+
 console.log(fallos
-  ? `\n${fallos} import(s) roto(s) en ${archivos.length} archivos`
+  ? `\n${fallos} problema(s) de import en ${archivos.length} archivos`
   : `\nOK: los imports de ${archivos.length} archivos resuelven`);
 process.exit(fallos ? 1 : 0);
