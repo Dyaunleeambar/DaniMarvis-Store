@@ -26,6 +26,7 @@ const fs = require('fs');
 const path = require('path');
 const { elegirIndicesLote } = require('./lote_grupos.js');
 const { pistaSinCompositor, decidirEnvio } = require('./diagnostico_fb.js');
+const { METODOS_TEXTO, normMetodo, metricasDeInfo, verificarTexto, saltosPerdidos } = require('./metodo_texto.js');
 
 const args = process.argv.slice(2);
 function val(list, flag) {
@@ -49,6 +50,17 @@ const DEBUG = !!val(args, '--debug');
 // apunta al mismo grupo.
 const LOTE_N = parseInt(val(args, '--lote-n') || '0', 10) || 0;
 const LOTE_DESDE = val(args, '--lote-desde') || '';
+
+// Técnica para meter el texto en el compositor. Configurable desde Ajustes
+// (publish_config.metodo_texto) para poder comparar en publicaciones REALES,
+// porque la fidelidad al publicar no se ve en el compositor:
+//   teclado     tipeo char a char (lo de siempre, lento pero probado)
+//   insertText  CDP Input.insertText (1 llamada; deja UN solo <p> con \n)
+//   ctrlv       portapapeles + Ctrl+V real (pisa el portapapeles del sistema)
+//   pasteEvent  evento paste sintético con DataTransfer (sin portapapeles)
+// Si la técnica elegida no deja el texto completo, se cae a `teclado` (nunca
+// peor que antes) y se registra el fallo.
+const METODO_TEXTO = (val(args, '--metodo-texto') || 'teclado').trim();
 
 // Puerto de depuración del Chrome de ESTA cuenta. A usa 9222 (default); B usa
 // otro (p.ej. 9223). Se resuelve por argumento y, si no viene, por entorno. Así
@@ -244,6 +256,146 @@ function composerLenOf(handle) {
   if (!handle) return Promise.resolve(0);
   return handle.evaluate((el) => (el.innerText || '').trim().length).catch(() => 0);
 }
+
+// --------------------------------------------------- técnicas de pegado ---
+// Enfoque común: clic físico (foco real) + focus() del handle.
+async function enfocarCompositor(page, handle, coords) {
+  if (coords) await page.mouse.click(coords.x, coords.y);
+  await sleep(300);
+  if (handle) await handle.focus().catch(() => {});
+  await sleep(250);
+}
+
+// A) CDP Input.insertText: una sola llamada, sin eventos de teclado y sin
+// portapapeles. Rápido (~1s). En Lexical deja TODO en un único <p> con los \n
+// como texto literal (se ve bien en el compositor por white-space: pre-wrap,
+// pero hay que comprobar cómo sale el post publicado).
+async function insertTextRapido(page, handle, coords) {
+  const t = String(text || '');
+  if (!t) return 'vacio';
+  await enfocarCompositor(page, handle, coords);
+  await page.keyboard.sendCharacter(t);
+  await sleep(500);
+  return 'insertText';
+}
+
+// C) Evento `paste` sintético con DataTransfer: mismo resultado que Ctrl+V real
+// (Lexical reparte el texto en <p>) pero SIN tocar el portapapeles del sistema,
+// así que no hay riesgo de contaminación.
+async function pegarEventoSintetico(page, handle, coords) {
+  const t = String(text || '');
+  if (!t) return 'vacio';
+  await enfocarCompositor(page, handle, coords);
+  const r = await handle.evaluate((el, s) => {
+    try {
+      const dt = new DataTransfer();
+      dt.setData('text/plain', s);
+      const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true });
+      el.dispatchEvent(ev);
+      return true;
+    } catch (e) { return 'err:' + e.message; }
+  }, t).catch((e) => 'err:' + e.message);
+  await sleep(500);
+  return r === true ? 'pasteEvent' : 'fail';
+}
+
+// B) Ctrl+V real: escribe el portapapeles del sistema y pega. Tiene una guarda
+// anti-contaminación: si entre la escritura y el Ctrl+V el portapapeles cambió
+// (el usuario copió otra cosa), NO se pega y se cae a teclado. Aun así, el
+// portapapeles queda pisado por la corrida.
+async function pegarConClipboard(page, handle, coords) {
+  const t = String(text || '');
+  if (!t) return 'vacio';
+  await enfocarCompositor(page, handle, coords);
+  const escrito = await page.evaluate(async (s) => {
+    try { await navigator.clipboard.writeText(s); return true; } catch (e) { return 'err:' + e.message; }
+  }, t).catch((e) => 'err:' + e.message);
+  if (escrito !== true) {
+    console.log(JSON.stringify({ event: 'warn', status: 'warn', mode: MODE, message: `portapapeles: no se pudo escribir (${escrito})` }));
+    return 'fail';
+  }
+  // Guarda: releer y comparar (Windows convierte \n -> \r\n, hay que normalizar)
+  const leido = await page.evaluate(async () => {
+    try { return await navigator.clipboard.readText(); } catch (e) { return 'err:' + e.message; }
+  }).catch(() => '');
+  const normCL = (s) => String(s || '').replace(/\r\n/g, '\n');
+  if (normCL(leido) !== normCL(t)) {
+    console.log(JSON.stringify({ event: 'warn', status: 'warn', mode: MODE, message: 'portapapeles contaminado: el contenido no coincide con el texto a pegar. Se evita pegar.' }));
+    return 'fail';
+  }
+  await page.keyboard.down('Control');
+  await page.keyboard.press('KeyV');
+  await page.keyboard.up('Control');
+  await sleep(500);
+  return 'ctrlv';
+}
+
+async function ejecutarMetodo(page, handle, coords, metodo) {
+  switch (metodo) {
+    case 'insertText': return insertTextRapido(page, handle, coords);
+    case 'ctrlv': return pegarConClipboard(page, handle, coords);
+    case 'pasteEvent': return pegarEventoSintetico(page, handle, coords);
+    default: return typeText(page, handle, coords);
+  }
+}
+
+// Métricas de fidelidad del compositor. Lee el DOM y delega la matemática en
+// metodo_texto.js (función pura, testeable sin navegador).
+async function composerMetrics(handle, sourceText) {
+  const info = handle ? await handle.evaluate((el) => {
+    let bloques = 0;
+    for (const c of el.children) if (/^(P|DIV|LI|H[1-6])$/.test(c.tagName)) bloques++;
+    let nlTexto = 0;
+    const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let n;
+    while ((n = w.nextNode())) nlTexto += (n.nodeValue.match(/\n/g) || []).length;
+    return { len: (el.innerText || '').trim().length, bloques, nlTexto };
+  }).catch(() => ({ len: 0, bloques: 0, nlTexto: 0 })) : { len: 0, bloques: 0, nlTexto: 0 };
+  return metricasDeInfo(info, sourceText);
+}
+
+// Aviso de saltos perdidos (incluye el caso silencioso de 0 saltos).
+function avisarSaltos(m) {
+  const per = saltosPerdidos(m);
+  if (per) {
+    console.log(JSON.stringify({ event: 'warn', status: 'warn', mode: MODE, message: `saltos de linea: ${per.gotBreaks}/${per.breaks} — revisar texto pegado` }));
+  }
+}
+
+// Línea de métricas por post (no es terminal: parsePosterOutput la ignora).
+function emitirMetricas(p) {
+  console.log(JSON.stringify({
+    event: 'metodo', status: 'metodo', mode: MODE, group_url: p.groupUrl || '',
+    metodo_elegido: METODO_TEXTO, metodo: p.metodo, metodo_fallo: p.metodo_fallo || null,
+    ms: p.ms, len: p.len, bloques: p.bloques, lineas: p.lineas, lineas_src: p.lineasSrc,
+  }));
+}
+
+// Dispatcher: aplica la técnica elegida, verifica fidelidad y, si falla, cae a
+// `teclado` (registrando el fallo). Devuelve el resultado + métricas.
+async function ponerTexto(page, handle, coords, metodoElegido, groupUrl = '') {
+  const elegido = normMetodo(metodoElegido);
+  const t0 = Date.now();
+  let usado = elegido;
+  await ejecutarMetodo(page, handle, coords, elegido);
+  let metrics = await composerMetrics(handle, text);
+  let ok = verificarTexto(metrics);
+
+  let metodoFallo = null;
+  if (!ok && elegido !== 'teclado') {
+    metodoFallo = elegido;
+    await clearComposer(page, coords);
+    usado = 'teclado';
+    await ejecutarMetodo(page, handle, coords, 'teclado');
+    metrics = await composerMetrics(handle, text);
+    ok = verificarTexto(metrics);
+    console.log(JSON.stringify({ event: 'metodo-fallo', status: 'warn', mode: MODE, group_url: groupUrl, metodo_fallo: metodoFallo }));
+  }
+
+  if (ok) avisarSaltos(metrics);
+  return { ok, metodo: usado, metodo_fallo: metodoFallo, ms: Date.now() - t0, ...metrics, groupUrl };
+}
+
 
 // Miniaturas realmente adjuntas al compositor. FB envuelve los adjuntos en un
 // contenedor role="group" aria-label="Contenido multimedia adjunto" (o el
@@ -1469,24 +1621,20 @@ async function processGroup(browser, groupUrl, label) {
     await sleep(rand(800, 1400));
 
     const composerHandle = await foundComposerHandle(page);
-    const typing = await typeText(page, composerHandle, composer);
-    let lenBefore = await composerLenOf(composerHandle);
-    const expected = Math.max(8, String(text || '').length - 12);
-    if (lenBefore < expected) {
-      // el texto no quedó completo: limpiar y reintentar una vez por teclado
+    // Técnica de pegado configurable (Ajustes > Publicaciones). ponerTexto ya
+    // cae a `teclado` si la técnica elegida no deja el texto; acá queda un
+    // reintento extra por si el fallo fue transitorio.
+    let puesto = await ponerTexto(page, composerHandle, composer, METODO_TEXTO, groupUrl);
+    emitirMetricas(puesto);
+    if (!puesto.ok) {
       await clearComposer(page, composer);
-      const typing2 = await typeText(page, composerHandle, composer);
-      lenBefore = await composerLenOf(composerHandle);
-      const ok2 = typing2 !== 'fail' && lenBefore >= expected;
-      if (!ok2 && typing === 'fail') {
-        return out({ group_url: groupUrl, ok: false, status: 'error', message: 'El texto no quedó en el compositor.' });
-      }
-      if (!ok2 && typing2 === 'fail') {
-        return out({ group_url: groupUrl, ok: false, status: 'error', message: 'El texto no quedó en el compositor (reintento fallido).' });
-      }
+      puesto = await ponerTexto(page, composerHandle, composer, METODO_TEXTO, groupUrl);
+      emitirMetricas(puesto);
     }
-    if (lenBefore === 0) {
-      return out({ group_url: groupUrl, ok: false, status: 'error', message: 'El texto no quedó en el compositor.' });
+    const lenBefore = puesto.len;
+    if (!puesto.ok || lenBefore === 0) {
+      const detalle = puesto.metodo_fallo ? ` (la técnica ${puesto.metodo_fallo} falló)` : '';
+      return out({ group_url: groupUrl, ok: false, status: 'error', message: `El texto no quedó en el compositor.${detalle}`, metodo_texto: puesto.metodo, metodo_fallo: puesto.metodo_fallo || '' });
     }
     const imgs = await attachImages(page);
     const mediaCtx = await composerMediaContext(page);
@@ -1532,10 +1680,10 @@ async function processGroup(browser, groupUrl, label) {
       const aviso = imgs.images > 0 && imgs.attached === 0
         ? ` ATENCIÓN: se pidieron ${imgs.images} imagen(es) y NO se adjuntó ninguna.`
         : '';
-      return out({ group_url: groupUrl, ok: true, status: 'prepared', message: 'Post preparado en pestaña (revisar y publicar manualmente).' + aviso + loteTexto, imagen_adjunta: imgs.attached, imagenes_pedidas: imgs.images, texto_digits: lenBefore, ...loteCampos });
+      return out({ group_url: groupUrl, ok: true, status: 'prepared', message: 'Post preparado en pestaña (revisar y publicar manualmente).' + aviso + loteTexto, imagen_adjunta: imgs.attached, imagenes_pedidas: imgs.images, texto_digits: lenBefore, metodo_texto: puesto.metodo, ...loteCampos });
     }
     if (MODE === 'dry-run') {
-      return out({ group_url: groupUrl, ok: true, status: 'dry-run', message: `Simulación ok: texto ${lenBefore} chars, ${imgs.images} imagen(es).${loteTexto}`, texto_digits: lenBefore, imagen_adjunta: imgs.attached, ...loteCampos });
+      return out({ group_url: groupUrl, ok: true, status: 'dry-run', message: `Simulación ok: texto ${lenBefore} chars, ${imgs.images} imagen(es).${loteTexto}`, texto_digits: lenBefore, imagen_adjunta: imgs.attached, metodo_texto: puesto.metodo, ...loteCampos });
     }
 
     // Damos a FB su tiempo para terminar de procesar los adjuntos y PUBLICAMOS
@@ -1652,7 +1800,7 @@ async function processGroup(browser, groupUrl, label) {
         return out({ group_url: groupUrl, ok: true, status: 'published',
           message: 'Publicado (el compositor se vació, la primera lectura llegó tarde).' + loteTexto,
           post_url: '', imagen_adjunta: imgs.attached, imagenes_pedidas: imgs.images,
-          adjuntos_confirmados: confirmados ? 1 : 0, texto_digits: lenBefore, toral_ms: Date.now() - t0, ...loteCampos });
+          adjuntos_confirmados: confirmados ? 1 : 0, texto_digits: lenBefore, metodo_texto: puesto.metodo, toral_ms: Date.now() - t0, ...loteCampos });
       }
       const porQuien = diag.bloqueo
         ? ` FB mostró un aviso: "${diag.bloqueo}".`
@@ -1737,6 +1885,7 @@ async function processGroup(browser, groupUrl, label) {
       imagenes_pedidas: imgs.images,
       adjuntos_confirmados: confirmados ? 1 : 0,
       texto_digits: lenBefore,
+      metodo_texto: puesto.metodo,
       requiere_aprobacion: needsApproval ? 1 : 0,
       toral_ms: Date.now() - t0,
     });
@@ -1752,6 +1901,7 @@ async function processGroup(browser, groupUrl, label) {
   console.log('==============================================');
   console.log(`  Group poster | mode=${MODE} | grupos: ${groups.length}`);
   console.log(`  Mensaje: ${text.length} chars | Imágenes: ${images.length}`);
+  console.log(`  Técnica de texto: ${METODOS_TEXTO.includes(METODO_TEXTO) ? METODO_TEXTO : 'teclado (inválida: ' + METODO_TEXTO + ')'}`);
   console.log('==============================================');
 
   if (!groups.length) {
@@ -1765,6 +1915,15 @@ async function processGroup(browser, groupUrl, label) {
   } catch (e) {
     console.log('ERROR: No se pudo conectar a Chrome en el puerto 9222: ' + e.message);
     process.exit(1);
+  }
+
+  // Permisos de portapapeles para la técnica `ctrlv` (no hacen nada si se usa
+  // otra técnica). Sin esto, navigator.clipboard.writeText falla por falta de
+  // permiso y la técnica B caería siempre a teclado.
+  try {
+    await browser.defaultBrowserContext().overridePermissions('https://www.facebook.com', ['clipboard-read', 'clipboard-write', 'clipboard-sanitized-write']);
+  } catch (e) {
+    console.log('AVISO: no se pudieron conceder permisos de portapapeles: ' + e.message);
   }
 
   for (const [i, groupUrl] of groups.entries()) {

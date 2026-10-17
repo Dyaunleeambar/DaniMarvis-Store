@@ -569,6 +569,7 @@ Se invoca como proceso hijo (`groupPublisher.js:279-294`):
 ```
 node group_poster.js --no-sandbox --groups=<url> --message-file=<path>
                      --mode=publish|prepare --label=<nombre> --max-seconds=300
+                     [--metodo-texto=teclado|insertText|ctrlv|pasteEvent]
                      [--images=a;b;c] [--debug=1]
 ```
 
@@ -592,6 +593,7 @@ Claves del resultado exitoso (`group_poster.js:836-845`):
 | `grupos_en_lista` | Total de grupos que el picker tenía cargados |
 | `lote_estado` | `ok` \| `sin-boton` \| `sin-grupos` \| `no-aplicable`. Gobierna `notaLote()` |
 | `texto_digits` | Longitud del texto que quedó en el compositor |
+| `metodo_texto` | Técnica con la que se metió el texto (`teclado`\|`insertText`\|`ctrlv`\|`pasteEvent`) |
 | `requiere_aprobacion` | `1`/`0`, busca 3 frases de FB en el body (`:705-714`) |
 | `toral_ms` | Duración. **El typo es real** (`:849`), no `total_ms` |
 
@@ -645,6 +647,54 @@ bucle `for (const [i, groupUrl] of groups.entries())`). `groupPublisher` pide
 poster (300) salta **antes** que el padre (330), así emite su JSON limpio de
 `Timeout de la operación en el grupo` en vez de que el proceso se mate a mitad y se
 pierda la salida. El timeout real de seguridad es 330 s.
+
+---
+
+## Técnica para meter el texto
+
+El compositor es un editor **Lexical**: no acepta `value`, hay que "escribirle". El `teclado`
+lo hacía char a char (`Keyboard.type`, 12 ms + un Enter por línea), y en el post más largo
+(161 líneas, ~2.8 K chars) tardaba **hasta 93 s**; eso se come un tercio del presupuesto de
+300 s por grupo y alimenta los fallos `Protocol error (Input.dispatchKeyEvent): Target closed`
+y `Attempted to use detached Frame` (cada tecla es un evento más que puede morir si la pestaña
+se cae). Por eso la técnica se hizo **configurable** (`publish_config.metodo_texto`), con
+`teclado` como default para no cambiar nada hasta probar en publicaciones reales.
+
+| Técnica | Implementación | Post largo | Estructura en el editor |
+|---|---|---|---|
+| `teclado` | `Keyboard.type` + Enter por línea | ~21 s / hasta 93 s | muchos `<p>` |
+| `insertText` | `Input.insertText` con todo el texto | ~1 s | **un `<p>`** con `\n` literales |
+| `ctrlv` | `navigator.clipboard.writeText` + **Ctrl+V** real | ~1 s | muchos `<p>` |
+| `pasteEvent` | `ClipboardEvent('paste')` sintético con `DataTransfer` | ~1 s | muchos `<p>` (igual a Ctrl+V) |
+
+Medido el 2026-10-16 en un grupo real, **sin publicar** (`scripts/experimento-pegar.mjs`):
+
+- `insertText` es **exacto** en `innerText` pero cambia la estructura a un solo `<p>`;
+  no está medido si Facebook respeta esos `\n` al publicar → no es el principal.
+- `ctrlv` y `pasteEvent` dejan **el mismo DOM** (muchos `<p>`, igual que producción). La
+  diferencia es que `ctrlv` usa el **portapapeles del sistema**: se probó pisarlo a mitad y el
+  compositor recibió **solo 59 chars de otro texto** (0 saltos, 0 emojis). La contaminación es
+  real y medible.
+- **`pasteEvent`** da el mismo resultado que Ctrl+V real, en ~1 s, **sin tocar el portapapeles**
+  → es la técnica recomendada para probar.
+
+**Guarda anti-contaminación (`ctrlv`)**: `pegarConClipboard` escribe el portapapeles, lo
+**relee** (`navigator.clipboard.readText`) normalizando `\r\n` (Windows convierte `\n`→`\r\n`,
+`leidoLen` 755 vs 730), y si **no coincide** no pega y devuelve `fail`. Así un post nunca sale
+con texto de otro lado.
+
+**Verificación compartida** (vale para las 4 técnicas): `composerMetrics()` lee el DOM
+(`len` = `innerText`; `bloques` = hijos `<p>`/`<div>`; `nlTexto` = `\n` en nodos de texto) y la
+matemática pura vive en `utilidades/fb-ranking/metodo_texto.js`:
+`metricasDeInfo` (líneas = `max(bloques, nlTexto+1)`, así `insertText` se mide bien),
+`verificarTexto` (texto completo, tolera −1 por la línea final en blanco) y `saltosPerdidos`.
+La verificación de saltos **incluye el caso de 0 saltos**: antes solo avisaba si `gotBreaks > 0`,
+así que el peor caso (todo en un bloque) pasaba en silencio.
+
+Si la técnica elegida no dejó el texto, el poster **cae a `teclado`** (`event: metodo-fallo`) y,
+si tampoco, es error. La técnica usada viaja en el resultado (`metodo_texto`) y en un
+`event: metodo` por post (con ms y líneas) para comparar corridas; esa línea **no** es un
+resultado terminal, `parsePosterOutput()` la ignora.
 
 ---
 

@@ -128,6 +128,41 @@ function esc(v) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+/**
+ * Sección de Ajustes con la técnica de pegado del texto. Se puede elegir para
+ * probar en publicaciones reales cuál funciona mejor: la fidelidad al publicar
+ * no se ve en el compositor, así que hay que compararla en el muro.
+ */
+function metodoTextoCardHTML(METODO) {
+  return `
+      <div class="card" style="margin-top:16px">
+        <h3 style="margin:0 0 4px">Técnica para poner el texto</h3>
+        <p style="margin:0 0 12px;font-size:.82rem;color:var(--text-secondary)">
+          Cómo se escribe el texto en el compositor. Si la técnica elegida falla, el publicador
+          cae solo al <strong>teclado</strong> (nunca queda peor que antes) y lo deja anotado.
+        </p>
+        <form id="metodo-texto-form">
+          <div class="form-group">
+            <label>Técnica</label>
+            <select name="mt_metodo" class="form-control">
+              <option value="teclado" ${METODO === 'teclado' ? 'selected' : ''}>Teclado (actual) — tipea caracter a caracter, probado pero lento</option>
+              <option value="insertText" ${METODO === 'insertText' ? 'selected' : ''}>A · Inserción directa (Input.insertText) — rápido; deja el texto en un solo bloque</option>
+              <option value="ctrlv" ${METODO === 'ctrlv' ? 'selected' : ''}>B · Portapapeles + Ctrl+V — pegado real; pisa tu portapapeles</option>
+              <option value="pasteEvent" ${METODO === 'pasteEvent' ? 'selected' : ''}>C · Pegado sintético — como B pero sin usar el portapapeles (recomendado)</option>
+            </select>
+          </div>
+          <p id="mt-aviso" style="display:none;margin:0 0 12px;font-size:.8rem;color:var(--warning,#e8a300)">
+            Ojo con la técnica B: escribe el portapapeles del sistema en cada post. Si copiás algo
+            mientras corre, el pegado puede tomar ese texto ajeno (hay una guarda que suele detectarlo,
+            pero no es infalible).
+          </p>
+          <div class="form-actions" style="margin-top:8px">
+            <button type="submit" class="btn btn--primary">Guardar técnica</button>
+          </div>
+        </form>
+      </div>`;
+}
+
 function renderPage(container, settings, categories, providerStyles, status) {
   const pc = settings.publish_config || {};
   const template = pc.template || '';
@@ -159,6 +194,11 @@ function renderPage(container, settings, categories, providerStyles, status) {
     A: pintarCuenta('A', savedCuentas.A, efectivas),
     B: pintarCuenta('B', savedCuentas.B, efectivas),
   };
+
+  // Técnica de pegado del texto (publish_config.metodo_texto). Cualquier valor
+  // raro cae a 'teclado', igual que en el backend.
+  const METODO = ['teclado', 'insertText', 'ctrlv', 'pasteEvent'].includes(pc.metodo_texto)
+    ? pc.metodo_texto : 'teclado';
 
   container.innerHTML = `
     <div class="page">
@@ -488,6 +528,8 @@ function renderPage(container, settings, categories, providerStyles, status) {
 
       ${cuentasCardHTML(CUENTAS)}
 
+      ${metodoTextoCardHTML(METODO)}
+
       <div class="card" style="margin-top:16px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px">
           <div>
@@ -727,6 +769,32 @@ function renderPage(container, settings, categories, providerStyles, status) {
       showToast(err.message, 'error');
     }
   });
+
+  // Técnica de pegado del texto: se manda SOLO `metodo_texto`, y el merge del
+  // servidor lo fusiona sobre lo ya guardado (no toca cuentas, plantilla, IA ni
+  // agenda, así que no rearma ningún temporizador).
+  const mtForm = document.getElementById('metodo-texto-form');
+  if (mtForm) {
+    const sel = mtForm.querySelector('select[name="mt_metodo"]');
+    const aviso = document.getElementById('mt-aviso');
+    const pintarAviso = () => { if (aviso) aviso.style.display = sel.value === 'ctrlv' ? 'block' : 'none'; };
+    sel.addEventListener('change', pintarAviso);
+    pintarAviso();
+    mtForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const metodo_texto = ['teclado', 'insertText', 'ctrlv', 'pasteEvent'].includes(sel.value) ? sel.value : 'teclado';
+      try {
+        const res = await api.updateSettings({
+          exchange_rate: currentSettings?.exchange_rate || settings?.exchange_rate || 61000,
+          publish_config: { metodo_texto },
+        });
+        currentSettings = res;
+        showToast('Técnica de texto guardada', 'success');
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+  }
 
   document.getElementById('btn-add-category')?.addEventListener('click', () => openCategoryForm());
   container.querySelectorAll('.btn-edit-category').forEach(btn => {

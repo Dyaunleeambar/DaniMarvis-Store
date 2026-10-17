@@ -815,6 +815,27 @@ Defaults por cuenta (`backend/lib/accountConfig.js`, `ACCOUNT_DEFAULTS`):
 
 La cuenta activa se ve en `GET /api/status` (`account`, `label`, `cuentas[]`, `modo`) y en los modales de **Distribuir en el día** y **Duplicar día a otro** (rótulo "Cuenta …").
 
+### Cómo se mete el texto (técnica configurable)
+
+El compositor de Facebook es un editor **Lexical** que no acepta un `value`: hay que "escribirle" el texto de alguna forma. La técnica se elige en **Ajustes → "Técnica de texto"** (`publish_config.metodo_texto`, por defecto `teclado`) y se aplica **por corrida**, sin reiniciar.
+
+| Técnica | Cómo | Tiempo típico (post largo) | Estructura que deja |
+|---------|------|---------------------------|---------------------|
+| `teclado` (default) | `Keyboard.type` char a char + un Enter por línea | **~21 s / hasta 93 s** en el post más largo | muchos `<p>` (uno por línea) |
+| `insertText` | `Input.insertText` con el texto completo de una vez | ~1 s | **un solo `<p>`** con `\n` literales |
+| `ctrlv` | Escribe el portapapeles y pulsa **Ctrl+V** real | ~1 s | muchos `<p>` |
+| `pasteEvent` | Dispara un evento `paste` **sintético** con `DataTransfer` | ~1 s | muchos `<p>` (idéntico a Ctrl+V) |
+
+Motivo de que exista: el `teclado` tarda hasta 93 s en un solo post, lo que se come un tercio del presupuesto de 300 s por grupo y alimenta los fallos `Protocol error (Input.dispatchKeyEvent): Target closed` y `Attempted to use detached Frame` (menos eventos de teclado = menos chances de que se caiga la pestaña a mitad).
+
+Se midió en un grupo real (06-10-2026, sin publicar) y se concluyó:
+
+- **`insertText` es exacto** en `innerText` pero cambia la estructura (un solo `<p>` con `\n`); **no se sabe todavía si Facebook respeta esos saltos al publicar**, así que no es el principal.
+- **`ctrlv` y `pasteEvent` dejan el MISMO DOM** (muchos `<p>`, igual que producción), pero `ctrlv` **comparte el portapapeles del sistema**: se probó a propósito con otro texto y el compositor recibió **solo 59 caracteres ajenos** (la contaminación es real). Por eso el poster **relee el portapapeles después de escribirlo y aborta si no coincide** (`clipboardOk`).
+- **`pasteEvent` da el mismo resultado que Ctrl+V real, en ~1 s, y NO toca el portapapeles** → es la técnica recomendada para probar.
+
+El poster aplica la técnica y **verifica el compositor** (texto completo y saltos presentes) con `metricasDeInfo`/`verificarTexto`/`saltosPerdidos` (`utilidades/fb-ranking/metodo_texto.js`). Si la técnica elegida no dejó el texto, **cae a `teclado`** y lo deja anotado (`event: metodo-fallo`); si tampoco, es error. La técnica usada viaja en el resultado (`metodo_texto`) y en un `event: metodo` por post (con milisegundos y líneas) para poder comparar corridas.
+
 ### Corridas asíncronas
 
 Una corrida no se espera: `POST /run` responde **202** con un `runId` en ~5ms y el trabajo sigue en background. El frontend hace **polling cada 2s** a `/group-publish/status` y dibuja la barra de progreso con fase, grupo actual, publicados y errores.

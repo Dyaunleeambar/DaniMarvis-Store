@@ -74,6 +74,23 @@ export const DEFAULT_MASTER = {
   on: true,
 };
 
+// Técnica con la que el poster mete el texto en el compositor. Configurable en
+// Ajustes > Publicaciones para poder comparar con publicaciones reales. El
+// default `teclado` mantiene el comportamiento probado: nada cambia hasta que
+// el usuario elija otra.
+//
+// Esta lista ESPEJA `METODOS_TEXTO` de utilidades/fb-ranking/metodo_texto.js
+// (el poster es CJS y no comparte scope con este backend ESM). Si se agrega una
+// técnica, hay que sumarla acá, en metodo_texto.js y en el <select> de Ajustes.
+export const METODOS_TEXTO = ['teclado', 'insertText', 'ctrlv', 'pasteEvent'];
+export const DEFAULT_METODO_TEXTO = 'teclado';
+
+/** Elige la técnica a partir de la config ya parseada. Función pura (testeable). */
+export function metodoTextoDeConfig(pc) {
+  const metodo = String((pc && pc.metodo_texto) || '').trim();
+  return METODOS_TEXTO.includes(metodo) ? metodo : DEFAULT_METODO_TEXTO;
+}
+
 let running = false;
 let lastResult = null;
 // Progreso en vivo de la corrida en curso. Las rutas ya no esperan al run (el
@@ -181,6 +198,19 @@ export function getAgendaConfig() {
   cfg.breaker_failures = Math.max(1, Math.min(20, Number(cfg.breaker_failures) || DEFAULT_AGENDA.breaker_failures));
   cfg.breaker_cooldown_min = Math.max(5, Math.min(1440, Number(cfg.breaker_cooldown_min) || DEFAULT_AGENDA.breaker_cooldown_min));
   return cfg;
+}
+
+/**
+ * Técnica de pegado de texto elegida en Ajustes (publish_config.metodo_texto).
+ * Cualquier valor que no sea una técnica conocida cae a `teclado`: así una
+ * config corrupta no rompe el publicador, solo lo deja como estaba.
+ */
+export function getMetodoTexto() {
+  const db = getDB();
+  const row = db.prepare('SELECT publish_config FROM settings WHERE id = 1').get();
+  let pc = {};
+  try { pc = JSON.parse(row?.publish_config || '{}'); } catch {}
+  return metodoTextoDeConfig(pc);
 }
 
 function lastPublishedInfo() {
@@ -738,6 +768,9 @@ function spawnPoster({ groupUrl, messageFile, imageFiles, mode, label, debug = f
       // poster ahora espera a confirmar el envío antes de cerrar la pestaña.)
       '--max-seconds=300',
       '--debug-port=' + port,
+      // Técnica de pegado configurable en Ajustes. Se lee por corrida, así que
+      // un cambio en el panel aplica sin reiniciar el server.
+      '--metodo-texto=' + getMetodoTexto(),
     ];
     if (debug) args.push('--debug=1');
     if (imageFiles.length) args.push('--images=' + imageFiles.join(';'));
