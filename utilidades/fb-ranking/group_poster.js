@@ -101,8 +101,8 @@ const PUBLISH_POLL_MS = 700;
 // la pestaña. Con imágenes FB se toma su tiempo subiendo; cerrar antes aborta el
 // post. El presupuesto es generoso pero con corte: si nunca se confirma, se
 // sigue (no se cuelga la corrida entera).
-const ENVIO_CONFIRM_MS = 75000;
-const ENVIO_POLL_MS = 1500;
+const ENVIO_CONFIRM_MS = 120000;
+const ENVIO_POLL_MS = 1000;
 
 // ---------------------------------------------------------------- helpers ---
 function out(obj) {

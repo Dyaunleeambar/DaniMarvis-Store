@@ -36,7 +36,7 @@ function pistaSinCompositor(texto) {
 // cierra mientras publica"). Hay una señal fuerte (el post ya aparece en el
 // feed) y una débil (compositor vacío y sin indicadores de subida), que se exige
 // sostenida varias muestras para no confundir un re-render con el fin del envío.
-const ENVIO_VACIO_SOSTENIDO = 4;
+const ENVIO_VACIO_SOSTENIDO = 6;
 
 /**
  * Combina una muestra ({aparecio, enCurso, conTexto}) con el contador previo.
