@@ -199,6 +199,12 @@ function primeraImagen(raw) {
  * el día destino se vuelva a publicar. Da igual lo que tuvieran en el origen
  * (published, error, cancelled, archived): ese estado no se pierde, sigue
  * intacto en el día de origen, que es justo lo que la copia promete no tocar.
+ *
+ * También queda fuera `notes`, y es un caso distinto: no es estado, es el
+ * DIARIO de la corrida anterior. El 2026-10-18 una copia de Jovellanos nació
+ * pending con el `auto:publicado 2026-10-17T11:30:31 | pendiente de
+ * aprobación…` del origen adentro, y la vista de detalle lo mostraba como si
+ * esa copia ya hubiera salido. La copia arranca sin nada que contar.
  */
 export function duplicarPublicacion(db, pubId, iso, desde, hasta, rotacion = null) {
   const orig = db.prepare('SELECT * FROM publications WHERE id = ?').get(pubId);
@@ -214,14 +220,15 @@ export function duplicarPublicacion(db, pubId, iso, desde, hasta, rotacion = nul
   `).run(clonId, iso, ...colsPub.map(c => orig[c] ?? null));
 
   const colsDest = columnasParaCopiar(db, 'publication_queue',
-    ['id', 'publication_id', 'status', 'published_at', 'scheduled_at', 'created_at', 'updated_at']);
+    ['id', 'publication_id', 'status', 'published_at', 'scheduled_at', 'created_at', 'updated_at', 'notes', 'pending_approval']);
   const iGrupo = colsDest.indexOf('group_name');
   const iUrl = colsDest.indexOf('group_url');
   for (const d of destinos) {
     const valores = colsDest.map(c => d[c] ?? null);
     // Con `rotacion`, cada destino salta a los grupos siguientes del catálogo.
-    // Se conserva el resto de la fila (variante, imágenes, pending_approval): sólo
-    // cambia a qué grupo apunta.
+    // Se conserva el resto de la fila (variante, imágenes): sólo cambia a qué
+    // grupo apunta. `notes` y `pending_approval` quedaron fuera a propósito: son
+    // el registro de la corrida anterior, y la copia todavía no corrió nada.
     if (rotacion) {
       const r = grupoRotado(d.group_name, d.group_url, rotacion.catalogo, rotacion.indice, rotacion.offset);
       if (iGrupo >= 0) valores[iGrupo] = r.group_name;

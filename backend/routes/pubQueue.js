@@ -96,8 +96,9 @@ router.post('/', (req, res) => {
 
   let targets = [];
   if (Array.isArray(group_ids) && group_ids.length > 0) {
+    const ids = group_ids.slice(0, 1);
     const rows = db.prepare('SELECT id, name, url FROM facebook_groups WHERE id IN (' +
-      group_ids.map(() => '?').join(',') + ')').all(...group_ids);
+      ids.map(() => '?').join(',') + ')').all(...ids);
     targets = rows.map(g => ({ group_name: g.name, group_url: g.url }));
   } else if (group_name && group_name.trim()) {
     targets = [{ group_name: group_name.trim(), group_url: group_url || '' }];
@@ -106,6 +107,18 @@ router.post('/', (req, res) => {
   if (targets.length === 0) {
     return res.status(400).json({ error: 'Elegí al menos un grupo o escribí el nombre del grupo' });
   }
+  // Forzamos un solo destino por publicación en este flujo
+  targets = targets.slice(0, 1);
+
+  if (publication_id) {
+    const activos = db.prepare(`
+      SELECT id FROM publication_queue
+      WHERE publication_id = ? AND status IN ('pending','published','error')
+    `).get(publication_id);
+    if (activos) {
+      return res.status(400).json({ error: 'La publicación ya tiene un destino asignado.' });
+    }
+  }
 
   let publishText = '';
   if (publication_id) {
@@ -113,28 +126,22 @@ router.post('/', (req, res) => {
     if (pub) publishText = pub.publish_text || '';
   }
 
-  const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
-  const createdItems = [];
-  for (const target of targets) {
-    const id = uuid();
-    const text = variant_text || publishText;
-    db.prepare(`
-      INSERT INTO publication_queue (id, publication_id, group_name, group_url, variant_index, variant_text, scheduled_at, images)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, publication_id || null, target.group_name, target.group_url || '', variant_index || 0, text, scheduled_at || null, JSON.stringify(imagesArr));
+  const target = targets[0];
+  const id = uuid();
+  const text = variant_text || publishText;
+  db.prepare(`
+    INSERT INTO publication_queue (id, publication_id, group_name, group_url, variant_index, variant_text, scheduled_at, images)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, publication_id || null, target.group_name, target.group_url || '', variant_index || 0, text, scheduled_at || null, JSON.stringify(imagesArr));
 
-    const created = db.prepare(`
-      SELECT pq.*, p.publish_text, p.product_name, COALESCE(pq.images, p.images) AS images, p.publication_date
-      FROM publication_queue pq
-      LEFT JOIN publications p ON p.id = pq.publication_id
-      WHERE pq.id = ?
-    `).get(id);
-    try { created.images = JSON.parse(created.images || '[]'); } catch { created.images = []; }
-    createdItems.push(created);
-  }
-
-  if (createdItems.length === 1) return res.status(201).json(createdItems[0]);
-  res.status(201).json(createdItems);
+  const created = db.prepare(`
+    SELECT pq.*, p.publish_text, p.product_name, COALESCE(pq.images, p.images) AS images, p.publication_date
+    FROM publication_queue pq
+    LEFT JOIN publications p ON p.id = pq.publication_id
+    WHERE pq.id = ?
+  `).get(id);
+  try { created.images = JSON.parse(created.images || '[]'); } catch { created.images = []; }
+  res.status(201).json(created);
 });
 
 router.patch('/:id', (req, res) => {

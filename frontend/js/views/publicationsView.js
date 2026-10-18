@@ -1736,12 +1736,10 @@ function abrirPlanificador(ev = null, fechaInicial = null) {
               const on = gruposPrevistos.includes(g.id);
               // El "+" de uso del día se pinta después (pintarUsoGrupos), cuando
               // llegó la consulta: acá solo queda la fila base.
-              return `<label class="plan-grupo" data-gname="${escAttr(g.name)}"><input type="checkbox" class="plan-gc" value="${escAttr(g.id)}" data-name="${escAttr(g.name)}" ${on ? 'checked' : ''}/> ${escHtml(g.name)}<span class="plan-grupo-uso" hidden></span></label>`;
+              return `<label class="plan-grupo" data-gname="${escAttr(g.name)}"><input type="radio" name="plan-grp" class="plan-gc" value="${escAttr(g.id)}" data-name="${escAttr(g.name)}" ${on ? 'checked' : ''}/> ${escHtml(g.name)}<span class="plan-grupo-uso" hidden></span></label>`;
             }).join('') : '<span style="font-size:.78rem;color:var(--text-muted)">No hay grupos registrados.</span>'}
           </div>
           ${grupos.length ? `<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
-            <button type="button" class="btn btn--sm btn--ghost" id="plan-todos">Todos</button>
-            <button type="button" class="btn btn--sm btn--ghost" id="plan-ninguno">Ninguno</button>
             <button type="button" class="btn btn--sm btn--secondary" id="plan-gestionar">Gestionar grupos</button>
           </div>` : `<div style="margin-top:6px"><button type="button" class="btn btn--sm btn--secondary" id="plan-gestionar">Gestionar grupos</button></div>`}
         </div>
@@ -1894,16 +1892,7 @@ function abrirPlanificador(ev = null, fechaInicial = null) {
     catch { showToast('No se pudo copiar', 'error'); }
   });
 
-  document.getElementById('plan-todos')?.addEventListener('click', () => {
-    document.querySelectorAll('.plan-gc').forEach(c => { c.checked = true; });
-    pintarUsoGrupos();
-    avisosDeb();
-  });
-  document.getElementById('plan-ninguno')?.addEventListener('click', () => {
-    document.querySelectorAll('.plan-gc').forEach(c => { c.checked = false; });
-    pintarUsoGrupos();
-    avisosDeb();
-  });
+
   document.getElementById('plan-gestionar').addEventListener('click', () => {
     closeModal(true);
     gestionarGrupos();
@@ -1984,7 +1973,16 @@ function abrirPlanificador(ev = null, fechaInicial = null) {
   };
 
   selFecha.addEventListener('change', cargarUsoDia);
-  document.querySelectorAll('.plan-gc').forEach(c => c.addEventListener('change', pintarUsoGrupos));
+  document.querySelectorAll('.plan-gc').forEach(c => {
+    c.addEventListener('change', (e) => {
+      const input = e.target;
+      if (input.checked) {
+        document.querySelectorAll('.plan-gc').forEach(cb => { cb.checked = cb === input; });
+      }
+      pintarUsoGrupos();
+      avisosDeb();
+    });
+  });
   cargarUsoDia();
 
   // ── guardado ──
@@ -1994,6 +1992,7 @@ function abrirPlanificador(ev = null, fechaInicial = null) {
     if (!texto) { showToast('El texto de publicación es obligatorio', 'error'); return; }
 
     const selIds = [...document.querySelectorAll('.plan-gc:checked')].map(c => c.value);
+    if (selIds.length > 1) selIds.length = 1;
     const selNombres = selIds.map(nombreDe).filter(Boolean);
     const fechaRaw = String(fd.get('scheduled_at') || '');
     if (agendar) {
@@ -2036,7 +2035,7 @@ function abrirPlanificador(ev = null, fechaInicial = null) {
         //    la misma hora. Ese es el momento único de publicación.
         await api.addToPubQueue({
           publication_id: pubId,
-          group_ids: selIds,
+          group_ids: selIds.slice(0, 1),
           scheduled_at: isoFecha,
           images: imgs,
         });

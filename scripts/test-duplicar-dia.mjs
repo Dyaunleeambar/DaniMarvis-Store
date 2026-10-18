@@ -92,6 +92,14 @@ const pOtroDia = crearPublicacion({ fecha: hora('2026-10-05T10:00'), nombre: 'Ot
 const colaAntes = Object.fromEntries([pPublicada, pPendiente, pError, pMixta, pSolitaria]
   .map(id => [id, cola(id).map(d => `${d.group_name}:${d.status}:${d.scheduled_at}:${d.published_at}`).join('|')]));
 
+// El diario de la corrida anterior: es lo que la copia NO debe arrastrar, porque
+// la copia nace sin haber intentado publicar nada todavía. Sin esta marca, el
+// 2026-10-18 una copia de Jovellanos nació pending con el "auto:publicado" del
+// día origen adentro y la vista lo mostraba como si ya hubiera salido.
+const NOTA_ORIGEN = 'auto:publicado 2026-10-02T10:05 | pendiente de aprobación del administrador | lote: 9/138 grupos';
+db.prepare("UPDATE publication_queue SET notes = ?, pending_approval = 1 WHERE publication_id IN (?, ?)")
+  .run(NOTA_ORIGEN, pPublicada, pMixta);
+
 // Vista previa: informa, NO escribe
 const plan = planDuplicacionDia(db, D, H);
 ok('la vista previa no escribe nada', enDia(H) === 0 && enDia(D) === 5, `destino con ${enDia(H)}`);
@@ -180,6 +188,16 @@ ok('se copió también el destino archivado del origen',
    colaCopia.some(d => d.group_name === 'Grupo E'));
 ok('se copió el texto y las imágenes del destino',
    colaCopia.every(d => d.variant_text === 'texto del destino' && d.images === '[]'));
+ok('la copia no arrastra el diario de la corrida del origen',
+   colaCopia.every(d => !d.notes),
+   JSON.stringify(colaCopia.map(d => d.notes)));
+ok('la copia no arrastra pending_approval del origen',
+   colaCopia.every(d => !d.pending_approval),
+   JSON.stringify(colaCopia.map(d => d.pending_approval)));
+ok('el origen SÍ conserva su diario y su aprobación pendiente',
+   cola(pPublicada).every(d => d.notes === NOTA_ORIGEN && d.pending_approval === 1)
+   && cola(pMixta).every(d => d.notes === NOTA_ORIGEN && d.pending_approval === 1),
+   JSON.stringify(cola(pPublicada).map(d => [d.notes, d.pending_approval])));
 ok('copia contenido, hora y orden de la publicación',
    pub(cMixta).publish_text === pub(pMixta).publish_text
    && pub(cMixta).images === pub(pMixta).images

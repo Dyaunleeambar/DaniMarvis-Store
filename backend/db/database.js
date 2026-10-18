@@ -116,6 +116,7 @@ export async function initDB() {
   migratePageRoutines();
   migrateAuthSecret();
   migrateIndexes();
+  migrateCollapseQueueToSingleDestination();
   // Antes de volcar al archivo. Si la base perdió la key, este es el último
   // momento en que se puede reinyectar y dejar el .env con la copia al día.
   try {
@@ -879,6 +880,61 @@ function migrateIndexes() {
     CREATE INDEX IF NOT EXISTS idx_publication_clones_origen_id ON publication_clones(origen_id);
     CREATE INDEX IF NOT EXISTS idx_page_schedule_log_routine ON page_schedule_log(routine_id);
   `);
+}
+
+// Colapsa publicación_queue a un único destino por publicación (1a). Conserva
+// el primero (ordenado por preferencia: pending, published, error, resto) y
+// archiva el resto de los destinos VIVOS para que el historial siga visible.
+// También trata los destinos sin publicación_id (casos aislados) que queden
+// con múltiples vivos.
+function migrateCollapseQueueToSingleDestination() {
+  const pubs = db.prepare(`
+    SELECT publication_id
+    FROM publication_queue
+    WHERE publication_id IS NOT NULL
+    GROUP BY publication_id
+    HAVING COUNT(*) > 1
+  `).all();
+
+  for (const p of pubs) {
+    const idPub = p.publication_id;
+    const activos = db.prepare(`
+      SELECT id, status
+      FROM publication_queue
+      WHERE publication_id = ?
+        AND status IN ('pending', 'published', 'error')
+      ORDER BY
+        CASE status WHEN 'pending' THEN 0 WHEN 'published' THEN 1 WHEN 'error' THEN 2 ELSE 9 END,
+        COALESCE(scheduled_at, created_at) ASC,
+        created_at ASC,
+        id ASC
+    `).all(idPub);
+
+    if (activos.length <= 1) continue;
+    const otros = activos.slice(1).map(a => a.id);
+    for (const qid of otros) {
+      try {
+        db.prepare("UPDATE publication_queue SET status = 'archived', updated_at = datetime('now') WHERE id = ?").run(qid);
+      } catch (_) {}
+    }
+  }
+
+  // Limpieza para filas huérfanas con publicación_id NULL
+  const nulls = db.prepare(`
+    SELECT id
+    FROM publication_queue
+    WHERE publication_id IS NULL
+      AND status IN ('pending', 'published', 'error')
+    ORDER BY created_at ASC, id ASC
+  `).all();
+  if (nulls.length > 1) {
+    const otros = nulls.slice(1).map(n => n.id);
+    for (const qid of otros) {
+      try {
+        db.prepare("UPDATE publication_queue SET status = 'archived', updated_at = datetime('now') WHERE id = ?").run(qid);
+      } catch (_) {}
+    }
+  }
 }
 
 function seedIfEmpty() {
