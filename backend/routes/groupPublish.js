@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { startGroupPublish, groupPublishStatus } from '../lib/groupPublisher.js';
+import { startGroupPublish, groupPublishStatus } from '../lib/groupPublisher/index.js';
 
 const router = Router();
 

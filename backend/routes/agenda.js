@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { v4 as uuid } from 'uuid';
 import { getDB, transaccion } from '../db/database.js';
-import { startGroupPublish, agendaSchedulerState, classifyFailure, CAUSAS } from '../lib/groupPublisher.js';
+import { startGroupPublish, agendaSchedulerState, classifyFailure, CAUSAS } from '../lib/groupPublisher/index.js';
 import { registrarPlan } from '../lib/plans.js';
 import { planDuplicacionDia, duplicarPublicacion, acotarPlan, deshacerDuplicacion, contextoRotacion, reubicarDuplicadas } from '../lib/duplicarDia.js';
 import { aggregateEstado } from '../lib/agendaEstado.js';

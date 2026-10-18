@@ -27,7 +27,7 @@ process.env.DANIMARVIS_DB = join(dir, 'prueba.db');
 process.env.DANIMARVIS_ENV_PATH = join(dir, 'nada.env');
 
 const { initDB } = await import('../backend/db/database.js');
-const { notaLote } = await import('../backend/lib/groupPublisher.js');
+const { notaLote } = await import('../backend/lib/groupPublisher/index.js');
 await initDB();
 
 console.log('\nnotaLote\n');

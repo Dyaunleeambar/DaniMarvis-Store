@@ -194,7 +194,7 @@ DaniMarvisStore/
 │   │   ├── currency.js         # Formateador de precios en USD
 │   │   ├── duplicarDia.js      # Duplicar un día de la agenda y deshacerlo
 │   │   ├── facebook.js         # Integración con Facebook Graph API
-│   │   ├── groupPublisher.js   # Publicador automático de grupos (cola + corrida async)
+│   │   ├── groupPublisher/     # Publicador automático de grupos (split por responsabilidades)
 │   │   ├── imageUtils.js       # Conversión de imágenes a WebP con sharp
 │   │   └── ocr.js              # OCR con tesseract.js + fuzzy matching
 │   ├── jobs/

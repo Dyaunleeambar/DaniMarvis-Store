@@ -21,8 +21,8 @@ import { abrirMemoria } from './helpers/sqljs.mjs';
 import {
   evaluarLimites, cuantosPorTick, claveDuplicado, marcarDuplicadosEn,
   parsePosterDiag, classifyFailure, notaLote, logFinCorrida, elegirAnclaIntento,
-  CAUSAS, DEFAULT_AGENDA,
-} from '../backend/lib/groupPublisher.js';
+  CAUSAS, DEFAULT_AGENDA, decisionActual,
+} from '../backend/lib/groupPublisher/index.js';
 import { deshacerDuplicacion } from '../backend/lib/duplicarDia.js';
 
 let fallos = 0;
@@ -421,7 +421,15 @@ console.log('\nlog por corrida: el registro tiene que poder auditar una publicac
   // manual llamaban los DOS con `auto: false`. Estos tests fijan que el origen
   // viaje explícito y que ninguna corrida quede a medio loguear.
   const leer = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
-  const gp = leer('../backend/lib/groupPublisher.js');
+  // El publicador se partió en módulos: la corrida (runGroupPublish,
+  // startGroupPublish, logFinCorrida) vive en cola.js y los call sites con
+  // `origen` + el log de la agenda viven en schedulers.js. Los dos juntos son el
+  // "gp" de siempre: buscar en uno solo daría falsos negativos.
+  const leerGp = () => [
+    '../backend/lib/groupPublisher/cola.js',
+    '../backend/lib/groupPublisher/schedulers.js',
+  ].map(leer).join('\n');
+  const gp = leerGp();
 
   const callSites = (src) => [...src.matchAll(/startGroupPublish\(\s*\{([^}]*)\}/g)].map(m => m[1]);
   const enLibro = callSites(gp).filter(c => !/^\s*(auto|force|ids|mode|debug|runNow)\s*[=}]/.test(c) || c.includes('origen'));

@@ -19,7 +19,7 @@ están las trampas. Todas las referencias son `archivo:línea`.
 | `frontend/js/views/pubQueueView.js` (1220) | Toda la UI de la cola. Una sola vista con 5 pestañas, y el form de alta/edición con selector de origen (catálogo o redacción propia) |
 | `frontend/js/views/settingsView.js:154-203` | Config del auto-publicado (dentro del form de plantilla) |
 | `frontend/js/db/api.js:133-143` | Los 9 métodos HTTP de la cola y el publicador |
-| `backend/lib/groupPublisher.js` (644) | Orquestador: config, selección, placeholders, spawn del poster, worker, estado en vivo |
+| `backend/lib/groupPublisher/index.js` (644) | Orquestador: config, selección, placeholders, spawn del poster, worker, estado en vivo |
 | `backend/routes/groupPublish.js` (43) | `/api/group-publish` → 202 + `runId` |
 | `backend/routes/pubQueue.js` (201) | CRUD de la cola, `/due`, `/timer` |
 | `backend/lib/chromeLauncher.js` (106) | Auto-arranque de Chrome en el 9222 + perfil con sesión |
@@ -58,8 +58,8 @@ Creada en `database.js:268-282`; `images` y `pending_approval` llegan por `ALTER
 | Estado | Lo pone | Cuándo |
 |---|---|---|
 | `pending` | Default del esquema | Toda fila nueva. **También en que queda un ítem que falló** |
-| `published` | `groupPublisher.js:317` (auto) · `pubQueue.js:139` (PATCH manual) | `result.ok && mode==='publish'` |
-| `prepared` | `groupPublisher.js:320` | `result.ok && mode==='prepare'` |
+| `published` | `cola.js:317` (auto) · `pubQueue.js:139` (PATCH manual) | `result.ok && mode==='publish'` |
+| `prepared` | `cola.js:320` | `result.ok && mode==='prepare'` |
 | `skipped` | Solo el front: `pubQueueView.js:449` | Botón "Omitir" |
 
 `error`, `warn` y `dry-run` **existen solo en el JSON del poster**, nunca en la columna `status`.
@@ -120,10 +120,10 @@ a 19 chars sin la `Z`, y el JS lo parsearía como hora local (4 h de desfase en 
 ### El worker
 
 Existe desde el commit que cerró la Trampa 1. `startGroupPublishScheduler()`
-(`groupPublisher.js:609`) se llama desde `server.js:453`, después de que la BD carga, y
-dispara un tick cada `SCHEDULER_INTERVAL_MS` = 5 min (`groupPublisher.js:523`).
+(`schedulers.js:609`) se llama desde `server.js:453`, después de que la BD carga, y
+dispara un tick cada `SCHEDULER_INTERVAL_MS` = 5 min (`schedulers.js:523`).
 
-El tick (`runSchedulerTick`, `groupPublisher.js:532`) es corto y tiene cuatro salidas posibles:
+El tick (`runSchedulerTick`, `schedulers.js:532`) es corto y tiene cuatro salidas posibles:
 
 | Situación | Resultado en `last_tick_result` |
 |---|---|
@@ -134,14 +134,14 @@ El tick (`runSchedulerTick`, `groupPublisher.js:532`) es corto y tiene cuatro sa
 
 > ⚠️ **El chequeo de `pickForRun()` antes de arrancar es lo que hace que esto sea usable.**
 > `runGroupPublish()` llama a `ensureDebugChrome({launch: true })` en su primer paso
-> (`groupPublisher.js:370`), así que sin ese filtro el worker abriría Chrome cada 5 minutos
+> (`cola.js:370`), así que sin ese filtro el worker abriría Chrome cada 5 minutos
 > aunque no hubiera nada que publicar. Con el filtro, un tick sin trabajo no toca el navegador.
 
 > ⚠️ **`enabled` es un interruptor real, y en esta base ya está en `true`.** Con el worker
 > armado, publicar dejó de ser 100% manual. Ver "Antes de tocar nada" arriba.
 
 `GET /api/group-publish/status` expone el bloque `scheduler` (`schedulerState()`,
-`groupPublisher.js:599`) con `active`, `interval_ms`, `last_tick`, `next_tick` y
+`schedulers.js:599`) con `active`, `interval_ms`, `last_tick`, `next_tick` y
 `last_tick_result`, para que la UI pueda mostrar la próxima corrida en vez de un
 "cada 5 minutos" que no existía.
 
@@ -177,7 +177,7 @@ Y se ancla al **arranque** de ese intento, no a su `published_at`. No es un deta
 eso rendía ~8/h en vez de ~10/h. La marca vive en `publish_config._ultimoIntento`, la
 escribe `marcarIntentoAhora()` antes de cada post y sobrevive a reinicios.
 
-La elección del ancla está en `elegirAnclaIntento()` (`groupPublisher.js:241`), una
+La elección del ancla está en `elegirAnclaIntento()` (`estado.js:241`), una
 función pura sin base a propósito. Ya se rompió una vez por usar `Math.max(inicio, fin)`: como `published_at`
 siempre es posterior, ganaba el final y el gap volvía a medirse desde que el post
 terminaba. Los tests de `evaluarLimites()` no lo detectaron porque le pasaban
@@ -187,7 +187,7 @@ la selección del dato. Cubrir eso es `1c.` en `scripts/test-limites-agenda.mjs`
 ### Por qué están en el tick y no en `pickForRun()`
 
 Porque el disparador **no pasa por `pickForRun()`**. Entrega los vencidos con `ids`
-explícitos (`groupPublisher.js:1695`), y `runGroupPublish()` los filtra directo sobre
+explícitos (`cola.js:1695`), y `runGroupPublish()` los filtra directo sobre
 `dueCandidates()`. O sea: el día duplicado del 2026-10-03 (190 destinos) salía a
 ~17 publicaciones por hora sin tope de ninguno, hasta que Facebook dejó de aceptar
 los envíos **sin decir nada**. Los límites de acá son los únicos que protegen ese
@@ -213,7 +213,7 @@ apartados" con dos que siguen en `pending` como estaban.
 
 ### El corte automático
 
-`registrarFallo()` / `limpiarFallos()` (`groupPublisher.js:359-375`) viven en
+`registrarFallo()` / `limpiarFallos()` (`limites.js:359-375`) viven en
 `runGroupPublish()`, o sea que **cuentan los fallos de cualquier origen** —worker,
 disparador o clic manual—: lo que se rompió es el canal de Facebook, no quién
 apretó el botón. El estado va en `publish_config._breaker`.
@@ -290,7 +290,7 @@ Dos fallos del 2026-10-16 salían de confundir "el compositor del post" con cual
 
 ### El lote, que era invisible
 
-`notaLote()` (`groupPublisher.js`) escribe en `notes` **qué grupos se tickearon de
+`notaLote()` (`backend/lib/groupPublisher/index.js`) escribe en `notes` **qué grupos se tickearon de
 verdad** en el compositor: `lote: 9/163 grupos [...]`, o un aviso fuerte cuando el
 reparto no salió.
 
@@ -493,7 +493,7 @@ campo que se manda explícitamente:
 | `own` | `null` | La lista de publicaciones se oculta, el textarea arranca vacío, las imágenes se suben a mano |
 
 El texto propio se guarda en `variant_text`, que el publicador ya priorizaba sobre
-`publish_text` (`groupPublisher.js:237`), así que **no hizo falta nada en el backend para el
+`publish_text` (`cola.js:237`), así que **no hizo falta nada en el backend para el
 texto en sí**: `publication_id` NULL ya estaba permitido por el schema y por el `LEFT JOIN`.
 
 Tres detalles que no son evidentes:
@@ -512,8 +512,8 @@ En modo edición el origen no se puede cambiar: se muestra como etiqueta junto a
 
 ### Placeholders: de dónde salen los datos
 
-`fillTemplateText()` (`groupPublisher.js:167`) reemplaza cuatro variables al publicar. Los datos
-vienen de las columnas que trae `dueCandidates()` (`groupPublisher.js:184`):
+`fillTemplateText()` (`cola.js:167`) reemplaza cuatro variables al publicar. Los datos
+vienen de las columnas que trae `dueCandidates()` (`cola.js:184`):
 
 | Variable | Fuente | Sin publicación asociada |
 |---|---|---|
@@ -543,7 +543,7 @@ de la config persistida (vuelve al default, no a un valor previo).
 ## Config de auto-publicado
 
 Vive en `settings.publish_config` (columna TEXT con JSON), fila `id = 1`. La sub-clave es
-`autopublish`. Defaults en `DEFAULT_AUTO_PUBLISH` (`groupPublisher.js:14-23`) y clamps en
+`autopublish`. Defaults en `DEFAULT_AUTO_PUBLISH` (`config.js:14-23`) y clamps en
 `getAutopublishConfig()` (`:55-67`).
 
 | Clave | Default | Clamp | Input en Ajustes |
@@ -564,7 +564,7 @@ Vive en `settings.publish_config` (columna TEXT con JSON), fila `id = 1`. La sub
 
 ## Contrato del poster (`group_poster.js`)
 
-Se invoca como proceso hijo (`groupPublisher.js:279-294`):
+Se invoca como proceso hijo (`poster.js:279-294`):
 
 ```
 node group_poster.js --no-sandbox --groups=<url> --message-file=<path>
@@ -575,7 +575,7 @@ node group_poster.js --no-sandbox --groups=<url> --message-file=<path>
 
 Imprime por stdout **un objeto JSON por grupo** (mezclado con texto humano). El backend parsea
 línea por línea y se queda con el **primer objeto cuyo `status` sea terminal** —
-`published`, `prepared`, `dry-run` o `error` (`groupPublisher.js:237-263` en
+`published`, `prepared`, `dry-run` o `error` (`poster.js:237-263` en
 `parsePosterOutput()`). Los avisos (`status: 'warn'`) se acumulan aparte en `warnings[]` y se
 muestran en las notas de la cola, pero nunca cuentan como resultado.
 
@@ -707,8 +707,8 @@ Las que más te van a afectar si tocás la UI. Las marqué con cómo las comprob
 **Era esto:** `startGroupPublish()` solo se llamaba desde las rutas, así que publicar era 100%
 manual, mientras la etiqueta de Ajustes prometía "cada 5 minutos".
 
-**Ahora:** `startGroupPublishScheduler()` (`groupPublisher.js:609`) corre un `setInterval` de
-5 min desde `server.js:453`, y `runSchedulerTick()` (`groupPublisher.js:532`) decide en función
+**Ahora:** `startGroupPublishScheduler()` (`schedulers.js:609`) corre un `setInterval` de
+5 min desde `server.js:453`, y `runSchedulerTick()` (`schedulers.js:532`) decide en función
 de `enabled`, si hay corrida en curso y si `pickForRun()` encuentra trabajo real. Sin trabajo no
 arranca Chrome. Estado visible en `GET /group-publish/status` → `scheduler`.
 
@@ -735,11 +735,11 @@ arranca Chrome. Estado visible en `GET /group-publish/status` → `scheduler`.
 
 1. **En la fuente** (`group_poster.js:178`): el aviso ahora lleva `event: 'warn'` y ya **no**
    lleva `ok`. Estructuralmente no puede confundirse con un resultado.
-2. **En el consumidor** (`groupPublisher.js:237`): `TERMINAL_STATUSES` define qué es un
+2. **En el consumidor** (`poster.js:243`): `TERMINAL_STATUSES` define qué es un
    resultado —`published`, `prepared`, `dry-run`, `error`— y `parsePosterOutput()`
-   (`groupPublisher.js:243`) solo acepta líneas con esos status. Los avisos se acumulan aparte
+   (`poster.js:243`) solo acepta líneas con esos status. Los avisos se acumulan aparte
    en `warnings[]` y ya no se pierden: se escriben en `notes` (`updateQueue`,
-   `groupPublisher.js:297`) y llegan al `results[]` de la corrida para que la UI los pueda mostrar.
+   `poster.js:297`) y llegan al `results[]` de la corrida para que la UI los pueda mostrar.
 
 `parsePosterOutput()` es una **función pura y exportada**: no toca Chrome ni la BD, así que el
 contrato se puede testear con fixtures sin riesgo de publicar. Cubierto por 16 casos
@@ -756,7 +756,7 @@ Dos consultas idénticas con **formatos de timestamp distintos**:
 
 | Consulta | Formato del "ahora" | Línea |
 |---|---|---|
-| `dueCandidates()` (el publisher) | `2026-09-27T15:48:16.123Z` — `T` | `groupPublisher.js:181` |
+| `dueCandidates()` (el publisher) | `2026-09-27T15:48:16.123Z` — `T` | `cola.js:181` |
 | `GET /pub-queue/due` (la UI) | `2026-09-27 15:48:16` — espacio | `pubQueue.js:69` |
 
 Y `scheduled_at` se almacena como lo mande el cliente. Comparando strings, en la posición 10
@@ -774,7 +774,7 @@ formato primero.
 
 `typeText()` emite un `console.log(JSON.stringify({ ok:true, status:'warn', … }))`
 (`group_poster.js:171-175`) **antes** del resultado final, y el parser se queda con la
-**primera** línea con `ok` (`groupPublisher.js:237-263`). Entonces: `ok:true` →
+**primera** línea con `ok` (`poster.js:237-263`). Entonces: `ok:true` →
 `updateQueue` marca `published` en la BD, pero el resumen de la corrida cuenta
 `status==='published'` y da 0. O sea: **BD dice publicado, la UI dice que no se publicó nada**,
 sin error visible.
@@ -808,7 +808,7 @@ que `updateQueue` caiga en la rama `'prepared'`.
 
 ### 9. Dos formatos de `published_at` 🟢
 
-`groupPublisher.js:299` escribe ISO con `Z`; `pubQueue.js:139` escribe formato SQL sin `Z`. Las
+`cola.js:299` escribe ISO con `Z`; `pubQueue.js:139` escribe formato SQL sin `Z`. Las
 consultas de cap diario y cooldown comparan por string contra valores de ambos mundos.
 
 ### 10. Sin mutex con el ranking 🟡
@@ -895,7 +895,7 @@ min de diferencia, violando el gap de 15**) salieron por acá, no por el dispara
 el único camino que queda sin frenar, y el más fácil de usar sin querer.
 
 Lo único que los frena de verdad es `publish_config.master.on = false`
-(`groupPublisher.js:1067`), que corta TODOS los caminos, manuales incluidos.
+(`config.js:1067`), que corta TODOS los caminos, manuales incluidos.
 
 ### 15. Un `error` puede pisar un destino que el usuario ya cerró 🟢
 
@@ -920,17 +920,17 @@ reintento lo duplicaría (Trampa 13).
 |---|---|
 | Cambiar el aspecto de una tarjeta | `renderPending()` `:279-325` |
 | Agregar/quitar un botón por ítem | `renderPending()` `:315-321` + su `querySelectorAll` |
-| Cambiar qué se considera "vencido" | `isDue` `:282` y/o `dueCandidates()` `groupPublisher.js:183` |
-| Cambiar el ritmo o las pausas | `groupPublisher.js:440-443` (los 45-135 s) |
+| Cambiar qué se considera "vencido" | `isDue` `:282` y/o `dueCandidates()` `cola.js:183` |
+| Cambiar el ritmo o las pausas | `groupPublisher/ (revisar)` (los 45-135 s) |
 | Agregar un paso nuevo a la corrida | `runGroupPublish()` `:357-400` + un `phase` nuevo en `runProgressHtml` |
 | Cambiar qué se muestra mientras corre | `runProgressHtml()` `:51` |
-| Cambiar los textos de error | `group_poster.js` (los `out({... message: '...'})`) y `classifyFailure()` `groupPublisher.js:342` |
+| Cambiar los textos de error | `group_poster.js` (los `out({... message: '...'})`) y `classifyFailure()` `groupPublisher/ (revisar)` |
 | Agregar un estado a la cola | `createSchema` + `migratePubQueue` + los UPDATE de `updateQueue` + el filtro de `dueCandidates` + el de `renderPending` `:236` |
 | Cambiar los límites automáticos | `DEFAULT_AUTO_PUBLISH` + el clamp de `getAutopublishConfig()` + el form de Ajustes |
-| Cambiar el ritmo del disparador por fecha | `DEFAULT_AGENDA` (`groupPublisher.js:46`) + el clamp de `getAgendaConfig()` |
-| Cambiar qué cuenta como "repetido" | `claveDuplicado()` `groupPublisher.js:386` (normaliza el texto antes de comparar) |
-| Cambiar a qué se le atribuya un fallo | `classifyFailure()` `groupPublisher.js:871` (una causa por `includes`) |
-| Sacar la evidencia de las notas | `notaDiagnostico()` `groupPublisher.js:747` + `parsePosterDiag()` `group_poster.js` |
+| Cambiar el ritmo del disparador por fecha | `DEFAULT_AGENDA` (`config.js:46`) + el clamp de `getAgendaConfig()` |
+| Cambiar qué cuenta como "repetido" | `claveDuplicado()` `limites.js:386` (normaliza el texto antes de comparar) |
+| Cambiar a qué se le atribuya un fallo | `classifyFailure()` `poster.js:871` (una causa por `includes`) |
+| Sacar la evidencia de las notas | `notaDiagnostico()` `poster.js:747` + `parsePosterDiag()` `group_poster.js` |
 
 **Al agregar un estado nuevo**, actualizá los cuatro filtros que asumen el enum:
 `dueCandidates()` (`:188`), `GET /due` (`pubQueue.js:74`), el filtro de la UI (`:236`) y el de

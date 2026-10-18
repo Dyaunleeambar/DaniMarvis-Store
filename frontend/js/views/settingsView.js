@@ -170,7 +170,7 @@ function renderPage(container, settings, categories, providerStyles, status) {
   const fb = pc.facebook || {};
   const ap = pc.autopublish || {};
   const ag = pc.agenda || {};
-  // Defaults del backend (DEFAULT_AGENDA en backend/lib/groupPublisher.js).
+  // Defaults del backend (DEFAULT_AGENDA en backend/lib/groupPublisher/config.js).
   // Se repiten acá para que los campos nazcan con el valor real en pantalla:
   // estas claves no viven en la base hasta que el usuario las toque, así que sin
   // esto los inputs se verían vacíos aunque el servidor esté aplicando otro valor.
@@ -693,7 +693,7 @@ function renderPage(container, settings, categories, providerStyles, status) {
         catchup_hours: limite(fd.get('ag_catchup'), 24, 0, 168),
         // Límites de ritmo. Antes vivían solo en DEFAULT_AGENDA (código) y no había
         // forma de verlos ni tocarlos desde acá. Los rangos son los mismos clamps
-        // de getAgendaConfig() en backend/lib/groupPublisher.js.
+        // de getAgendaConfig() en backend/lib/groupPublisher/config.js.
         min_gap_min: limite(fd.get('ag_gap'), 5, 1, 1440),
         max_per_hour: limite(fd.get('ag_hour'), 12, 1, 60),
         // 0 tiene que poder DESACTIVAR el dedupe (lo dice el default del backend),

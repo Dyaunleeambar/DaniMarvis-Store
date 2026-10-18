@@ -16,7 +16,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import {
   metodoTextoDeConfig, METODOS_TEXTO, DEFAULT_METODO_TEXTO, parsePosterOutput,
-} from '../backend/lib/groupPublisher.js';
+} from '../backend/lib/groupPublisher/index.js';
 
 const require = createRequire(import.meta.url);
 const { normMetodo, metricasDeInfo, verificarTexto, saltosPerdidos } = require('../utilidades/fb-ranking/metodo_texto.js');
@@ -150,7 +150,13 @@ console.log('\n6. cableado del poster y del panel');
   ok('hay fallback a teclado cuando la técnica falla', gp.includes('metodo-fallo'));
   ok('emite métricas por post', gp.includes("event: 'metodo'"));
 
-  const lib = leer('../backend/lib/groupPublisher.js');
+  // El backend se partió en módulos: `getMetodoTexto` vive en config.js y el
+  // `--metodo-texto` con el que se le pasa al poster vive en poster.js
+  // (spawnPoster). Los dos juntos son el "lib" de siempre.
+  const lib = [
+    '../backend/lib/groupPublisher/config.js',
+    '../backend/lib/groupPublisher/poster.js',
+  ].map(leer).join('\n');
   ok('el backend lee la técnica de la config', lib.includes('function getMetodoTexto()')
     && lib.includes('metodoTextoDeConfig(pc)'));
   ok('el backend la pasa al poster', lib.includes("'--metodo-texto=' + getMetodoTexto()"));
