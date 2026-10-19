@@ -897,7 +897,9 @@ Y se ancla al **arranque** de ese intento, no a su `published_at`. No es un deta
 >
 > Es un ritmo agresivo para Facebook y el sistema **no puede detectar** que la plataforma dejó de aceptar envíos en silencio. La señal más barata es ver `SIN_LOTE=1` en el cierre de las corridas, o que los posts salgan a 1 grupo cuando se pidieron 9.
 >
-> Cuando el reparto a los 9 grupos falla (no apareció "Añadir grupos", o el picker quedó abierto), el post **sí sale** al grupo destino pero queda marcado: en el detalle del calendario aparece en rojo **"OJO: no se pudo repartir a los grupos del lote; salió solo en este grupo"**. No es un fallo silencioso.
+> Cuando el reparto a los 9 grupos falla (no apareció "Añadir grupos", el picker quedó abierto, o su **lista de grupos no llegó a cargar**), el post **sí sale** al grupo destino pero queda marcado: en el detalle del calendario aparece en rojo **"OJO: no se pudo repartir a los grupos del lote; salió solo en este grupo"**. No es un fallo silencioso.
+>
+> El caso "lista no cargó" se arregló el 2026-10-19: 4 de 12 posts del día salieron a 1 grupo con la nota *"ATENCIÓN lote: no se pudo tildar ningún grupo"* (sin el "de 136", señal de que el picker abrió pero la lista vino vacía). El bucle de carga perezosa cortaba en la **primera** lectura vacía (~4s tras abrir el picker); si Facebook tardaba más en poblar los ~136 grupos, el lote se perdía. Ahora `seleccionarLoteGrupos` sondea hasta ~15s a que aparezca al menos un checkbox, igual que ya hacía con el botón "Añadir grupos". El fallo era intermitente según lo lento que estuviera Facebook en ese momento.
 
 > **Esto se puso el 2026-10-03 porque no existía.** El día duplicado dejó 190 destinos y el disparador los fue sacando a ~17 por hora, hasta que Facebook dejó de aceptar los envíos sin avisar nada. Los límites se agregan en `publish_config.agenda` y el estado del corte en `publish_config._breaker`.
 

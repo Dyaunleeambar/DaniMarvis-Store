@@ -1121,7 +1121,26 @@ async function seleccionarLoteGrupos(page, { n, desde } = {}) {
 
   if (DEBUG) await probeEtapa(page, 'picker-abierto');
 
-  // 2) cargar la lista entera. Es LAZY: arranca con 20 checkables y cada scroll
+  // 2) esperar a que la lista de grupos APAREZCA. Facebook puebla el diálogo de
+  //    forma asíncrona; con ~136 grupos puede tardar varios segundos bajo carga.
+  //    Antes se entraba directo al bucle de scroll, que corta en la primera
+  //    lectura vacía: si a los ~4s la lista todavía no había renderizado ningún
+  //    checkbox, el lote se daba por perdido EN SILENCIO y el post salía SOLO al
+  //    grupo destino. El 2026-10-19 eso pasó en 4 de los 12 posts del día,
+  //    intercalados con éxitos, según lo lento que estuviera FB en ese momento.
+  //    Se sondea como el botón: hasta ~15s antes de rendirse.
+  const contarChecks = () => page.evaluate(() => {
+    const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    return Array.from(document.querySelectorAll('[role="dialog"] input[type=checkbox]')).filter(vis).length;
+  });
+  let checksVisibles = 0;
+  for (let i = 0; i < 12 && !checksVisibles; i++) {
+    checksVisibles = await contarChecks();
+    if (!checksVisibles) await sleep(1250);
+  }
+  if (!checksVisibles) return { seleccionados: [], total: 0, sinBoton: false };
+
+  // 3) cargar la lista entera. Es LAZY: arranca con 20 checkables y cada scroll
   //    al fondo del div interno agrega 20 más. Scrollear la ventana no hace
   //    nada (mismo error que en el scanner de grupos), así que se baja el div.
   //    Se corta cuando 3 scrolls seguidos no suman ninguno, igual que el scanner.
@@ -1151,7 +1170,7 @@ async function seleccionarLoteGrupos(page, { n, desde } = {}) {
     if (!n1) break;
   }
 
-  // 3) nombres en orden de Facebook, que es el orden del DOM
+  // 4) nombres en orden de Facebook, que es el orden del DOM
   const items = await page.evaluate(() => {
     const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
     const chk = Array.from(document.querySelectorAll('[role="dialog"] input[type=checkbox]')).filter(vis);
@@ -1171,12 +1190,12 @@ async function seleccionarLoteGrupos(page, { n, desde } = {}) {
   const total = items.length;
   if (!total) return { seleccionados: [], total: 0, sinBoton: false };
 
-  // 4) desde dónde arrancar. Con 121 grupos y lotes de 9, el último lote siempre
+  // 5) desde dónde arrancar. Con 121 grupos y lotes de 9, el último lote siempre
   //    termina en el final de la lista: se toman los que falten y se vuelve del
   //    principio, como pidió el usuario.
   const pedidos = elegirIndicesLote(items, cuantos, desde);
 
-  // 5) tildar. Se hace con click de DOM y se verifica el.checked: si React no
+  // 6) tildar. Se hace con click de DOM y se verifica el.checked: si React no
   //    reacciona al click sintético, se cae a un click real por elemento.
   const hechos = await page.evaluate((idxs) => {
     const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
@@ -1215,7 +1234,7 @@ async function seleccionarLoteGrupos(page, { n, desde } = {}) {
     return idxs.map(i => (chk[i] && chk[i].checked) ? i : -1).filter(i => i >= 0);
   }, pedidos);
 
-  // 6) cerrar el diálogo con "Atrás", que es como lo cierra una persona. El
+  // 7) cerrar el diálogo con "Atrás", que es como lo cierra una persona. El
   //    picker es un modal ENCIMA del compositor: mientras está abierto, el
   //    editor de la página queda vacío en el DOM y su botón Publicar sale
   //    deshabilitado (habia botones con aria-disabled=true en todas las
