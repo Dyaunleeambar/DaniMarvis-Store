@@ -1806,8 +1806,8 @@ function abrirPlanificador(ev = null, fechaInicial = null) {
   const urlIn = document.getElementById('plan-url');
 
   function pintarThumbs() {
-    thumbs.innerHTML = imgs.map(u =>
-      `<div class="img-thumb" data-url="${escAttr(u)}"><img src="${escAttr(u)}" alt="" /><button type="button" class="img-thumb-remove" data-url="${escAttr(u)}">&times;</button></div>`
+    thumbs.innerHTML = imgs.map((u, i) =>
+      `<div class="img-thumb" draggable="true" data-url="${escAttr(u)}" data-idx="${i}"><img src="${escAttr(u)}" alt="" /><button type="button" class="img-thumb-remove" data-url="${escAttr(u)}">&times;</button></div>`
     ).join('');
     thumbs.querySelectorAll('.img-thumb-remove').forEach(b => b.addEventListener('click', () => {
       const i = imgs.indexOf(b.dataset.url);
@@ -1815,6 +1815,55 @@ function abrirPlanificador(ev = null, fechaInicial = null) {
       pintarThumbs();
     }));
   }
+
+  let dragIndex = null;
+
+  thumbs.addEventListener('dragstart', (e) => {
+    const el = e.target.closest('.img-thumb');
+    if (!el) return;
+    dragIndex = parseInt(el.dataset.idx);
+    el.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', '');
+  });
+
+  thumbs.addEventListener('dragenter', (e) => {
+    const el = e.target.closest('.img-thumb');
+    if (!el || parseInt(el.dataset.idx) === dragIndex) return;
+    if (el.contains(e.relatedTarget)) return;
+    el.classList.add('drag-over');
+  });
+
+  thumbs.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  });
+
+  thumbs.addEventListener('dragleave', (e) => {
+    const el = e.target.closest('.img-thumb');
+    if (!el) return;
+    if (el.contains(e.relatedTarget)) return;
+    el.classList.remove('drag-over');
+  });
+
+  thumbs.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const el = e.target.closest('.img-thumb');
+    if (!el) return;
+    el.classList.remove('drag-over');
+    const toIdx = parseInt(el.dataset.idx);
+    if (dragIndex !== null && toIdx !== dragIndex) {
+      const [moved] = imgs.splice(dragIndex, 1);
+      imgs.splice(toIdx, 0, moved);
+      pintarThumbs();
+    }
+    dragIndex = null;
+  });
+
+  thumbs.addEventListener('dragend', () => {
+    thumbs.querySelectorAll('.img-thumb').forEach(t => t.classList.remove('dragging', 'drag-over'));
+    dragIndex = null;
+  });
 
   document.getElementById('plan-addurl').addEventListener('click', () => {
     const u = urlIn.value.trim();
