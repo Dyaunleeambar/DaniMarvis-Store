@@ -433,6 +433,8 @@ Es el **seguro del publicador**: publica solo lo que ya venció, con límites de
 
 > Deshacer **no** puede deshacer un post que ya salió en Facebook. Solo limpia la cola.
 
+**Tiempo real en el calendario.** El estado de los eventos (pendiente → publicado/vencida) cambia en el servidor cada minuto que corre el disparador, pero la vista de Publicaciones no depende de que el usuario recargue: `publicationsView.js` deja un `setInterval` de 45 s que llama a `/api/agenda` y **repinta solo si algo cambió** (compara una firma de los eventos y del disparador, ignorando `server_now`/`next_due_at` para no repintar por un timestamp). El refresh se salta cuando la pestaña está oculta o hay un modal abierto, y el `cleanup` que devuelve `render()` lo limpia el router al navegar fuera. No hay WebSocket: el polling es suficiente porque el disparador corre cada minuto.
+
 ### Exportaciones
 
 | Método | Ruta | Descripción |
@@ -559,7 +561,7 @@ El frontend es una **SPA** (Single Page Application) construida con JavaScript v
 - **Toast notifications** para feedback de acciones
 - **Modales** para formularios de creación/edición
 - **Diálogos de confirmación** (`confirmDialog`) para eliminar registros o descartar cambios sin guardar
-- **Protección de formularios** — al cerrar el modal con datos modificados se pide confirmación
+- **Protección de formularios** — al cerrar el modal con datos modificados se pide confirmación. En Publicaciones cubre el Planificador, **Duplicar día**, **Reprogramar**, **Distribuir en el día** y **Gestionar grupos** (un `setModalCloseGuard` que compara un snapshot de los campos editables; si no cambió nada, cierra sin preguntar)
 - **Sidebar responsive** — se colapsa en móvil
 - **Sidebar con conteos en vivo** — muestra cantidad de productos, proveedores y ventas, se actualiza al navegar o tras crear/eliminar
 - **Caché offline** con IndexedDB y función dedicada `fetchProducts()` que evita datos obsoletos

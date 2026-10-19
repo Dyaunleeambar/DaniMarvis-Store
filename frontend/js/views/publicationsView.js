@@ -30,6 +30,29 @@ let listaDia = null;        // publicaciones del modal "ver día", para "Distrib
 // de un día significaba cinco clicks en volver a abrir el modal de ese día.
 let modalAgendaCtx = null;  // { tipo: 'detalle'|'dia', id?, fecha? }
 
+// Auto-refresh del calendario: el disparador publica en background cada minuto,
+// así que los estados (pendiente → publicado/vencida) cambian solos. Sin esto la
+// vista se ve congelada hasta que el usuario navega o recarga a mano.
+let refreshTimer = null;
+const REFRESH_MS = 45000;
+
+/**
+ * Guard para modales con edición en curso. `snapshot()` devuelve el estado
+ * actual de los campos editables; `inicial` es el estado "limpio". Si cambió,
+ * pide confirmación antes de descartar; si no, cierra sin preguntar.
+ *
+ * Es el mismo patrón que ya usa el Planificador (y productsView), parametrizado
+ * para reutilizarlo en Duplicar día, Reprogramar y Distribuir.
+ */
+function setGuardEdicion(inicial, snapshot) {
+  setModalCloseGuard(async () => {
+    if (snapshot() === inicial) return true;
+    return confirmDialog('¿Descartar los cambios sin guardar?', {
+      title: 'Cambios sin guardar', confirmText: 'Descartar', danger: true,
+    });
+  });
+}
+
 // ══════════════════════════════ utilidades de fecha ═══════════════════════
 // Todo se calcula en hora LOCAL. La fecha viene del servidor ya resuelta
 // (anio_local/mes_local/dia_local/hora_local) justamente para no repetir el
@@ -126,6 +149,55 @@ async function cargar() {
   }
 }
 
+/**
+ * Firma del estado que se pinta. El auto-refresh la compara antes y después de
+ * refrescar para repintar SOLO si algo cambió: repintar a ciegas cada 45s
+ * destruye y recrea la grilla, lo que pisa el hover, el scroll del mouse y el
+ * foco de los botones mientras el usuario está mirando un día.
+ *
+ * Excluye `server_now` y `next_due_at` a propósito: son timestamps que cambian
+ * en cada respuesta sin que el contenido visible cambie.
+ */
+function firmaAgenda() {
+  const evs = (agenda?.eventos || []).map(e => {
+    const dest = (e.destinos || []).map(d => `${d.group_name || d.group_id}:${d.status}`).join(',');
+    return `${e.id}|${e.estado}|${e.fecha}|${e.hora_local}|${e.product_name || ''}|${dest}`;
+  }).join('\n');
+  const d = agenda?.disparador || {};
+  const disp = `${d.master_on}|${d.auto}|${d.due}|${agenda?.huerfanos || 0}`;
+  return evs + '§' + disp;
+}
+
+/**
+ * Refresco de fondo. No toca nada si la pestaña está oculta o si hay un modal
+ * abierto (el usuario podría estar en mitad de una edición: repintar el
+ * calendario de detrás no rompería nada, pero no tiene sentido gastar la
+ * petición ni redibujar lo que no se está mirando).
+ */
+async function refrescarSilencioso() {
+  if (document.hidden || cargando) return;
+  // Modal abierto: no refrescar. `#modal-overlay` vive fuera del container, así
+  // que repintar el calendario no cerraría el modal, pero sí lo dejaría con datos
+  // viejos al volver al contexto — mejor esperar a que se cierre.
+  const overlay = document.getElementById('modal-overlay');
+  if (overlay && !overlay.classList.contains('hidden')) return;
+
+  const antes = firmaAgenda();
+  const { from, to } = rangoVisible();
+  try {
+    agenda = await api.getAgenda(from, to);
+  } catch { return; }  // silencioso: no toast en refresh de fondo
+  if (firmaAgenda() !== antes) pintar();
+}
+
+function iniciarRefresh() {
+  detenerRefresh();
+  refreshTimer = setInterval(refrescarSilencioso, REFRESH_MS);
+}
+function detenerRefresh() {
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+}
+
 export async function render(cont) {
   container = cont;
   cont.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-secondary)">Cargando agenda...</div>';
@@ -138,6 +210,10 @@ export async function render(cont) {
     productos = ps;
   } catch { /* el calendario igual se dibuja */ }
   await cargar();
+  iniciarRefresh();
+  // El router llama a este cleanup al cambiar de vista: sin él, el interval
+  // seguiría corriendo contra un container que ya no existe en el DOM.
+  return detenerRefresh;
 }
 
 function pintar() {
@@ -818,6 +894,10 @@ window._agendaDuplicarDia = function (fecha) {
   // pregunta es otra.
   let confirmarRepeticion = false;
   const seleccion = new Set();      // arranca vacío; cada plan nuevo lo llena
+  // True sólo cuando el usuario desmarca (o remarca) filas a mano. pedirPlan()
+  // llena `seleccion` sola al cargar el plan: sin este flag, el guard de cierre
+  // marcaría "sucio" apenas abre el modal, aunque no se haya tocado nada.
+  let seleccionEditada = false;
 
   const nombreDe = (d) => d.product_name || truncate(d.publish_text, 38) || 'Publicación';
 
@@ -887,6 +967,16 @@ window._agendaDuplicarDia = function (fecha) {
   const reordenarEl = document.getElementById('dup-reordenar');
   const rotarEl = document.getElementById('dup-rotar');
   const distribuirEl = document.getElementById('dup-distribuir');
+
+  // Guard de cierre: sólo cuenta como "sucio" lo que el usuario toca a mano.
+  // La selección entra al snapshot sólo si el usuario la editó, porque el plan
+  // la llena sola al cargar.
+  const snapshotDup = () => [
+    destinoEl.value, horaEl.value,
+    reordenarEl.checked, rotarEl.checked, distribuirEl.checked,
+    seleccionEditada ? 1 : 0,
+  ].join('|');
+  setGuardEdicion(snapshotDup(), snapshotDup);
 
   // Mostrar a qué cuenta se está agendando
   const cuentaDupEl = document.getElementById('dup-cuenta');
@@ -981,6 +1071,7 @@ window._agendaDuplicarDia = function (fecha) {
    *  foco del check y el scroll de la lista se conservan mientras se va marcando,
    *  que es lo que pasa cuando el día tiene 76 publicaciones. */
   const marcar = (id, on) => {
+    seleccionEditada = true;
     if (on) seleccion.add(id); else seleccion.delete(id);
     previaEl.querySelectorAll('[data-dup-fila]').forEach(fila => {
       if (fila.dataset.dupFila !== id) return;
@@ -992,6 +1083,7 @@ window._agendaDuplicarDia = function (fecha) {
   };
 
   const marcarTodas = (on) => {
+    seleccionEditada = true;
     seleccion.clear();
     (plan?.duplicadas || []).forEach(d => { if (on) seleccion.add(d.id); });
     previaEl.querySelectorAll('[data-dup-fila]').forEach(fila => {
@@ -1225,7 +1317,9 @@ window._agendaReprogramar = function (id, actual) {
       <button type="button" class="btn btn--primary" id="replan-guardar">Reprogramar</button>
     </div>
   `);
-  setModalCloseGuard(null);
+  // Guard de cierre: sólo pregunta si el usuario cambió la fecha/hora.
+  const replanInput = () => document.getElementById(inputId)?.value || '';
+  setGuardEdicion(actual, replanInput);
   document.getElementById('replan-guardar').addEventListener('click', async (e) => {
     const btn = e.currentTarget;
     const val = document.getElementById(inputId)?.value;
@@ -1448,7 +1542,6 @@ window._agendaDistribuir = function () {
       <button type="button" class="btn btn--primary" id="dist-guardar">Repartir</button>
     </div>
   `);
-  setModalCloseGuard(null);
 
   const desdeEl = document.getElementById('dist-desde');
   const hastaEl = document.getElementById('dist-hasta');
@@ -1459,6 +1552,16 @@ window._agendaDistribuir = function () {
   const guardarEl = document.getElementById('dist-guardar');
   const rotarEl = document.getElementById('dist-rotar');
   const rotarInfoEl = document.getElementById('dist-rotar-info');
+
+  // Guard de cierre: cuenta el estado editable (franja, separación, rotar y qué
+  // filas quedaron destildadas). `excluidas` arranca vacío, así que el snapshot
+  // inicial es el mismo que el del DOM recién abierto.
+  const snapshotDist = () => [
+    desdeEl.value, hastaEl.value, minEl.value, maxEl.value,
+    rotarEl.checked ? 1 : 0,
+    [...excluidas].sort().join(','),
+  ].join('|');
+  setGuardEdicion(snapshotDist(), snapshotDist);
 
   // Rotación de grupos. Se pide el orden UNA vez por un n igual a todas las del
   // día, así la k-ésima seleccionada siempre recibe el k-ésimo grupo sin volver
@@ -2161,7 +2264,15 @@ async function gestionarGrupos() {
     </div>
     <div class="form-actions"><button type="button" class="btn btn--secondary" onclick="closeModal()">Cerrar</button></div>
   `);
-  setModalCloseGuard(null);
+  // Guard de cierre: si el usuario empezó a cargar un grupo nuevo y cierra sin
+  // querer, se le pregunta antes de tirar lo escrito. El "Agregar" y el
+  // "Eliminar" de cada fila cierran con closeModal(true), así que no les toca.
+  const grSnapshot = () => {
+    const n = document.getElementById('gr-nombre');
+    const u = document.getElementById('gr-url');
+    return `${n?.value || ''}|${u?.value || ''}`;
+  };
+  setGuardEdicion(grSnapshot(), grSnapshot);
 
   document.getElementById('gr-agregar').addEventListener('click', async () => {
     const nombre = document.getElementById('gr-nombre').value.trim();
