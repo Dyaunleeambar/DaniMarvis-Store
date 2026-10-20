@@ -193,6 +193,11 @@ async function refrescarSilencioso() {
 function iniciarRefresh() {
   detenerRefresh();
   refreshTimer = setInterval(refrescarSilencioso, REFRESH_MS);
+  // En el navegador setInterval devuelve un número; en Node (tests) devuelve un
+  // Timeout. Sin unref(), el interval mantiene vivo el proceso de Node y
+  // `npm run check` se queda colgado en check-carga, que llama a render() sin
+  // usar el cleanup. unref() es no-op en el navegador.
+  if (refreshTimer && typeof refreshTimer.unref === 'function') refreshTimer.unref();
 }
 function detenerRefresh() {
   if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }

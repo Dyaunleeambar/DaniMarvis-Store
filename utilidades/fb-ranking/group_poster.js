@@ -1140,34 +1140,50 @@ async function seleccionarLoteGrupos(page, { n, desde } = {}) {
   }
   if (!checksVisibles) return { seleccionados: [], total: 0, sinBoton: false };
 
-  // 3) cargar la lista entera. Es LAZY: arranca con 20 checkables y cada scroll
-  //    al fondo del div interno agrega 20 más. Scrollear la ventana no hace
-  //    nada (mismo error que en el scanner de grupos), así que se baja el div.
-  //    Se corta cuando 3 scrolls seguidos no suman ninguno, igual que el scanner.
-  let cargados = 0, scrollsSinNovedad = 0;
-  for (let i = 0; i < 40 && scrollsSinNovedad < 3; i++) {
-    const n0 = await page.evaluate(() => {
-      const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-      const chk = Array.from(document.querySelectorAll('[role="dialog"] input[type=checkbox]')).filter(vis);
-      if (!chk.length) return 0;
-      let n = chk[0], cont = null;
-      while (n && n !== document.body) {
-        const cs = getComputedStyle(n);
-        if (/(auto|scroll)/.test(cs.overflowY) && n.scrollHeight > n.clientHeight + 20) { cont = n; break; }
-        n = n.parentElement;
+  // 3) cargar la lista ENTERA. El picker es LAZY: arranca con ~20 checkables y
+  //    suma más al scrollear el contenedor interno (no la ventana). Hasta el
+  //    2026-10-19 esto andaba; desde ~16:13 de ese día el picker dejó de pasar
+  //    de los primeros 20. La detección del contenedor (subir desde el primer
+  //    checkbox exigiendo overflowY auto/scroll) dejó de encontrarlo, así que el
+  //    lote se armaba SOLO con esos 20 y se repartía siempre a los mismos grupos.
+  //    Ahora se scrollean TODOS los ancestros scrolleables del primer checkbox
+  //    (sin exigir overflowY: Facebook puede usar overflow:clip y aún así
+  //    scrollear por código) y, si no hay ninguno, el div scrolleable más grande
+  //    dentro del diálogo. Se corta cuando varios scrolls seguidos no suman.
+  const scrollLista = () => page.evaluate(() => {
+    const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    const chk = Array.from(document.querySelectorAll('[role="dialog"] input[type=checkbox]')).filter(vis);
+    if (!chk.length) return { checks: 0, movidos: 0 };
+    const cands = [];
+    for (let n = chk[0]; n && n !== document.body; n = n.parentElement) {
+      if (n.scrollHeight > n.clientHeight + 4) cands.push(n);
+    }
+    if (!cands.length) {
+      const root = chk[0].closest('[role="dialog"]') || document;
+      let best = null;
+      for (const el of root.querySelectorAll('div')) {
+        if (!el.contains(chk[0]) || el.scrollHeight <= el.clientHeight + 4) continue;
+        if (!best || el.scrollHeight > best.scrollHeight) best = el;
       }
-      if (!cont) return chk.length;
-      cont.scrollTop = cont.scrollHeight;
-      cont.dispatchEvent(new Event('scroll', { bubbles: true }));
-      return chk.length;
-    });
+      if (best) cands.push(best);
+    }
+    let movidos = 0;
+    for (const c of cands) {
+      if (c.scrollTop < c.scrollHeight - c.clientHeight - 2) {
+        c.scrollTop = c.scrollHeight;
+        c.dispatchEvent(new Event('scroll', { bubbles: true }));
+        movidos++;
+      }
+    }
+    return { checks: chk.length, movidos };
+  });
+  let cargados = checksVisibles, scrollsSinNovedad = 0;
+  for (let i = 0; i < 60 && scrollsSinNovedad < 4; i++) {
+    await scrollLista();
     await sleep(rand(1100, 1900));
-    const n1 = await page.evaluate(() => {
-      const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-      return Array.from(document.querySelectorAll('[role="dialog"] input[type=checkbox]')).filter(vis).length;
-    });
-    if (n1 > n0) { scrollsSinNovedad = 0; cargados = n1; } else scrollsSinNovedad++;
+    const n1 = await contarChecks();
     if (!n1) break;
+    if (n1 > cargados) { cargados = n1; scrollsSinNovedad = 0; } else scrollsSinNovedad++;
   }
 
   // 4) nombres en orden de Facebook, que es el orden del DOM
@@ -1337,13 +1353,26 @@ async function clickComposerButton(page) {
   return page.evaluate(() => {
     const norm = (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
     const vis = (el) => { const r = el.getBoundingClientRect(); if (r.width <= 0 || r.height <= 0) return false; const cs = getComputedStyle(el); return cs.visibility !== 'hidden' && cs.display !== 'none' && cs.opacity !== '0'; };
+    // El texto del botón de compositor cambia según el tipo de grupo: los de
+    // compra-venta dicen "Vender algo", otros "Crear publicación" o "¿Qué estás
+    // pensando?". Antes solo se miraban 4 variantes y el resto terminaba en
+    // "No se encontró el compositor del grupo". Se amplía la lista y se
+    // descartan las cajas de comentarios del feed (viven dentro de un article).
+    const CLAVES = [
+      'escribe algo', 'escribir algo', 'write something', 'publicá algo', 'publica algo',
+      'publicar algo', 'vender algo', 'crear publicación', 'crear publicacion',
+      'crea una publicación', 'crea una publicacion', 'añadir algo', 'añade algo',
+      'agregar algo', 'algo en mente', "what's on your mind", 'create post', 'comparte algo',
+    ];
     let best = null;
     for (const el of document.querySelectorAll('div[role="button"], span[role="button"], button')) {
       if (!vis(el)) continue;
+      if (el.closest('[role="article"]') || el.closest('[role="feeditem"]')) continue;
       const t = norm(el.getAttribute('aria-label')) || norm(el.innerText) || '';
       if (!t) continue;
-      const hit = t.includes('escribe algo') || t.includes('escribir algo') || t.includes('write something') || t.includes('publicá algo');
-      if (hit && (!best || (el.innerText || '').length < (best.el.innerText || '').length)) best = { el };
+      if (!CLAVES.some((k) => t.includes(k))) continue;
+      const len = (el.innerText || '').length;
+      if (!best || len < best.len) best = { el, len };
     }
     if (!best) return false;
     best.el.click();
@@ -1602,9 +1631,9 @@ async function processGroup(browser, groupUrl, label) {
     const needsApproval = await hasApprovalNotice(page);
 
     let composer = await findComposer(page);
-    for (let attempt = 0; attempt < 4 && !composer; attempt++) {
+    for (let attempt = 0; attempt < 6 && !composer; attempt++) {
       // Si ya hay un compositor abierto, NO clicar otra vez: cada clic de más
-      // abre OTRO compositor. Antes el loop clicaba a ciegas hasta 4 veces y
+      // abre OTRO compositor. Antes el loop clicaba a ciegas varias veces y
       // dejaba varios modales apilados (el "más de un compositor" del 2026-10-16).
       if (await hayDialogoCompositor(page)) {
         await sleep(rand(1200, 2000));
