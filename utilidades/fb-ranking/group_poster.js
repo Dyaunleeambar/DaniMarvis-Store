@@ -11,7 +11,8 @@
  *     --images "C:/ruta/1.jpg;C:/ruta/2.jpg" \
  *     --mode publish     (publish | prepare | dry-run)
  *     --label "Electrodomésticos Cuba"
- *     [--max-seconds 240]
+ *     [--max-seconds 420]
+ *     [--net-scale 0]   (0 = auto; 1 = forzar red rápida; >1 = forzar red lenta)
  *
  * Precondición: Chrome abierto con --remote-debugging-port=9222 (perfil logueado en FB).
  *
@@ -42,7 +43,7 @@ const MESSAGE_FILE = val(args, '--message-file') || '';
 const IMAGES_RAW = val(args, '--images') || '';
 const MODE = (val(args, '--mode') || 'publish').toLowerCase();
 const LABEL = val(args, '--label') || '';
-const MAX_SECONDS = parseInt(val(args, '--max-seconds') || '300', 10) || 300;
+const MAX_SECONDS = parseInt(val(args, '--max-seconds') || '420', 10) || 420;
 const DEBUG = !!val(args, '--debug');
 // Lote de grupos: cuántos tildar en "Añadir grupos" y desde dónde arrancar.
 // El cursor es el NOMBRE del último grupo del lote anterior, no un índice:
@@ -79,12 +80,23 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const rand = (min, max) => min + Math.random() * (max - min);
 
 // Carga de adjuntos. Los tiempos están calculados para que el peor caso quepa en
-// MAX_SECONDS (300s por grupo) incluso con 10 imágenes: 10 x 2 intentos x 6
+// MAX_SECONDS (420s por grupo) incluso con 10 imágenes: 10 x 2 intentos x 6
 // sondeos x 1s = 120s de espera de adjunto, y ensureMediaReady se lleva como
 // máximo 33s. A eso se suman la espera al botón Publicar (hasta 20s) y la
-// confirmación del envío antes de cerrar la pestaña (hasta 75s). Antes una sola
+// confirmación del envío antes de cerrar la pestaña (hasta 120s). Antes una sola
 // imagen agotaba 12s y una sola falla cortaba todo el loop, así que 6 imágenes
-// no llegaban nunca.
+// no llegaban nunca. Con red lenta esos números se multiplican por el factor de
+// `NET_SCALE_MAX` (3x), y el guard de --max-seconds (420s) sigue por encima del
+// peor caso escalado (confirmar envío 360s).
+// Los tiempos de arriba y los de más abajo son los valores para una conexión
+// RÁPIDA. Con internet lento el bot declaraba "no se envió" aunque el post sí
+// hubiera salido: el clic se hacía (botón habilitado) y el compositor tardaba
+// más de 30s en vaciarse, o el botón seguía deshabilitado >20s procesando las
+// imágenes por una subida lenta. En vez de subir los números a ciegas (que con
+// red rápida desperdicia tiempo), cada página mide su latencia real y esas
+// constantes se multiplican por un factor. Ver `medirRed` y `escalar`.
+// El usuario puede fijar el factor a mano con --net-scale (0 = auto).
+const NET_SCALE_ARG = Number(val(args, '--net-scale') || '0') || 0;
 const ATTACH_ATTEMPTS = 2;   // intentos por imagen, cada uno con input fresco
 const ATTACH_POLL_MS = 1000; // intervalo entre sondeos de miniatura
 const ATTACH_WAIT_POLLS = 6; // sondeos por intento (6s)
@@ -103,6 +115,76 @@ const PUBLISH_POLL_MS = 700;
 // sigue (no se cuelga la corrida entera).
 const ENVIO_CONFIRM_MS = 120000;
 const ENVIO_POLL_MS = 1000;
+
+// Objeto MUTABLE con los presupuestos ya escalados. Se actualiza una vez por
+// página tras medir la red (ver `escalar`). Usar T.* en el momento de esperar,
+// porque los valores cambian entre grupos de una misma corrida.
+const T = {
+  attachWaitPolls: ATTACH_WAIT_POLLS,
+  readyBaseMs: READY_BASE_MS,
+  readyMaxMs: READY_MAX_MS,
+  publishWaitMs: PUBLISH_WAIT_MS,
+  envioConfirmMs: ENVIO_CONFIRM_MS,
+};
+
+// Tope del factor. La red puede medir peor de lo que realmente afecta al flujo
+// (una navegación pesada con imágenes), así que se acota para no quedarse 15
+// minutos por grupo: por encima de esto se asume "muy lento" y ya. El 3x deja el
+// peor caso interno (confirmar envío 120s -> 360s) por debajo del guard de
+// --max-seconds (420s) y del timeout del padre (470s), así el guard del poster
+// sigue emitiendo su JSON limpio en vez de que el padre lo mate.
+const NET_SCALE_MIN = 1;
+const NET_SCALE_MAX = 3;
+
+// Mide la latencia real de carga de la página y la convierte en factor de
+// escala para los presupuestos de espera. Usa la Navigation Timing API (misma
+// sesión, sin requests extra): responseStart es ~"primer byte" y domComplete es
+// ~"todo el DOM listo". 1 = rápido; >1 = lento.
+async function medirRed(page) {
+  return page.evaluate(() => {
+    try {
+      const n = performance.getEntriesByType('navigation')[0] || {};
+      const t = n.responseStart || n.domContentLoadedEventEnd || 0;
+      const total = n.domComplete || n.loadEventEnd || t;
+      return { ttfb: Math.round(t), total: Math.round(total) };
+    } catch (_) { return { ttfb: 0, total: 0 }; }
+  }).catch(() => ({ ttfb: 0, total: 0 }));
+}
+
+// Aplica el factor a los presupuestos (T) y avisa por consola si es >1.
+function escalar(scale) {
+  const s = (!scale || !isFinite(scale) || scale <= 0) ? NET_SCALE_MIN
+    : Math.min(NET_SCALE_MAX, Math.max(NET_SCALE_MIN, scale));
+  T.attachWaitPolls = Math.round(ATTACH_WAIT_POLLS * s);
+  T.readyBaseMs = Math.round(READY_BASE_MS * s);
+  T.readyMaxMs = Math.round(READY_MAX_MS * s);
+  T.publishWaitMs = Math.round(PUBLISH_WAIT_MS * s);
+  T.envioConfirmMs = Math.round(ENVIO_CONFIRM_MS * s);
+  if (s > 1.15) {
+    console.log(`[NET] red lenta (factor x${s.toFixed(2)}): esperas escaladas (publicar=${T.publishWaitMs}ms, adjuntos=${T.readyMaxMs}ms, confirmar=${T.envioConfirmMs}ms)`);
+  }
+  return s;
+}
+
+// Determine el factor para una página: 1) si el usuario lo fijó, ese; 2) si no,
+// auto (según la latencia medida) y lo cachea para las próximas páginas de la
+// corrida, que comparten la misma conexión.
+let escalaCache = NET_SCALE_ARG > 0 ? NET_SCALE_ARG : null;
+async function factorRed(page) {
+  let f;
+  if (escalaCache) {
+    f = escalaCache;
+  } else {
+    const m = await medirRed(page);
+    // Referencias de una conexión normal: TTFB < 0.6s y DOM < 3s son "rápidos".
+    // La peor de las dos razones manda; un suelo evita el sobreajuste por ruido.
+    const sTtfb = m.ttfb > 0 ? Math.max(1, m.ttfb / 600) : 1;
+    const sTotal = m.total > 0 ? Math.max(1, m.total / 3000) : 1;
+    f = Math.max(NET_SCALE_MIN, sTtfb, sTotal);
+    escalaCache = f;
+  }
+  return escalar(f);
+}
 
 // ---------------------------------------------------------------- helpers ---
 function out(obj) {
@@ -742,7 +824,7 @@ async function attachImages(page) {
 
     // Espera de cadencia para que FB termine de procesar antes del siguiente
     // archivo. NO decide reintentos: solo evita que se le pisen encima.
-    for (let i = 0; i < ATTACH_WAIT_POLLS; i++) {
+    for (let i = 0; i < T.attachWaitPolls; i++) {
       await sleep(ATTACH_POLL_MS);
       const st = await mediaAttachedCount(page, panel);
       if (st.hasRemove || st.n > 0) break;
@@ -896,7 +978,7 @@ async function ensureMediaReady(page, composer, expected, rect) {
   // (10.5s) eran 10.5s para 1 imagen y los mismos 10.5s para 10, que no alcanzan
   // cuando hay varias subiendo en serie. Antes 10.5s era el techo y por eso un
   // post de 6 imágenes con 1MB nunca llegaba a contarse completo.
-  const budgetMs = Math.min(READY_MAX_MS, READY_BASE_MS + expected * READY_PER_IMAGE_MS);
+  const budgetMs = Math.min(T.readyMaxMs, T.readyBaseMs + expected * READY_PER_IMAGE_MS);
   const deadline = Date.now() + budgetMs;
   let last = { n: 0 };
   while (Date.now() < deadline) {
@@ -998,13 +1080,13 @@ async function findPublishButton(page) {
 
 async function clickPublish(page, dryRun) {
   if (dryRun) return { clicked: false, tooltip: false, dry: true };
-  // Sondea hasta PUBLISH_WAIT_MS: el botón puede no estar montado todavía o
-  // estar deshabilitado mientras Facebook termina de subir/procesar las
-  // imágenes. Se corta apenas aparece habilitado; si solo se ve deshabilitado
-  // se recuerda para el diagnóstico del fallo.
+  // Sondea hasta T.publishWaitMs (escalado por red): el botón puede no estar
+  // montado todavía o estar deshabilitado mientras Facebook termina de
+  // subir/procesar las imágenes. Se corta apenas aparece habilitado; si solo se
+  // ve deshabilitado se recuerda para el diagnóstico del fallo.
   let btn = null;
   let deshabilitado = null;
-  const deadline = Date.now() + PUBLISH_WAIT_MS;
+  const deadline = Date.now() + T.publishWaitMs;
   for (;;) {
     const found = await findPublishButton(page).catch(() => null);
     if (found && found.enabled) { btn = found; break; }
@@ -1542,7 +1624,7 @@ async function dumpPublishCandidates(page) {
  * que NO es lo mismo que "no se envió".
  */
 async function esperarEnvioConfirmado(page, snippet, budgetMs) {
-  const limite = Date.now() + (budgetMs || ENVIO_CONFIRM_MS);
+  const limite = Date.now() + (budgetMs || T.envioConfirmMs);
   let vacioSostenido = 0;
   let ultimo = { aparecio: false, enCurso: false, conTexto: 1 };
   while (Date.now() < limite) {
@@ -1619,7 +1701,12 @@ async function processGroup(browser, groupUrl, label) {
   let dejarPestana = false;
   try {
     await page.goto(groupUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-    await sleep(rand(5000, 8000));
+    // Medir la red de ESTA página y escalar los presupuestos de espera antes de
+    // empezar. Con internet lento, el resto del flujo espera más; con red rápida
+    // los valores quedan iguales que siempre.
+    const escala = await factorRed(page);
+    const esperaInicial = Math.round(rand(4000, 7000) + (escala - 1) * 2500);
+    await sleep(esperaInicial);
 
     if (await isLoginRequired(page)) {
       return out({ group_url: groupUrl, ok: false, status: 'error', message: 'Sesión de Facebook requerida. Abrí el perfil logueado y reintentá.' });
@@ -1639,7 +1726,7 @@ async function processGroup(browser, groupUrl, label) {
         await sleep(rand(1200, 2000));
       } else {
         await clickComposerButton(page);
-        await sleep(rand(2200, 3200));
+        await sleep(rand(2200, 3200) * escala);
       }
       composer = await findComposer(page);
     }
@@ -1757,10 +1844,17 @@ async function processGroup(browser, groupUrl, label) {
 
     const pub = await clickPublish(page, false);
 
-    // esperar a que el compositor se vacíe (post publicado)
+    // Esperar a que el compositor se vacíe (post publicado). El bucle es por
+    // TIEMPO, no por número fijo de vueltas: antes eran 20 x 1.5s = 30s fijos y
+    // con internet lento el compositor tardaba más en vaciarse → se declaraba el
+    // falso "no se envió" aunque el post sí hubiera salido. Ahora el presupuesto
+    // sale de ENVIO_CONFIRM_MS (escalado por red) y, si no se vacía, NO se falla
+    // de una: se deja que `esperarEnvioConfirmado` (más abajo) confirme contra el
+    // feed antes de decidir.
     let len = lenBefore;
     let cleared = false;
-    for (let i = 0; i < 20; i++) {
+    const drainDeadline = Date.now() + T.envioConfirmMs;
+    while (Date.now() < drainDeadline) {
       len = await currentComposerLen(page);
       if (len === 0) { cleared = true; break; }
       await sleep(1500);
@@ -1776,7 +1870,7 @@ async function processGroup(browser, groupUrl, label) {
         captura = nombre;
       } catch (_) { /* nunca romper el resultado por una captura */ }
       const detalle = pub.disabled
-        ? ` El botón "Publicar" estaba DESHABILITADO (aria-disabled=${pub.info?.dis ?? 'true'}) después de ${Math.round(PUBLISH_WAIT_MS / 1000)}s: Facebook seguía procesando las imágenes o no aceptó el texto.`
+        ? ` El botón "Publicar" estaba DESHABILITADO (aria-disabled=${pub.info?.dis ?? 'true'}) después de ${Math.round(T.publishWaitMs / 1000)}s: Facebook seguía procesando las imágenes o no aceptó el texto.`
         : '';
       // Qué botones había de verdad: sin esto, "no se encontró Publicar" no dice
       // si el compositor no se abrió, si el botón dice otra cosa, o si Facebook
@@ -1789,6 +1883,19 @@ async function processGroup(browser, groupUrl, label) {
       return out({ group_url: groupUrl, ok: false, status: 'error', message: 'No se encontró el botón Publicar.' + detalle + pistaCand, clicks: pub, screenshot: captura, candidatos: cand, ...loteCampos });
     }
     if (!cleared) {
+      // El compositor no se vació dentro del presupuesto. Antes esto se daba por
+      // fallado en seco, pero con red lenta el post SÍ puede haber salido y el
+      // editor tardar en vaciarse. Así que primero se mira el feed con la misma
+      // verificación del camino feliz: si el post está publicado, es un éxito (la
+      // lectura del editor llegó tarde), no un error.
+      const envioTarde = await esperarEnvioConfirmado(page, text).catch(() => ({ ok: false, motivo: 'error al verificar el envío' }));
+      console.error('[ENVIO-TARDE] ' + JSON.stringify(envioTarde));
+      if (envioTarde.ok) {
+        return out({ group_url: groupUrl, ok: true, status: 'published',
+          message: 'Publicado (el compositor tardó en vaciarse; se confirmó en el feed).' + loteTexto,
+          post_url: envioTarde.postUrl || '', imagen_adjunta: imgs.attached, imagenes_pedidas: imgs.images,
+          adjuntos_confirmados: confirmados ? 1 : 0, texto_digits: lenBefore, metodo_texto: puesto.metodo, toral_ms: Date.now() - t0, ...loteCampos });
+      }
       // Diagnóstico para que el error diga POR QUÉ no se ve el envío y no haya
       // que adivinar. Se separa el caso "el texto sigue en el compositor" (FB no
       // lo tomó: límite, verificación, o el clic no_registryó) del caso "no
@@ -1871,6 +1978,25 @@ async function processGroup(browser, groupUrl, label) {
         await page.screenshot({ path: require('path').join(require('os').tmpdir(), nombre) });
         captura = nombre;
       } catch (_) { /* la captura es un extra: nunca debe romper el resultado */ }
+      // Si Facebook NO mostró ningún aviso, no se puede afirmar que el post "no
+      // se envió": con red lenta el compositor puede quedarse con el texto un
+      // rato DESPUÉS de que el post ya salió. Antes eso se contaba como error y
+      // alimentaba el breaker (3 fallos → cortar), generando falsos negativos que
+      // descartaban posts que SÍ salieron. Ahora, sin aviso de FB, el veredicto
+      // es INDETERMINADO: se registra para que el usuario lo revise, pero no
+      // corta la corrida ni se suma al contador de fallos del breaker.
+      const indeterminado = !diag.bloqueo && !diag.error;
+      if (indeterminado) {
+        return out({
+          group_url: groupUrl, ok: false, status: 'revisar',
+          message: `Se hizo clic en Publicar y no se pudo confirmar el envío (${diag.conTexto || 0} editor(es) con texto, el mayor de ${diag.areaMax || 0}px²).${porQuien} Revisá el grupo por si quedó publicado; si salió, no lo republiques.`,
+          clicks: pub,
+          alert_text: '',
+          carteles: diag.carteles || 0,
+          screenshot: captura,
+          ...loteCampos,
+        });
+      }
       return out({
         group_url: groupUrl, ok: false, status: 'error',
         message: `Se hizo clic en Publicar pero el post no se envió (${diag.conTexto || 0} editor(es) con texto, el mayor de ${diag.areaMax || 0}px²).${porQuien}${avisoDiag}`,

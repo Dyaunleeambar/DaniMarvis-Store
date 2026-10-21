@@ -12,7 +12,7 @@ router.get('/status', async (req, res) => {
 // naturales (solo rutas manuales de la UI).
 //
 // NO espera al run: devuelve 202 con el runId y el trabajo sigue en background.
-// El poster tiene --max-seconds=300 y entre posts hay 45-135s de separación, así
+// El poster tiene --max-seconds=420 y entre posts hay 45-135s de separación, así
 // que una corrida completa son minutos. El resultado se lee por polling en
 // GET /status (campo `current`).
 router.post('/run', (req, res) => {

@@ -171,6 +171,22 @@ export function marcarDuplicadosEn(db, candidatos, cfg, ahoraMs = Date.now()) {
       AND replace(pq.published_at,'T',' ') >= ?
   `).all(desdeSql);
 
+  // Los resultados 'revisar' (el clic se hizo pero no se pudo confirmar el envío:
+  // típico de internet lento) NO quedan 'published', pero el post PUEDE haber
+  // salido. Se cuentan como "posiblemente publicado" para no mandarlo dos veces:
+  // es preferible un falso duplicado evitado que dos posts iguales en el grupo.
+  // Se usa `updated_at` porque `published_at` es NULL en estas filas.
+  const posibles = db.prepare(`
+    SELECT pq.group_name, COALESCE(NULLIF(pq.variant_text,''), p.publish_text, '') AS texto,
+           pq.updated_at AS published_at
+    FROM publication_queue pq
+    LEFT JOIN publications p ON p.id = pq.publication_id
+    WHERE pq.notes LIKE '%auto:revisar%'
+      AND replace(pq.updated_at,'T',' ') >= ?
+  `).all(desdeSql);
+
+  for (const r of posibles) yaSalieron.push(r);
+
   const vistos = new Map();
   for (const r of yaSalieron) {
     const k = claveDuplicado(r.group_name, r.texto);

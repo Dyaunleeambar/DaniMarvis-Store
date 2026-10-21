@@ -583,7 +583,7 @@ router.post('/duplicar-dia/deshacer', (req, res) => {
  * del evento que se le pida. Es el botón "Publicar ahora" del detalle.
  *
  * No espera al run (devuelve 202 con el runId): el poster tiene --max-seconds
- * =300 y entre posts hay 45-135s de separación, así que una corrida son
+ * =420 y entre posts hay 45-135s de separación, así que una corrida son
  * minutos. El resultado se lee por polling en /api/group-publish/status.
  *
  * `ids` explícitos ⇒ runGroupPublish() los filtra sobre dueCandidates() y se

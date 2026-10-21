@@ -22,7 +22,7 @@ const UPLOADS_DIR = getUploadsDir();
 let running = false;
 let lastResult = null;
 // Progreso en vivo de la corrida en curso. Las rutas ya no esperan al run (el
-// poster tiene --max-seconds=300 y entre posts hay 45-135s de separación), así
+// poster tiene --max-seconds=420 y entre posts hay 45-135s de separación), así
 // que el frontend hace polling a /group-publish/status y lee esto. Sin esto no
 // hay nada que mostrar hasta el final, que es justo lo que había que evitar.
 let currentRun = null;
@@ -216,7 +216,13 @@ function updateQueue(item, result, mode) {
     notes += loteNota;
     notes += imgNota;
   } else {
-    notes = [base, `auto:error ${result.message || ''}`.trim()].filter(Boolean).join(' | ').slice(0, 500);
+    // El poster hizo el clic pero no pudo confirmar el envío (red lenta) -> status
+    // 'revisar'. El post PUEDE haber salido, así que la fila queda con una marca
+    // explícita `auto:revisar` para que (a) el usuario lo distinga de un error
+    // declarado y (b) el anti-duplicado lo cuente como "posiblemente publicado"
+    // y no lo vuelva a mandar.
+    const tag = result.status === 'revisar' ? 'auto:revisar' : 'auto:error';
+    notes = [base, `${tag} ${result.message || ''}`.trim()].filter(Boolean).join(' | ').slice(0, 500);
     notes = (notes + notaDiagnostico(result) + loteNota).slice(0, 500);
   }
   notes = (notes + avisos).slice(0, 500);
@@ -429,8 +435,15 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
       // pausado un rato en vez de seguir sacando destinos de a uno. Sin esto, el
       // 2026-10-03, la cola se consumió entera en 2 horas y Facebook dejó de
       // aceptar los envíos sin decir nada.
+      //
+      // EXCEPCIÓN `revisar`: los resultados que el poster no pudo confirmar pero
+      // tampoco son un fallo declarado (el compositor no se vació y Facebook no
+      // mostró ningún aviso) NO cuentan como fallo del canal. Con internet lento
+      // el post puede haber salido igual; contarlos disparaba el breaker por
+      // falsos negativos y cortaba corridas buenas. Sí se registran en el
+      // historial para que el usuario los revise.
       if (result.ok) limpiarFallos();
-      else registrarFallo(agendaCfg, result.message);
+      else if (result.status !== 'revisar') registrarFallo(agendaCfg, result.message);
       const avisos = Array.isArray(result.warnings) && result.warnings.length
         ? result.warnings.join('; ') : '';
       const row = {
@@ -547,7 +560,7 @@ export function logFinCorrida(r, estado = null) {
  * Dispara una corrida y devuelve DE INMEDIATO con el runId (la ruta responde
  * 202). El resultado se consulta por polling en GET /group-publish/status.
  *
- * Antes la ruta awaiteaba el run entero: con --max-seconds=300 del poster y 45-135s
+ * Antes la ruta awaiteaba el run entero: con --max-seconds=420 del poster y 45-135s
  * entre posts eso son minutos, y api.js no tiene timeout, así que el botón
  * quedaba en "Corriendo..." sin que nadie supiera si colgó o estaba trabajando.
  */

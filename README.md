@@ -384,7 +384,7 @@ Publica la cola en grupos de Facebook vía CDP (navegador), no por Graph API.
 | `POST` | `/api/group-publish/run` | Dispara las vencidas. **202** con `runId` |
 | `POST` | `/api/group-publish/run/:id` | Dispara un ítem puntual. **202** con `runId` |
 
-> Las dos rutas de disparo responden **202 al toque** y el trabajo sigue en background. El resultado no viene en la respuesta: hay que consultarlo en `/status`. Antes la ruta esperaba el run entero, y como el poster tiene `--max-seconds=300` con 45-135s entre posts, eso son minutos de request colgado.
+> Las dos rutas de disparo responden **202 al toque** y el trabajo sigue en background. El resultado no viene en la respuesta: hay que consultarlo en `/status`. Antes la ruta esperaba el run entero, y como el poster tiene `--max-seconds=420` con 45-135s entre posts, eso son minutos de request colgado.
 
 **Payload de `POST /run`:** `{ mode?: "publish"|"prepare", force?: boolean, ids?: string[] }`
 
@@ -843,7 +843,7 @@ El poster aplica la técnica y **verifica el compositor** (texto completo y salt
 
 Una corrida no se espera: `POST /run` responde **202** con un `runId` en ~5ms y el trabajo sigue en background. El frontend hace **polling cada 2s** a `/group-publish/status` y dibuja la barra de progreso con fase, grupo actual, publicados y errores.
 
-Motivo: el poster tiene `--max-seconds=300` con timeout de 330s, así que **incluso un solo ítem puede tardar ~5.5 minutos**, y con la separación entre posts una tanda completa mucho más. Antes la ruta esperaba todo eso y `api.js` no tiene timeout, así que el botón quedaba en "Corriendo..." sin saber si coltaba o trabajando.
+Motivo: el poster tiene `--max-seconds=420` con timeout de 470s, así que **incluso un solo ítem puede tardar ~7.8 minutos** (más con red lenta, que escala las esperas hasta 3x), y con la separación entre posts una tanda completa mucho más. Antes la ruta esperaba todo eso y `api.js` no tiene timeout, así que el botón quedaba en "Corriendo..." sin saber si coltaba o trabajando.
 
 `GET /status` incluye `elapsed_s` calculado en el servidor a propósito: el timestamp `started` viene recortado a 19 chars sin la `Z`, así que el browser lo parsearía como hora local (4h desfasado en Venezuela).
 
@@ -904,6 +904,13 @@ Y se ancla al **arranque** de ese intento, no a su `published_at`. No es un deta
 > El **2026-10-20** apareció un hermano de ese fallo: la lista cargaba pero **solo los primeros 20** grupos (`lote: 9/20` en las notas, en vez de `9/136`). Desde ~16:13 del 19-oct el picker dejó de scrollear más allá de la primera tanda: la detección del contenedor (subir desde el primer checkbox exigiendo `overflowY: auto|scroll`) ya no lo encontraba, así que el lote se armaba con esos 20 y se repartía **siempre a los mismos grupos**, que al saturarse hacían que Facebook rechazara el envío (7 de los 10 errores del día salieron como *"Se hizo clic en Publicar pero el post no se envió"*). Ahora `scrollLista` baja **todos** los ancestros scrolleables del primer checkbox (sin exigir `overflowY`, porque Facebook usa `overflow:clip`) y, si no hay ninguno, el div scrolleable más grande del diálogo. Se comprueba con `node scripts/test-lote-grupos.mjs`.
 >
 > El mismo día se amplió `clickComposerButton`: solo reconocía 4 variantes del botón de compositor ("escribe algo"…), y los grupos de compra-venta usan "Vender algo" / "Crear publicación". Los que no coincidían terminaban en *"No se encontró el compositor del grupo"*. Ahora también descarta cajas de comentarios del feed, y se reintenta abrir el compositor hasta 6 veces en vez de 4.
+>
+> **Internet lento (autoescalado de esperas).** El 2026-10-21 se atacó la otra mitad del problema: los tiempos de espera del poster estaban calibrados para una conexión rápida, y con red lenta el bot declaraba fallos que no lo eran. Las constantes viven en `utilidades/fb-ranking/group_poster.js` y ahora se multiplican por un factor medido en cada página:
+>
+> - **Se mide la red real** con la Navigation Timing API (`performance.getEntriesByType('navigation')`: `responseStart` ≈ primer byte, `domComplete` ≈ DOM listo), sin requests extra. Referencia "rápida": TTFB < 0.6s y DOM < 3s. El peor de los dos cocientes es el factor, con suelo 1 y techo 4. Se cachea para el resto de la corrida (comparten conexión) y se puede fijar a mano con `--net-scale` (0 = auto).
+> - **Se escalan**: la espera al botón Publicar habilitado (`PUBLISH_WAIT_MS`), el presupuesto de adjuntos (`ensureMediaReady`), la cadencia entre imágenes (`ATTACH_WAIT_POLLS`), la confirmación del envío (`ENVIO_CONFIRM_MS`) y la espera inicial tras cargar la página.
+> - **El bucle de vaciado del compositor** dejó de ser 20×1.5s = 30s fijos: ahora es por tiempo (`ENVIO_CONFIRM_MS`, escalado). Y si el compositor no se vació, **no se falla de una**: primero se mira el feed con `esperarEnvioConfirmado`. Si el post está publicado, es un éxito (la lectura del editor llegó tarde); con red lenta el compositor puede quedarse con el texto un rato después de que el post ya salió.
+> - **Nuevo veredicto `revisar`** (indeterminado): si el compositor no se vació y **Facebook no mostró ningún aviso**, el poster no puede afirmar que el post "no se envió". Eso ya no se cuenta como error del canal: **no alimenta el breaker** (3 fallos seguidos → pausa) ni corta corridas buenas. La fila queda marcada `auto:revisar` en las notas, visible como error para que el usuario lo revise, y el **anti-duplicado la cuenta como "posiblemente publicado"** para no mandar el mismo texto dos veces al grupo. Los fallos con aviso de Facebook siguen siendo `error` normal.
 
 > **Esto se puso el 2026-10-03 porque no existía.** El día duplicado dejó 190 destinos y el disparador los fue sacando a ~17 por hora, hasta que Facebook dejó de aceptar los envíos sin avisar nada. Los límites se agregan en `publish_config.agenda` y el estado del corte en `publish_config._breaker`.
 

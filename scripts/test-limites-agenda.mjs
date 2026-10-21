@@ -255,6 +255,53 @@ console.log('\n4. marcarDuplicadosEn: aparta lo repetido y deja lo demás');
     && db.prepare('SELECT status FROM publication_queue WHERE id = ?').get('dup2').status === 'error');
 }
 
+console.log('\n4b. marcarDuplicadosEn: un "revisar" cuenta como posiblemente publicado');
+{
+  // Los resultados 'revisar' NO quedan 'published' (el poster hizo el clic pero no
+  // pudo confirmar el envío: típico de internet lento), pero el post PUEDE haber
+  // salido. Se cuentan para el anti-duplicado por su marca en notes, para no
+  // mandarlo dos veces al grupo. Es preferible evitar un duplicado que publicar
+  // dos veces el mismo texto.
+  const ESQUEMA = `
+    CREATE TABLE publications (
+      id TEXT PRIMARY KEY, publish_text TEXT DEFAULT '', images TEXT DEFAULT '[]'
+    );
+    CREATE TABLE publication_queue (
+      id TEXT PRIMARY KEY, publication_id TEXT, group_name TEXT NOT NULL,
+      group_url TEXT DEFAULT '', status TEXT DEFAULT 'pending', scheduled_at TEXT,
+      published_at TEXT, variant_index INTEGER DEFAULT 0, variant_text TEXT DEFAULT '',
+      notes TEXT DEFAULT '', created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')), images TEXT DEFAULT '[]',
+      pending_approval INTEGER DEFAULT 0
+    );
+  `;
+  const { db } = await abrirMemoria(ESQUEMA);
+  const ahora = Date.UTC(2026, 9, 21, 15, 0, 0);
+  const iso = (ms) => new Date(ms).toISOString();
+
+  db.prepare("INSERT INTO publications (id, publish_text) VALUES ('p1', 'SE VENDE CASA')").run();
+  // Hace 1 h: quedó 'error' (no published) pero con la marca de revisar.
+  db.prepare(`INSERT INTO publication_queue (id, publication_id, group_name, status, notes, updated_at)
+              VALUES ('rev1', 'p1', 'Grupo A', 'error', 'auto:revisar Se hizo clic en Publicar y no se pudo confirmar el envío', ?)`)
+    .run(iso(ahora - 1 * 3600000));
+  // Un error normal (fallo declarado) NO debe contar como posiblemente publicado.
+  db.prepare(`INSERT INTO publication_queue (id, publication_id, group_name, status, notes, updated_at)
+              VALUES ('err1', 'p1', 'Grupo B', 'error', 'auto:error No se encontró el compositor del grupo', ?)`)
+    .run(iso(ahora - 1 * 3600000));
+
+  for (const c of [{ id: 'nuevo1' }, { id: 'nuevo2' }]) {
+    db.prepare("INSERT INTO publication_queue (id, group_name, variant_text, status) VALUES (?, ?, ?, 'pending')")
+      .run(c.id, c.id === 'nuevo1' ? 'Grupo A' : 'Grupo B', 'SE VENDE CASA');
+  }
+  const r3 = marcarDuplicadosEn(db, [
+    { id: 'nuevo1', group_name: 'Grupo A', variant_text: 'SE VENDE CASA' },
+    { id: 'nuevo2', group_name: 'Grupo B', variant_text: 'SE VENDE CASA' },
+  ], CFG, ahora);
+  const estado = (id) => db.prepare('SELECT status FROM publication_queue WHERE id = ?').get(id)?.status;
+  ok('el revisar aparta el reintento del mismo grupo', estado('nuevo1') === 'cancelled', JSON.stringify(r3));
+  ok('un error declarado NO se cuenta como revisar', estado('nuevo2') === 'pending', JSON.stringify(r3));
+}
+
 // ── 5. el diagnóstico del clic ───────────────────────────────────────────────
 console.log('\n5. parsePosterDiag: la evidencia que antes se tiraba');
 {

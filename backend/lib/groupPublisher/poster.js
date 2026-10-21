@@ -16,7 +16,12 @@ const POSTER_JS = path.join(__dirname, '..', '..', '..', 'utilidades', 'fb-ranki
 // emite un `ok:true, status:'warn'` ANTES del resultado final cuando pierde
 // saltos de línea: eso hacía que un ítem quedara marcado 'published' en la BD
 // sin haberse publicado nunca, mientras el resumen de la corrida contaba 0.
-const TERMINAL_STATUSES = new Set(['published', 'prepared', 'dry-run', 'error']);
+// `revisar` es terminal: el poster hizo el clic pero no pudo confirmar el envío
+// (el compositor no se vació y Facebook no mostró aviso, típico de red lenta).
+// No es un fallo declarado del canal, así que la cola lo registra para revisión
+// pero no lo cuenta para el breaker (ver cola.js). Si no estuviera acá, el
+// parseo lo descartaría y el ítem saldría como "Sin salida del poster".
+const TERMINAL_STATUSES = new Set(['published', 'prepared', 'dry-run', 'error', 'revisar']);
 
 /**
  * Convierte la salida del poster en un único resultado. Función pura (no toca
@@ -75,13 +80,15 @@ export function spawnPoster({ groupUrl, messageFile, imageFiles, mode, label, de
       '--message-file=' + messageFile,
       '--mode=' + mode,
       '--label=' + label,
-      // 300s < 330s (el timeout de execFile de abajo): así el GUARD interno del
+      // 420s < 470s (el timeout de execFile de abajo): así el GUARD interno del
       // poster salta primero y emite su JSON limpio de "Timeout de la operación",
       // en vez de que el proceso padre lo mate y se pierda la salida. Antes eran
       // 300s > 280s, y el padre mataba al hijo antes: quedaba un "Command failed"
-      // sin ninguna pista de qué grupo ni por qué. (Se subió a 330s porque el
-      // poster ahora espera a confirmar el envío antes de cerrar la pestaña.)
-      '--max-seconds=300',
+      // sin ninguna pista de qué grupo ni por qué. Se subió de 300 a 420 porque,
+      // con internet lento, el poster escala sus esperas hasta 3x (el presupuesto
+      // de confirmar el envío pasa de 120s a 360s) y el guard tenía que quedar
+      // por encima del peor caso escalado.
+      '--max-seconds=420',
       '--debug-port=' + port,
       // Técnica de pegado configurable en Ajustes. Se lee por corrida, así que
       // un cambio en el panel aplica sin reiniciar el server.
@@ -95,7 +102,7 @@ export function spawnPoster({ groupUrl, messageFile, imageFiles, mode, label, de
       args.push('--lote-n=' + loteN);
       if (loteDesde) args.push('--lote-desde=' + loteDesde);
     }
-    execFile(process.execPath, [POSTER_JS, ...args], { timeout: 330000 }, (err, stdout, stderr) => {
+    execFile(process.execPath, [POSTER_JS, ...args], { timeout: 470000 }, (err, stdout, stderr) => {
       const parsed = parsePosterOutput(stdout, { err, allText: `${stdout || ''}\n${stderr || ''}` });
       // El poster escribe en stderr justo lo que uno necesita para entender un
       // fallo: la línea [SUBMIT] con el botón que encontró (si estaba deshabilitado,
