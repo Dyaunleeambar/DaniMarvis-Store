@@ -384,7 +384,7 @@ Publica la cola en grupos de Facebook vía CDP (navegador), no por Graph API.
 | `POST` | `/api/group-publish/run` | Dispara las vencidas. **202** con `runId` |
 | `POST` | `/api/group-publish/run/:id` | Dispara un ítem puntual. **202** con `runId` |
 
-> Las dos rutas de disparo responden **202 al toque** y el trabajo sigue en background. El resultado no viene en la respuesta: hay que consultarlo en `/status`. Antes la ruta esperaba el run entero, y como el poster tiene `--max-seconds=420` con 45-135s entre posts, eso son minutos de request colgado.
+> Las dos rutas de disparo responden **202 al toque** y el trabajo sigue en background. El resultado no viene en la respuesta: hay que consultarlo en `/status`. Antes la ruta esperaba el run entero, y como el poster tiene `--max-seconds=600` con 45-135s entre posts, eso son minutos de request colgado.
 
 **Payload de `POST /run`:** `{ mode?: "publish"|"prepare", force?: boolean, ids?: string[] }`
 
@@ -843,7 +843,7 @@ El poster aplica la técnica y **verifica el compositor** (texto completo y salt
 
 Una corrida no se espera: `POST /run` responde **202** con un `runId` en ~5ms y el trabajo sigue en background. El frontend hace **polling cada 2s** a `/group-publish/status` y dibuja la barra de progreso con fase, grupo actual, publicados y errores.
 
-Motivo: el poster tiene `--max-seconds=420` con timeout de 470s, así que **incluso un solo ítem puede tardar ~7.8 minutos** (más con red lenta, que escala las esperas hasta 3x), y con la separación entre posts una tanda completa mucho más. Antes la ruta esperaba todo eso y `api.js` no tiene timeout, así que el botón quedaba en "Corriendo..." sin saber si coltaba o trabajando.
+Motivo: el poster tiene `--max-seconds=600` con timeout de 660s, así que **incluso un solo ítem puede tardar ~10 minutos** (más con red lenta, que escala las esperas hasta 3x), y con la separación entre posts una tanda completa mucho más. Antes la ruta esperaba todo eso y `api.js` no tiene timeout, así que el botón quedaba en "Corriendo..." sin saber si coltaba o trabajando.
 
 `GET /status` incluye `elapsed_s` calculado en el servidor a propósito: el timestamp `started` viene recortado a 19 chars sin la `Z`, así que el browser lo parsearía como hora local (4h desfasado en Venezuela).
 
@@ -909,7 +909,9 @@ Y se ancla al **arranque** de ese intento, no a su `published_at`. No es un deta
 >
 > - **Se mide la red real** con la Navigation Timing API (`performance.getEntriesByType('navigation')`: `responseStart` ≈ primer byte, `domComplete` ≈ DOM listo), sin requests extra. Referencia "rápida": TTFB < 0.6s y DOM < 3s. El peor de los dos cocientes es el factor, con suelo 1 y techo 4. Se cachea para el resto de la corrida (comparten conexión) y se puede fijar a mano con `--net-scale` (0 = auto).
 > - **Se escalan**: la espera al botón Publicar habilitado (`PUBLISH_WAIT_MS`), el presupuesto de adjuntos (`ensureMediaReady`), la cadencia entre imágenes (`ATTACH_WAIT_POLLS`), la confirmación del envío (`ENVIO_CONFIRM_MS`) y la espera inicial tras cargar la página.
-> - **El bucle de vaciado del compositor** dejó de ser 20×1.5s = 30s fijos: ahora es por tiempo (`ENVIO_CONFIRM_MS`, escalado). Y si el compositor no se vació, **no se falla de una**: primero se mira el feed con `esperarEnvioConfirmado`. Si el post está publicado, es un éxito (la lectura del editor llegó tarde); con red lenta el compositor puede quedarse con el texto un rato después de que el post ya salió.
+> - **El bucle de vaciado del compositor** dejó de ser 20×1.5s = 30s fijos: ahora es por tiempo, con un presupuesto **corto y fijo** (`DRAIN_MS` = 30s, no escalado). El vaciado es una comprobación de UI ("¿quedó texto?"), no una espera de red; la prueba de verdad la hace `esperarEnvioConfirmado` contra el feed. Y si el compositor no se vació, **no se falla de una**: primero se mira el feed. Si el post está publicado, es un éxito (la lectura del editor llegó tarde); con red lenta el compositor puede quedarse con el texto un rato después de que el post ya salió.
+>   - El presupuesto del vaciado es corto **a propósito**: cuando se le dio el presupuesto completo de la confirmación, las dos esperas largas quedaban en serie (2× `ENVIO_CONFIRM_MS`), el grupo se comía el guard de `--max-seconds` y moría con *"Timeout de la operación en el grupo"* — el síntoma exacto que se quería eliminar. Con el vaciado corto, el peor caso es `DRAIN_MS` + `ENVIO_CONFIRM_MS` y queda por debajo del guard.
+>   - Techos actuales: guard `--max-seconds=600` y timeout del padre `660000` (subieron de 300s/330s), porque con el factor 3x el peor caso escalado no cabía en 300s.
 > - **Nuevo veredicto `revisar`** (indeterminado): si el compositor no se vació y **Facebook no mostró ningún aviso**, el poster no puede afirmar que el post "no se envió". Eso ya no se cuenta como error del canal: **no alimenta el breaker** (3 fallos seguidos → pausa) ni corta corridas buenas. La fila queda marcada `auto:revisar` en las notas, visible como error para que el usuario lo revise, y el **anti-duplicado la cuenta como "posiblemente publicado"** para no mandar el mismo texto dos veces al grupo. Los fallos con aviso de Facebook siguen siendo `error` normal.
 
 > **Esto se puso el 2026-10-03 porque no existía.** El día duplicado dejó 190 destinos y el disparador los fue sacando a ~17 por hora, hasta que Facebook dejó de aceptar los envíos sin avisar nada. Los límites se agregan en `publish_config.agenda` y el estado del corte en `publish_config._breaker`.

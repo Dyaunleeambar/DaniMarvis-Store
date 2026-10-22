@@ -11,7 +11,7 @@
  *     --images "C:/ruta/1.jpg;C:/ruta/2.jpg" \
  *     --mode publish     (publish | prepare | dry-run)
  *     --label "Electrodomésticos Cuba"
- *     [--max-seconds 420]
+ *     [--max-seconds 600]
  *     [--net-scale 0]   (0 = auto; 1 = forzar red rápida; >1 = forzar red lenta)
  *
  * Precondición: Chrome abierto con --remote-debugging-port=9222 (perfil logueado en FB).
@@ -43,7 +43,7 @@ const MESSAGE_FILE = val(args, '--message-file') || '';
 const IMAGES_RAW = val(args, '--images') || '';
 const MODE = (val(args, '--mode') || 'publish').toLowerCase();
 const LABEL = val(args, '--label') || '';
-const MAX_SECONDS = parseInt(val(args, '--max-seconds') || '420', 10) || 420;
+const MAX_SECONDS = parseInt(val(args, '--max-seconds') || '600', 10) || 600;
 const DEBUG = !!val(args, '--debug');
 // Lote de grupos: cuántos tildar en "Añadir grupos" y desde dónde arrancar.
 // El cursor es el NOMBRE del último grupo del lote anterior, no un índice:
@@ -80,14 +80,14 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const rand = (min, max) => min + Math.random() * (max - min);
 
 // Carga de adjuntos. Los tiempos están calculados para que el peor caso quepa en
-// MAX_SECONDS (420s por grupo) incluso con 10 imágenes: 10 x 2 intentos x 6
+// MAX_SECONDS (600s por grupo) incluso con 10 imágenes: 10 x 2 intentos x 6
 // sondeos x 1s = 120s de espera de adjunto, y ensureMediaReady se lleva como
 // máximo 33s. A eso se suman la espera al botón Publicar (hasta 20s) y la
 // confirmación del envío antes de cerrar la pestaña (hasta 120s). Antes una sola
 // imagen agotaba 12s y una sola falla cortaba todo el loop, así que 6 imágenes
 // no llegaban nunca. Con red lenta esos números se multiplican por el factor de
-// `NET_SCALE_MAX` (3x), y el guard de --max-seconds (420s) sigue por encima del
-// peor caso escalado (confirmar envío 360s).
+// `NET_SCALE_MAX` (3x), y el guard de --max-seconds (600s) sigue por encima del
+// peor caso escalado.
 // Los tiempos de arriba y los de más abajo son los valores para una conexión
 // RÁPIDA. Con internet lento el bot declaraba "no se envió" aunque el post sí
 // hubiera salido: el clic se hacía (botón habilitado) y el compositor tardaba
@@ -115,6 +115,12 @@ const PUBLISH_POLL_MS = 700;
 // sigue (no se cuelga la corrida entera).
 const ENVIO_CONFIRM_MS = 120000;
 const ENVIO_POLL_MS = 1000;
+// Presupuesto del "vaciado" del compositor: cuánto se espera a que el editor
+// quede vacío tras el clic. Es CORTO a propósito: normalmente se vacía en
+// segundos. Si no se vacía, no es un fallo: `esperarEnvioConfirmado` comprueba
+// contra el feed. Mantenerlo corto evita que la suma drain + confirmación
+// desborde el guard de --max-seconds (que mataría el grupo por "Timeout").
+const DRAIN_MS = 30000;
 
 // Objeto MUTABLE con los presupuestos ya escalados. Se actualiza una vez por
 // página tras medir la red (ver `escalar`). Usar T.* en el momento de esperar,
@@ -125,13 +131,14 @@ const T = {
   readyMaxMs: READY_MAX_MS,
   publishWaitMs: PUBLISH_WAIT_MS,
   envioConfirmMs: ENVIO_CONFIRM_MS,
+  drainMs: DRAIN_MS,
 };
 
 // Tope del factor. La red puede medir peor de lo que realmente afecta al flujo
 // (una navegación pesada con imágenes), así que se acota para no quedarse 15
 // minutos por grupo: por encima de esto se asume "muy lento" y ya. El 3x deja el
 // peor caso interno (confirmar envío 120s -> 360s) por debajo del guard de
-// --max-seconds (420s) y del timeout del padre (470s), así el guard del poster
+// --max-seconds (600s) y del timeout del padre (660s), así el guard del poster
 // sigue emitiendo su JSON limpio en vez de que el padre lo mate.
 const NET_SCALE_MIN = 1;
 const NET_SCALE_MAX = 3;
@@ -160,6 +167,10 @@ function escalar(scale) {
   T.readyMaxMs = Math.round(READY_MAX_MS * s);
   T.publishWaitMs = Math.round(PUBLISH_WAIT_MS * s);
   T.envioConfirmMs = Math.round(ENVIO_CONFIRM_MS * s);
+  // El vaciado NO se escala: es una comprobación de UI (¿quedó texto?), no una
+  // espera de red. Mantenerlo fijo deja el peor caso drain + confirmación por
+  // debajo del guard de --max-seconds aunque la red esté en el tope del factor.
+  T.drainMs = DRAIN_MS;
   if (s > 1.15) {
     console.log(`[NET] red lenta (factor x${s.toFixed(2)}): esperas escaladas (publicar=${T.publishWaitMs}ms, adjuntos=${T.readyMaxMs}ms, confirmar=${T.envioConfirmMs}ms)`);
   }
@@ -1847,13 +1858,16 @@ async function processGroup(browser, groupUrl, label) {
     // Esperar a que el compositor se vacíe (post publicado). El bucle es por
     // TIEMPO, no por número fijo de vueltas: antes eran 20 x 1.5s = 30s fijos y
     // con internet lento el compositor tardaba más en vaciarse → se declaraba el
-    // falso "no se envió" aunque el post sí hubiera salido. Ahora el presupuesto
-    // sale de ENVIO_CONFIRM_MS (escalado por red) y, si no se vacía, NO se falla
-    // de una: se deja que `esperarEnvioConfirmado` (más abajo) confirme contra el
-    // feed antes de decidir.
+    // falso "no se envió" aunque el post sí hubiera salido. El presupuesto del
+    // vaciado es CORTO a propósito: el editor normal se vacía en segundos, y si
+    // no lo hace, NO se falla de una — se deja que `esperarEnvioConfirmado` (más
+    // abajo) confirme contra el feed, que es la prueba de verdad. Así el peor
+    // caso es DRAIN_MS + ENVIO_CONFIRM_MS, no 2x ENVIO_CONFIRM_MS: dos esperas
+    // largas en serie reventaban el guard de --max-seconds y el grupo moría por
+    // "Timeout de la operación".
     let len = lenBefore;
     let cleared = false;
-    const drainDeadline = Date.now() + T.envioConfirmMs;
+    const drainDeadline = Date.now() + T.drainMs;
     while (Date.now() < drainDeadline) {
       len = await currentComposerLen(page);
       if (len === 0) { cleared = true; break; }

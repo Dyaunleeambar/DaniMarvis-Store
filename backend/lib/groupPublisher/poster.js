@@ -80,15 +80,15 @@ export function spawnPoster({ groupUrl, messageFile, imageFiles, mode, label, de
       '--message-file=' + messageFile,
       '--mode=' + mode,
       '--label=' + label,
-      // 420s < 470s (el timeout de execFile de abajo): así el GUARD interno del
+      // 600s < 660s (el timeout de execFile de abajo): así el GUARD interno del
       // poster salta primero y emite su JSON limpio de "Timeout de la operación",
       // en vez de que el proceso padre lo mate y se pierda la salida. Antes eran
       // 300s > 280s, y el padre mataba al hijo antes: quedaba un "Command failed"
-      // sin ninguna pista de qué grupo ni por qué. Se subió de 300 a 420 porque,
-      // con internet lento, el poster escala sus esperas hasta 3x (el presupuesto
-      // de confirmar el envío pasa de 120s a 360s) y el guard tenía que quedar
-      // por encima del peor caso escalado.
-      '--max-seconds=420',
+      // sin ninguna pista de qué grupo ni por qué. Se subió de 300 a 600 porque,
+      // con internet lento, el poster escala sus esperas hasta 3x (adjuntos +
+      // confirmar el envío + espera al botón) y el guard tenía que quedar por
+      // encima del peor caso escalado, no solo de la red rápida.
+      '--max-seconds=600',
       '--debug-port=' + port,
       // Técnica de pegado configurable en Ajustes. Se lee por corrida, así que
       // un cambio en el panel aplica sin reiniciar el server.
@@ -102,7 +102,7 @@ export function spawnPoster({ groupUrl, messageFile, imageFiles, mode, label, de
       args.push('--lote-n=' + loteN);
       if (loteDesde) args.push('--lote-desde=' + loteDesde);
     }
-    execFile(process.execPath, [POSTER_JS, ...args], { timeout: 470000 }, (err, stdout, stderr) => {
+    execFile(process.execPath, [POSTER_JS, ...args], { timeout: 660000 }, (err, stdout, stderr) => {
       const parsed = parsePosterOutput(stdout, { err, allText: `${stdout || ''}\n${stderr || ''}` });
       // El poster escribe en stderr justo lo que uno necesita para entender un
       // fallo: la línea [SUBMIT] con el botón que encontró (si estaba deshabilitado,

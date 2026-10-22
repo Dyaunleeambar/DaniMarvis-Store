@@ -22,7 +22,7 @@ const UPLOADS_DIR = getUploadsDir();
 let running = false;
 let lastResult = null;
 // Progreso en vivo de la corrida en curso. Las rutas ya no esperan al run (el
-// poster tiene --max-seconds=420 y entre posts hay 45-135s de separación), así
+// poster tiene --max-seconds=600 y entre posts hay 45-135s de separación), así
 // que el frontend hace polling a /group-publish/status y lee esto. Sin esto no
 // hay nada que mostrar hasta el final, que es justo lo que había que evitar.
 let currentRun = null;
@@ -560,7 +560,7 @@ export function logFinCorrida(r, estado = null) {
  * Dispara una corrida y devuelve DE INMEDIATO con el runId (la ruta responde
  * 202). El resultado se consulta por polling en GET /group-publish/status.
  *
- * Antes la ruta awaiteaba el run entero: con --max-seconds=420 del poster y 45-135s
+ * Antes la ruta awaiteaba el run entero: con --max-seconds=600 del poster y 45-135s
  * entre posts eso son minutos, y api.js no tiene timeout, así que el botón
  * quedaba en "Corriendo..." sin que nadie supiera si colgó o estaba trabajando.
  */
