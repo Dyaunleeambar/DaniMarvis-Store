@@ -25,7 +25,7 @@ export {
   claveDuplicado, marcarDuplicadosEn, decisionActual,
 } from './limites.js';
 
-export { parsePosterOutput, parsePosterDiag, notaLote, CAUSAS, classifyFailure } from './poster.js';
+export { parsePosterOutput, parsePosterDiag, notaLote, CAUSAS, classifyFailure, esFalloTransitorio } from './poster.js';
 
 export { logFinCorrida, startGroupPublish } from './cola.js';
 

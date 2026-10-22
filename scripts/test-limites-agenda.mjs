@@ -20,8 +20,8 @@ import { readFileSync } from 'node:fs';
 import { abrirMemoria } from './helpers/sqljs.mjs';
 import {
   evaluarLimites, cuantosPorTick, claveDuplicado, marcarDuplicadosEn,
-  parsePosterDiag, classifyFailure, notaLote, logFinCorrida, elegirAnclaIntento,
-  CAUSAS, DEFAULT_AGENDA, decisionActual,
+  parsePosterDiag, classifyFailure, esFalloTransitorio, notaLote, logFinCorrida,
+  elegirAnclaIntento, CAUSAS, DEFAULT_AGENDA, decisionActual,
 } from '../backend/lib/groupPublisher/index.js';
 import { deshacerDuplicacion } from '../backend/lib/duplicarDia.js';
 
@@ -342,6 +342,27 @@ console.log('\n6. classifyFailure: "el clic no surtió efecto" es su propia caus
     typeof CAUSAS.compositor_texto === 'string' && /ritmo|rechaz/i.test(CAUSAS.compositor_texto));
 }
 
+// ── 6b. esFalloTransitorio: qué se reintenta solo ─────────────────────────────
+console.log('\n6b. esFalloTransitorio: solo red/tiempo, nunca lo determinista ni el ritmo');
+{
+  // Transitorios: el reintento diferido los puede resolver.
+  ok('timeout del guard es transitorio', esFalloTransitorio('Timeout de la operación en el grupo.'));
+  ok('detached Frame es transitorio', esFalloTransitorio('Protocol error: detached Frame'));
+  ok('Target closed es transitorio', esFalloTransitorio('Target closed'));
+  ok('caída de red es transitoria', esFalloTransitorio('net::ERR_CONNECTION_RESET al adjuntar'));
+  // Deterministas: reintentar no arregla nada o empeora.
+  ok('el rechazo de ritmo (compositor_texto) NO se reintenta',
+    !esFalloTransitorio('Se hizo clic en Publicar pero el post no se envió. El texto sigue en el compositor: el post probablemente NO se envió.'));
+  ok('"no se encontró el compositor" NO se reintenta',
+    !esFalloTransitorio('No se encontró el compositor.'));
+  ok('Chrome caído NO se reintenta solo',
+    !esFalloTransitorio('No se pudo conectar a Chrome en el puerto 9222'));
+  ok('sesión vencida NO se reintenta sola',
+    !esFalloTransitorio('Sesión de Facebook requerida'));
+  ok('un texto vacío no se reintenta', !esFalloTransitorio(''));
+  ok('un texto desconocido no se reintenta', !esFalloTransitorio('algo raro'));
+}
+
 // ── 7. los valores por defecto ───────────────────────────────────────────────
 console.log('\n7. los límites por defecto son los acordados');
 {
@@ -356,6 +377,9 @@ console.log('\n7. los límites por defecto son los acordados');
   ok('pausa de 60 min', DEFAULT_AGENDA.breaker_cooldown_min === 60, String(DEFAULT_AGENDA.breaker_cooldown_min));
   ok('el tope Real nunca excede el acordado aunque el gap se afloje',
     Math.min(60 / DEFAULT_AGENDA.min_gap_min, DEFAULT_AGENDA.max_per_hour) <= 12);
+  ok('el reintento automático de red arranca prendido', DEFAULT_AGENDA.auto_retry === true);
+  ok('máximo 2 reintentos automáticos', DEFAULT_AGENDA.retry_max === 2, String(DEFAULT_AGENDA.retry_max));
+  ok('espera de 15 min antes de reintentar', DEFAULT_AGENDA.retry_delay_min === 15, String(DEFAULT_AGENDA.retry_delay_min));
 }
 
 // ── 8. el deshacer parcial ───────────────────────────────────────────────────

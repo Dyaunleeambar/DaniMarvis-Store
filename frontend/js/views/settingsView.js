@@ -178,6 +178,7 @@ function renderPage(container, settings, categories, providerStyles, status) {
     auto: true, tick_min: 1, catchup_hours: 24,
     min_gap_min: 15, max_per_hour: 4, dedupe_hours: 6,
     breaker_failures: 3, breaker_cooldown_min: 60,
+    auto_retry: true, retry_max: 2, retry_delay_min: 15,
   };
   const ms = pc.master || { on: true };
   const rk = pc.ranking || {};
@@ -418,6 +419,35 @@ function renderPage(container, settings, categories, providerStyles, status) {
                 <input type="number" name="ag_brk_min" class="form-control" min="5" max="1440" value="${ag.breaker_cooldown_min ?? AG.breaker_cooldown_min}" />
                 <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">
                   Cuánto queda cortado después de alcanzar el número de fallos de arriba.
+                </small>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label style="display:flex;align-items:center;gap:6px">
+                  <input type="checkbox" name="ag_autoretry" ${ag.auto_retry !== false ? 'checked' : ''} />
+                  Reintentar solos los fallos de red
+                </label>
+                <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">
+                  Solo timeouts y cortes de conexión. Los errores de ritmo, grupo cerrado
+                  o sin permiso NO se reintentan solos (ahí reintentar empeora).
+                </small>
+              </div>
+              <div class="form-group">
+                <label>Máx. reintentos automáticos</label>
+                <input type="number" name="ag_retry_max" class="form-control" min="0" max="10" value="${ag.retry_max ?? AG.retry_max}" />
+                <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">
+                  0 desactiva el reintento aunque el interruptor esté prendido. Al agotarse
+                  queda en error para que lo mires vos.
+                </small>
+              </div>
+              <div class="form-group">
+                <label>Espera antes de reintentar (min)</label>
+                <input type="number" name="ag_retry_delay" class="form-control" min="1" max="1440" value="${ag.retry_delay_min ?? AG.retry_delay_min}" />
+                <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">
+                  No es inmediato a propósito: esperar deja que se recupere la red y evita
+                  que el reintento cuente como insistencia contra Facebook. Respeta el gap
+                  y el tope por hora de arriba.
                 </small>
               </div>
             </div>
@@ -700,7 +730,12 @@ function renderPage(container, settings, categories, providerStyles, status) {
         // por eso no puede caer en el `|| default`: de ahí el helper `limite`.
         dedupe_hours: limite(fd.get('ag_dedupe'), 6, 0, 168),
         breaker_failures: limite(fd.get('ag_brk_n'), 3, 1, 20),
-        breaker_cooldown_min: limite(fd.get('ag_brk_min'), 60, 5, 1440)
+        breaker_cooldown_min: limite(fd.get('ag_brk_min'), 60, 5, 1440),
+        // Reintento automático de fallos transitorios. `retry_max` con 0 lo
+        // desactiva sin apagar el interruptor, así que usa el helper `limite`.
+        auto_retry: fd.get('ag_autoretry') === 'on',
+        retry_max: limite(fd.get('ag_retry_max'), 2, 0, 10),
+        retry_delay_min: limite(fd.get('ag_retry_delay'), 15, 1, 1440)
       },
       ranking: {
         auto_enabled: fd.get('rk_auto_enabled') === '1',
