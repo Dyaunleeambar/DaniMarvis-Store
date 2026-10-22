@@ -13,7 +13,7 @@ import { isoLocal, localNow, toIsoUtc } from './util.js';
 import { getAgendaConfig, getAutopublishConfig, getMasterConfig } from './config.js';
 import { countPublishedToday, lastAttemptInfo, withinHoursWindow } from './estado.js';
 import { limpiarFallos, marcarIntentoAhora, registrarFallo } from './limites.js';
-import { classifyFailure, notaLote, notaDiagnostico, spawnPoster } from './poster.js';
+import { classifyFailure, esFalloTransitorio, notaLote, notaDiagnostico, spawnPoster } from './poster.js';
 
 // Carpeta de uploads de esta instancia. A usa backend/uploads; B la suya, para
 // no mezclar imágenes ni dejar temporales en la de A.
@@ -234,8 +234,11 @@ function updateQueue(item, result, mode) {
   // a las 11:16 y el post realmente había salido. Perder "publicó de verdad" es
   // peor que perder una cancelación, así que las dos cosas van con su regla.
   let estadoPrevio = 'pending';
+  let intentosPrevios = 0;
   try {
-    estadoPrevio = db.prepare('SELECT status FROM publication_queue WHERE id = ?').get(item.id)?.status || 'pending';
+    const fila = db.prepare('SELECT status, attempts FROM publication_queue WHERE id = ?').get(item.id);
+    estadoPrevio = fila?.status || 'pending';
+    intentosPrevios = Number(fila?.attempts) || 0;
   } catch { /* si no se puede leer, se asume el peor caso */ }
   const fueCancelado = ['cancelled', 'omitted'].includes(estadoPrevio);
 
@@ -259,8 +262,30 @@ function updateQueue(item, result, mode) {
     // como "quedó esperando" indefinidamente. Ahora el ítem queda en 'error' y
     // la UI lo muestra en su propio balde, con reintento manual.
     //
+    // EXCEPCIÓN: un fallo transitorio (timeout/frame caído/red) se reencola solo,
+    // pero DIFERIDO y con tope. Se deja en 'pending' con `scheduled_at` futuro,
+    // así lo toma el disparador normal con su gap/tope/breaker. No es un bucle
+    // inmediato: reintentar al instante contra Facebook es justo lo que hay que
+    // evitar. Los errores deterministas, los de ritmo (`compositor_texto`) y
+    // los 'revisar' NO se reencolan: reintentarlos empeora el bloqueo o duplica
+    // un post que pudo haber salido.
+    //
     // Y si mientras tanto lo cancelaron, el cancelado gana: un fallo no puede
     // resucitar un destino que el usuario ya Sacó de la cola.
+    const cfg = getAgendaConfig();
+    const puedeAuto = mode === 'publish'
+      && !fueCancelado
+      && result.status !== 'revisar'
+      && cfg.auto_retry
+      && intentosPrevios < cfg.retry_max
+      && esFalloTransitorio(result.message);
+    if (puedeAuto) {
+      const cuando = new Date(Date.now() + cfg.retry_delay_min * 60000);
+      const nota = `${notes} | auto-reintento ${intentosPrevios + 1}/${cfg.retry_max} programado ${cuando.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`.slice(0, 500);
+      const n = db.prepare("UPDATE publication_queue SET status = 'pending', notes = ?, scheduled_at = ?, published_at = NULL, attempts = ?, updated_at = datetime('now') WHERE id = ? AND status = 'pending'")
+        .run(nota, toIsoUtc(cuando), intentosPrevios + 1, item.id);
+      if (n) return { aplicado: true, estadoPrevio, autoReintento: true, intentos: intentosPrevios + 1 };
+    }
     db.prepare("UPDATE publication_queue SET status = 'error', notes = ?, published_at = NULL, updated_at = datetime('now') WHERE id = ? AND status = 'pending'")
       .run(notes, item.id);
     if (fueCancelado) return { aplicado: false, estadoPrevio };

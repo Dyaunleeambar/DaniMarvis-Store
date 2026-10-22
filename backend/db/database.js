@@ -460,6 +460,12 @@ function migratePubQueue() {
   try {
     db.exec("ALTER TABLE publication_queue ADD COLUMN pending_approval INTEGER DEFAULT 0");
   } catch (_) {}
+  // Contador de reintentos automáticos. Sin esto no hay forma de distinguir un
+  // primer fallo transitorio (que conviene reintentar solo) de uno que ya se
+  // reintentó dos veces y hay que dejar en 'error' para que lo mire el usuario.
+  try {
+    db.exec("ALTER TABLE publication_queue ADD COLUMN attempts INTEGER DEFAULT 0");
+  } catch (_) {}
 }
 
 // La agenda unifica lo que hasta ahora eran DOS fechas con dos husos distintos:

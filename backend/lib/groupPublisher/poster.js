@@ -265,3 +265,20 @@ export function classifyFailure(message) {
   if (/no se encontr[oó] el compositor|no se encontr[oó] el bot[oó]n publicar|el texto no qued[oó] en el compositor|pero el post no se envi[oó]|sigue en el compositor/i.test(m)) return 'compositor';
   return null;
 }
+
+/**
+ * ¿Es un fallo transitorio de red/infraestructura, de los que un reintento
+ * DIFERIDO puede resolver solo? Es deliberadamente conservador: si la causa es
+ * determinista (grupo cerrado, sin permiso), de ritmo de Facebook o de sesión,
+ * devuelve false. Reintentar esos no arregla nada, y en el caso del ritmo lo
+ * empeora (Facebook bloquea más fuerte cuanto más se insiste).
+ *
+ * La distinción se apoya en `classifyFailure`: cualquier causa que ya tenga
+ * nombre no es transitoria. El resto se compara contra los mensajes que deja
+ * Puppeteer/el poster cuando el problema fue el tiempo o la conexión.
+ */
+export function esFalloTransitorio(message) {
+  const m = String(message || '');
+  if (!m || classifyFailure(m)) return false;
+  return /timeout|timed out|detached frame|target closed|session closed|protocol error|execution context was destroyed|navigation failed|net::err|econnreset|enotfound|socket hang up|network error|request failed/i.test(m);
+}
