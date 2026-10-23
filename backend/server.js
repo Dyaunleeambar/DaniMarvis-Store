@@ -483,7 +483,7 @@ app.get('/api/status', (req, res) => {
     // qué puerto usa cada una (y con eso, qué sesión de Facebook).
     cuentas: ACCOUNT_IDS.map((id) => {
       const c = getAccountConfig(id);
-      return { id, label: c.label, profileDir: c.profileDir, debugPort: c.debugPort, proxy: c.proxy };
+      return { id, label: c.label, profileDir: c.profileDir, debugPort: c.debugPort, proxy: c.proxy, fbProfile: c.fbProfile };
     }),
   });
 });

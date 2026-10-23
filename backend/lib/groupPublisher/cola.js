@@ -346,6 +346,7 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
     sesion: false, noBrowser: false, error: null,
     // Qué cuenta (y qué perfil/proxy) publicó: se ve en el log y en la UI.
     account: acc.id, account_label: acc.label, account_port: acc.debugPort,
+    account_profile: acc.fbProfile || '',
     // `origen` viene del `startGroupPublish` y hay que reusarlo acá: este objeto
     // REEMPLAZA al que arma ahí, y sin copiarlo el log de cierre salía con
     // `origen=?` justo cuando sí importaba (lo detectó una corrida real).
@@ -358,7 +359,15 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
     // apuntaría al 9222 del perfil de A. Si el puerto ya responde no se toca
     // nada (no interfiere con el Chrome del usuario ni con el scraper).
     currentRun.phase = 'starting_chrome';
-    const chrome = await ensureDebugChrome({ launch: true, port: acc.debugPort, profileDir: acc.profileDir, proxy: acc.proxy });
+    // Se verifica que la sesión abierta sea la del perfil configurado para esta
+    // cuenta (si se configuró uno). Informativo: si no coincide, se avisa en el
+    // log y en la UI, pero NO se aborta la corrida.
+    const chrome = await ensureDebugChrome({
+      launch: true, port: acc.debugPort, profileDir: acc.profileDir, proxy: acc.proxy,
+      // Solo se consulta Facebook si el usuario configuró un perfil esperado:
+      // sin perfil no hay nada que comparar y no vale la pena abrir una pestaña.
+      expectedProfile: acc.fbProfile, verify: Boolean(acc.fbProfile),
+    });
     if (!chrome.ok) {
       const r = { ok: false, error: `Chrome no disponible para ${acc.label} (${chrome.error || chrome.status}). Se necesita Chrome con --remote-debugging-port=${acc.debugPort}, perfil ${acc.profileDir} y la sesión de Facebook abierta en ese perfil.`, noBrowser: true, started: startedAt };
       lastResult = r;
@@ -369,6 +378,9 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
       logFinCorrida(r);
       return r;
     }
+    // Resultado de la verificación de perfil: la UI lo usa para avisar si la
+    // sesión de la cuenta no es la configurada (o si no hay sesión).
+    if (chrome.profile) currentRun.account_profile_check = chrome.profile;
 
     currentRun.phase = 'picking';
     const items = (ids && ids.length)

@@ -20,9 +20,32 @@ const DEFAULT_PROFILE = 'C:/Users/Dani/fb-leave/fb-debug-perfil';
  * la URL al Chrome que ya está abierto, en lugar de arrancar uno nuevo.
  */
 export const ACCOUNT_DEFAULTS = {
-  A: { id: 'A', label: 'Cuenta A', profileDir: DEFAULT_PROFILE, debugPort: 9222, proxy: '' },
-  B: { id: 'B', label: 'Cuenta B', profileDir: `${DEFAULT_PROFILE}-b`, debugPort: 9223, proxy: '' },
+  A: { id: 'A', label: 'Cuenta A', profileDir: DEFAULT_PROFILE, debugPort: 9222, proxy: '', fbProfile: '' },
+  B: { id: 'B', label: 'Cuenta B', profileDir: `${DEFAULT_PROFILE}-b`, debugPort: 9223, proxy: '', fbProfile: '' },
 };
+
+/**
+ * Normaliza a una URL de perfil de Facebook canónica, o '' si no la reconoce.
+ * Acepta lo que el usuario pegue: la URL completa, `profile.php?id=…`, el id
+ * pelado, o un `facebook.com/<usuario>`. Se guarda siempre como URL, que es lo
+ * que después se compara contra lo que devuelve la sesión abierta.
+ */
+export function normalizarFbProfile(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  // id numérico pelado -> profile.php?id=
+  if (/^\d{5,}$/.test(s)) return `https://www.facebook.com/profile.php?id=${s}`;
+  // profile.php?id=... (con o sin dominio)
+  const m = s.match(/profile\.php\?id=(\d{5,})/i);
+  if (m) return `https://www.facebook.com/profile.php?id=${m[1]}`;
+  // URL completa de facebook.com/<usuario>
+  if (/^https?:\/\/(www\.)?facebook\.com\//i.test(s)) {
+    return s.replace(/\/+$/, '').split('?')[0];
+  }
+  // nombre de usuario pelado
+  if (/^[A-Za-z0-9.]{5,}$/.test(s)) return `https://www.facebook.com/${s}`;
+  return '';
+}
 
 export const ACCOUNT_IDS = ['A', 'B'];
 
@@ -125,8 +148,11 @@ export function getAccountConfig(id) {
   if (guardada && typeof guardada.proxy === 'string') proxy = guardada.proxy.trim();
   else if (esDeEntorno) proxy = envProxy;
   else proxy = def.proxy;
+  // Perfil de Facebook esperado para esta cuenta (referencia + verificación).
+  // Vacío = no se verifica. Se normaliza para comparar manzanas con manzanas.
+  const fbProfile = normalizarFbProfile(guardada?.fbProfile || def.fbProfile);
 
-  return { id: idFinal, label, debugPort, profileDir, proxy };
+  return { id: idFinal, label, debugPort, profileDir, proxy, fbProfile };
 }
 
 /**

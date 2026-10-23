@@ -16,7 +16,7 @@
  */
 import { spawn } from 'child_process';
 import fs from 'fs';
-import { getAccountConfig } from './accountConfig.js';
+import { getAccountConfig, normalizarFbProfile } from './accountConfig.js';
 
 const CHROME_PATHS = [
   process.env.CHROME_PATH,
@@ -93,6 +93,90 @@ async function cerrarChromeAtascado(port) {
   for (let i = 0; i < 10 && await portResponds(port, 500); i++) await sleep(300);
 }
 
+/**
+ * Lee el perfil de Facebook con el que está logueada la sesión que vive en
+ * `port`, conectándose por CDP. Devuelve la URL canónica del perfil y el
+ * nombre, o `{ loggedIn:false }` si Facebook manda al login.
+ *
+ * No inicia sesión ni escribe nada: solo MIRA quién está logueado. La sesión la
+ * dejó el usuario a mano en la carpeta de Chrome de esa cuenta, una vez.
+ *
+ * Se usa `/me`, que redirige al perfil propio cuando hay sesión y a `/login`
+ * cuando no. Se lee la URL final: eso es lo que identifica la cuenta.
+ */
+export async function detectarPerfilFacebook(port, timeoutMs = 15000) {
+  let browser;
+  let page;
+  try {
+    const puppeteer = (await import('puppeteer-core')).default;
+    browser = await puppeteer.connect({
+      browserURL: `http://localhost:${Number(port) || getAccountConfig().debugPort}`,
+      defaultViewport: null,
+      protocolTimeout: timeoutMs,
+    });
+    page = await browser.newPage();
+    await page.goto('https://www.facebook.com/me', { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+    // La redirección de /me ya se resolvió al llegar el DOM. Un pequeño respiro
+    // para que, si redirige por JS, la URL final ya esté asentada.
+    await new Promise(r => setTimeout(r, 1500));
+    const url = page.url() || '';
+    if (/\/login|checkpoint|recover/i.test(url)) {
+      return { loggedIn: false, reason: 'sin_sesion' };
+    }
+    const m = url.match(/profile\.php\?id=(\d+)/i);
+    const perfilUrl = m ? `https://www.facebook.com/profile.php?id=${m[1]}`
+      : (/facebook\.com\/([A-Za-z0-9.]+)/i.test(url)
+          ? `https://www.facebook.com/${url.match(/facebook\.com\/([A-Za-z0-9.]+)/i)[1]}`
+          : '');
+    // El nombre visible, de paso, para que la UI muestre algo legible.
+    let nombre = '';
+    try {
+      nombre = (await page.title()).replace(/\s*\|\s*Facebook\s*$/i, '').trim();
+    } catch { /* el título no es crítico */ }
+    if (!perfilUrl) return { loggedIn: false, reason: 'no_perfil', url };
+    return { loggedIn: true, profileUrl: normalizarFbProfile(perfilUrl), nombre, rawUrl: url };
+  } catch (err) {
+    return { loggedIn: false, reason: 'error', error: err.message };
+  } finally {
+    try { await page?.close(); } catch { /* noop */ }
+    try { await browser?.disconnect(); } catch { /* noop */ }
+  }
+}
+
+/**
+ * Lanza (o reusa) el Chrome de una cuenta apuntando a una página de Facebook,
+ * para que el usuario pueda loguearse a mano. `destino` por defecto es el login
+ * de Facebook; la app NUNCA escribe credenciales, solo abre la ventana.
+ *
+ * @param {string} [destino] URL a abrir
+ * @param {{port?:number, profileDir?:string, proxy?:string, id?:string}} [cuenta]
+ */
+export async function abrirChromeParaLogin(destino = 'https://www.facebook.com/login', cuenta = {}) {
+  const acc = getAccountConfig(cuenta.id);
+  const port = Number(cuenta.port) || acc.debugPort;
+  const profileDir = cuenta.profileDir || acc.profileDir;
+  const proxy = cuenta.proxy !== undefined ? String(cuenta.proxy || '').trim() : acc.proxy;
+  const exe = CHROME_PATHS.find(p => p && fs.existsSync(p));
+  if (!exe) return { ok: false, status: 'no_chrome', error: 'Chrome no encontrado' };
+  const args = [
+    `--remote-debugging-port=${port}`,
+    `--user-data-dir=${profileDir}`,
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--remote-allow-origins=*',
+  ];
+  if (proxy) args.push(`--proxy-server=${proxy}`);
+  args.push(destino);
+  try {
+    const child = spawn(exe, args, { detached: true, stdio: 'ignore' });
+    child.unref();
+    const up = await waitForPort(port, 45000);
+    return { ok: up, status: up ? 'launched' : 'timeout', port, profileDir };
+  } catch (err) {
+    return { ok: false, status: 'launch_error', error: err.message };
+  }
+}
+
 async function portRespondsConTargetVivo(port, timeoutMs = 6000) {
   let browser;
   try {
@@ -139,10 +223,28 @@ async function waitForPort(port, timeoutMs) {
 }
 
 /**
- * @returns {{ok:boolean, status:string, port:number, error?:string}}
+ * Compara la sesión abierta en `port` contra el perfil esperado. Devuelve
+ * `{ loggedIn, profileUrl, nombre, match, expected }`. `match` es true si hay
+ * sesión y su URL coincide con `expected` (o si no se esperaba ninguno).
+ * NUNCA bloquea una publicación: es informativo, para que la UI/el log avisen.
+ */
+async function verificarPerfil(port, expected) {
+  const esperado = normalizarFbProfile(expected);
+  const det = await detectarPerfilFacebook(port);
+  const match = !esperado || (det.loggedIn && det.profileUrl === esperado);
+  if (esperado && det.loggedIn && !match) {
+    console.warn(`[ChromeLauncher] el puerto ${port} tiene la sesión de ${det.profileUrl}, pero se esperaba ${esperado}`);
+  } else if (esperado && !det.loggedIn) {
+    console.warn(`[ChromeLauncher] el puerto ${port} no tiene sesión de Facebook iniciada (${det.reason || 'sin_sesion'})`);
+  }
+  return { loggedIn: !!det.loggedIn, profileUrl: det.profileUrl || '', nombre: det.nombre || '', match, expected: esperado, reason: det.reason || '' };
+}
+
+/**
+ * @returns {{ok:boolean, status:string, port:number, error?:string, profile?:object}}
  *  status: 'already_running' | 'launched' | 'no_chrome' | 'launch_error' | 'timeout'
  */
-export async function ensureDebugChrome({ launch = true, port, profileDir, proxy } = {}) {
+export async function ensureDebugChrome({ launch = true, port, profileDir, proxy, expectedProfile = '', verify = false } = {}) {
   const t = resolveTarget({ port, profileDir, proxy });
   // los consumidores se connectan a un Chrome EXISTENTE por CDP: si el puerto
   // ya responde, no se relanza nada (ni se toca el Chrome del usuario).
@@ -153,7 +255,8 @@ export async function ensureDebugChrome({ launch = true, port, profileDir, proxy
   // responda de verdad antes de darlo por bueno.
   if (await portResponds(t.port)) {
     if (await portRespondsConTargetVivo(t.port)) {
-      return { ok: true, status: 'already_running', port: t.port };
+      const profile = verify ? await verificarPerfil(t.port, expectedProfile) : null;
+      return { ok: true, status: 'already_running', port: t.port, ...(profile ? { profile } : {}) };
     }
     console.warn(`[ChromeLauncher] el puerto ${t.port} responde pero el navegador no sirve (renderer trabado). Relanzando...`);
     await cerrarChromeAtascado(t.port);
@@ -194,7 +297,8 @@ export async function ensureDebugChrome({ launch = true, port, profileDir, proxy
   if (up) {
     console.log(`[ChromeLauncher] Chrome lanzado (pid ${child.pid}) con puerto ${t.port}`
       + ` y perfil ${t.profileDir}${t.proxy ? ` (proxy ${t.proxy})` : ''}`);
-    return { ok: true, status: 'launched', port: t.port };
+    const profile = verify ? await verificarPerfil(t.port, expectedProfile) : null;
+    return { ok: true, status: 'launched', port: t.port, ...(profile ? { profile } : {}) };
   }
   return {
     ok: false, status: 'timeout', port: t.port,

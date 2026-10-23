@@ -62,6 +62,9 @@ function pintarCuenta(id, guardada, efectivas) {
     profileDir: perfilOk ? g.profileDir.trim() : (e.profileDir ?? ''),
     debugPort: portOk ? portN : (e.debugPort ?? ''),
     proxy: typeof g.proxy === 'string' ? g.proxy.trim() : (e.proxy ?? ''),
+    // Perfil de Facebook esperado (referencia + verificación). Si no hay guardado
+    // ni efectivo, queda vacío: no se verifica y no se pinta nada raro.
+    fbProfile: (typeof g.fbProfile === 'string' && g.fbProfile.trim()) || (e.fbProfile || ''),
   };
 }
 
@@ -89,6 +92,19 @@ function bloqueCuenta(id, c) {
         <label>Proxy (opcional, para IP distinta por cuenta)</label>
         <input type="text" name="ct_${id}_proxy" class="form-control" value="${esc(c.proxy)}" placeholder="http://usuario:clave@host:puerto" />
         <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">Vacío = sale por la IP de esta máquina.</small>
+      </div>
+      <div class="form-group">
+        <label>Perfil de Facebook que debe usar esta cuenta</label>
+        <input type="text" name="ct_${id}_fbprofile" class="form-control" value="${esc(c.fbProfile)}" placeholder="https://www.facebook.com/profile.php?id=..." />
+        <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">
+          Se usa para <strong>verificar</strong> que al publicar la sesión de esa carpeta de Chrome sea este perfil.
+          La app NO inicia sesión sola: logueate a mano con el botón de abajo. Vacío = no se verifica.
+        </small>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px">
+        <button type="button" class="btn btn--secondary" data-open-login="${id}">Abrir Chrome para loguear</button>
+        <button type="button" class="btn btn--ghost" data-check-profile="${id}">Verificar sesión</button>
+        <span data-profile-status="${id}" style="font-size:.8rem;color:var(--text-secondary)"></span>
       </div>
     </fieldset>`;
 }
@@ -775,6 +791,7 @@ function renderPage(container, settings, categories, providerStyles, status) {
         profileDir: String(fd.get(`ct_${id}_profile`) || '').trim(),
         debugPort: port ? limite(port, 0, 1024, 65535) : 0,
         proxy: String(fd.get(`ct_${id}_proxy`) || '').trim(),
+        fbProfile: String(fd.get(`ct_${id}_fbprofile`) || '').trim(),
       };
     };
     const A = leer('A');
@@ -803,6 +820,62 @@ function renderPage(container, settings, categories, providerStyles, status) {
     } catch (err) {
       showToast(err.message, 'error');
     }
+  });
+
+  // Abrir el Chrome de una cuenta para loguearse a mano. La app NO escribe
+  // credenciales: solo abre la ventana de esa cuenta (su perfil/puerto/proxy) en
+  // el login de Facebook, y después consulta qué perfil quedó logueado.
+  const pintarEstadoPerfil = (id, profile, expected) => {
+    const el = document.querySelector(`[data-profile-status="${id}"]`);
+    if (!el) return;
+    if (!profile) { el.textContent = ''; return; }
+    if (!profile.loggedIn) {
+      el.textContent = profile.reason === 'sin_sesion'
+        ? 'Sin sesión: logueate en la ventana que se abrió.'
+        : `No se pudo leer el perfil (${profile.reason || 'error'}).`;
+      el.style.color = 'var(--warning, #b8860b)';
+      return;
+    }
+    const coincide = !expected || profile.profileUrl === expected;
+    const nombre = profile.nombre ? `${profile.nombre} · ` : '';
+    el.textContent = coincide
+      ? `OK: ${nombre}${profile.profileUrl}`
+      : `OJO: logueado como ${nombre}${profile.profileUrl} (se esperaba ${expected})`;
+    el.style.color = coincide ? 'var(--success, #2e7d32)' : 'var(--danger, #c62828)';
+  };
+  document.querySelectorAll('[data-open-login]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.openLogin;
+      btn.disabled = true;
+      btn.textContent = 'Abriendo...';
+      try {
+        const r = await api.openAccountLogin(id, { url: 'https://www.facebook.com/login' });
+        if (r && r.profile) pintarEstadoPerfil(id, r.profile, r.expected);
+        showToast(`Chrome de la cuenta ${id} abierto. Iniciá sesión ahí y después tocá "Verificar sesión".`, 'success');
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Abrir Chrome para loguear';
+      }
+    });
+  });
+  document.querySelectorAll('[data-check-profile]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.checkProfile;
+      btn.disabled = true;
+      const prev = btn.textContent;
+      btn.textContent = 'Verificando...';
+      try {
+        const r = await api.getAccountProfile(id);
+        pintarEstadoPerfil(id, r.profile, r.expected);
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = prev;
+      }
+    });
   });
 
   // Técnica de pegado del texto: se manda SOLO `metodo_texto`, y el merge del

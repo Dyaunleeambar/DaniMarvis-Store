@@ -806,6 +806,7 @@ Se configuran en **Ajustes → "Cuentas de Facebook (A y B)"**, sin tocar variab
 | **Puerto de depuración de Chrome** | Puerto CDP de esa cuenta (`9222` para A, `9223` para B). Deben ser **distintos**. |
 | **Perfil de Chrome** | Ruta del `--user-data-dir` donde vive la sesión de Facebook de esa cuenta. Deben ser **distintas** (dos Chrome no comparten perfil). |
 | **Proxy** | Opcional. Le da a esa cuenta una IP de salida distinta. Vacío = IP de la máquina. |
+| **Perfil de Facebook** | Opcional. URL/nombre del perfil que debería tener logueado esa carpeta (p. ej. `profile.php?id=61591067843509`). Se usa para **verificar**, no para loguear. Vacío = no se verifica. |
 
 **Precedencia**: lo guardado en Ajustes **gana**; si un campo está vacío se usa la variable de entorno (`ACCOUNT_ID`, `FB_DEBUG_PORT`, `FB_DEBUG_PROFILE`, `PROXY_SERVER`); y si tampoco hay, el default histórico (A: perfil `C:\Users\Dani\fb-leave\fb-debug-perfil`, 9222; B: `...-b`, 9223). El entorno solo aplica a la cuenta que declara `ACCOUNT_ID` (por defecto A), así que los defaults de A no se le cuelan a B.
 
@@ -817,6 +818,14 @@ Defaults por cuenta (`backend/lib/accountConfig.js`, `ACCOUNT_DEFAULTS`):
 | B | `9223` | `C:/Users/Dani/fb-leave/fb-debug-perfil-b` |
 
 La cuenta activa se ve en `GET /api/status` (`account`, `label`, `cuentas[]`, `modo`) y en los modales de **Distribuir en el día** y **Duplicar día a otro** (rótulo "Cuenta …").
+
+**La app NO inicia sesión en Facebook.** El login (usuario, contraseña, 2FA, captcha) lo hace el usuario a mano una vez por cuenta; automatizarlo viola los términos de Facebook y es lo que dispara bloqueos. Lo que la app sí hace:
+
+- **Abrir Chrome para loguear** (botón en Ajustes → `POST /api/group-publish/accounts/:id/open`): lanza el Chrome de esa cuenta con su perfil/puerto/proxy en el login de Facebook. Tras abrir, consulta qué perfil quedó logueado.
+- **Verificar la sesión** (botón o `GET /api/group-publish/accounts/:id/profile`): conecta por CDP, navega a `facebook.com/me` y lee la URL final (`profile.php?id=…`). Compara con el campo **Perfil de Facebook** y muestra **OK** o **OJO: logueado como …**.
+- **Verificación al publicar**: si la cuenta tiene un perfil configurado, antes de cada corrida se compara la sesión abierta contra ese perfil. Es **informativo**: si no coincide o no hay sesión, se avisa en el log y en `/status` (`current.account_profile_check`), pero **no se aborta** la publicación.
+
+El perfil configurado se normaliza (`normalizarFbProfile` en `accountConfig.js`): acepta el id pelado, `profile.php?id=…`, la URL completa o `facebook.com/usuario`, y guarda siempre una URL canónica para poder comparar. Sin perfil configurado no se abre ninguna pestaña extra ni se verifica.
 
 ### Cómo se mete el texto (técnica configurable)
 

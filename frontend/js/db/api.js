@@ -194,6 +194,10 @@ export const api = {
   runGroupPublish: (data) => request('POST', '/group-publish/run', data || {}),
   runGroupPublishOne: (id, data) => request('POST', `/group-publish/run/${id}`, data || {}),
 
+  // Cuentas de Facebook: abrir Chrome para loguear y consultar el perfil logueado
+  openAccountLogin: (id, data) => request('POST', `/group-publish/accounts/${id}/open`, data || {}),
+  getAccountProfile: (id) => request('GET', `/group-publish/accounts/${id}/profile`),
+
   // Facebook Groups
   getGroups: () => request('GET', '/groups'),
   createGroup: (data) => request('POST', '/groups', data),

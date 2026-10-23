@@ -39,7 +39,7 @@ process.env.PROXY_SERVER = 'http://proxy-de-entorno:8080';
 const { initDB, getDB } = await import('../backend/db/database.js');
 const {
   getAccountConfig, getCuentasConfig, setCuentaActiva, getCuentaActivaId,
-  ACCOUNT_DEFAULTS,
+  ACCOUNT_DEFAULTS, normalizarFbProfile,
 } = await import('../backend/lib/accountConfig.js');
 
 /** Guarda `cuentas` pasando por el merge real, igual que hace PUT /api/settings. */
@@ -141,6 +141,38 @@ console.log('\n5. mergePublishConfig: `cuentas` se fusiona cuenta por cuenta');
   const nada = mergePublishConfig({ ai: {} }, { master: { on: false } });
   ok('y no INVENTA la clave `cuentas` si no existía',
     !('cuentas' in nada), Object.keys(nada).join(','));
+}
+
+console.log('\n5b. perfil de Facebook esperado por cuenta (normalización y guardado)');
+{
+  // La URL se normaliza para comparar siempre lo mismo, venga como venga.
+  ok('id pelado -> profile.php',
+    normalizarFbProfile('61591067843509') === 'https://www.facebook.com/profile.php?id=61591067843509');
+  ok('URL completa -> canónica',
+    normalizarFbProfile('https://www.facebook.com/profile.php?id=100064307757305') === 'https://www.facebook.com/profile.php?id=100064307757305');
+  ok('querystring extra se descarta',
+    normalizarFbProfile('https://www.facebook.com/profile.php?id=100064307757305&mibextid=abc') === 'https://www.facebook.com/profile.php?id=100064307757305');
+  ok('usuario pelado -> facebook.com/usuario',
+    normalizarFbProfile('danimarvis') === 'https://www.facebook.com/danimarvis');
+  ok('vacío -> vacío (no se verifica)', normalizarFbProfile('') === '');
+
+  guardarCuentas({
+    modo: 'alternado',
+    A: { profileDir: 'C:/a', debugPort: 9222, fbProfile: '61591067843509' },
+    B: { profileDir: 'C:/b', debugPort: 9223, fbProfile: 'https://www.facebook.com/profile.php?id=100064307757305' },
+  });
+  const A = getAccountConfig('A');
+  const B = getAccountConfig('B');
+  ok('A guarda su perfil normalizado',
+    A.fbProfile === 'https://www.facebook.com/profile.php?id=61591067843509', A.fbProfile);
+  ok('B guarda su perfil normalizado',
+    B.fbProfile === 'https://www.facebook.com/profile.php?id=100064307757305', B.fbProfile);
+
+  // Un guardado que solo toca A no debe perder el perfil de B.
+  const merged = guardarCuentas({ A: { label: 'nueva' } });
+  ok('editar A conserva el perfil de B',
+    merged.cuentas.B.fbProfile === 'https://www.facebook.com/profile.php?id=100064307757305', JSON.stringify(merged.cuentas.B));
+  ok('sin perfil guardado no se verifica (string vacío)', getAccountConfig('A').fbProfile !== undefined);
 }
 
 console.log('\n6. nada de esto toca la config de publicación');
