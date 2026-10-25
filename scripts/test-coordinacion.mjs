@@ -13,9 +13,9 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 
-// Las dependencias del servidor viven en backend/node_modules (así lo resuelve
-// backend/server.js). Desde scripts/ hay que pedirlas con un require anclado a
-// backend/ para encontrarlas.
+// Hay un único node_modules (en la raíz del proyecto). createRequire anclado a
+// backend/server.js resuelve hacia arriba y encuentra ese node_modules, igual
+// que lo hace el propio servidor al importar sus deps.
 const requireBackend = createRequire(new URL('../backend/server.js', import.meta.url));
 
 let fallos = 0;

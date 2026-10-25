@@ -1,0 +1,6 @@
+{
+  "name": "fb-ranking",
+  "private": true,
+  "description": "POCs y utilidades de ranking en CommonJS (por eso type=commonjs: sus .js usan require/module.exports).",
+  "type": "commonjs"
+}

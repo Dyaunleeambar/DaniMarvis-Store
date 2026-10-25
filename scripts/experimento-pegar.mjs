@@ -20,11 +20,16 @@
 
 import puppeteer from 'puppeteer-core';
 import fs from 'fs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const DEBUG_PORT = process.env.DEBUG_PORT || '9222';
 const GROUP_URL = process.env.GROUP_URL || 'https://www.facebook.com/groups/6166833830005702';
-const DB_PATH = process.env.DB_PATH || 'D:/Proyectos/DaniMarvisStore/backend/danimarvis.db';
-const SQLJS = 'file:///D:/Proyectos/DaniMarvisStore/backend/node_modules/sql.js/dist/sql-wasm.js';
+const DB_PATH = process.env.DB_PATH || join(PROJECT_ROOT, 'backend', 'danimarvis.db');
+// sql.js cargado desde el node_modules de la raíz (fuente única de deps).
+const SQLJS = pathToFileURL(join(PROJECT_ROOT, 'node_modules', 'sql.js', 'dist', 'sql-wasm.js')).href;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
