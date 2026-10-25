@@ -143,11 +143,10 @@ Los importadores proporcionan productos y se encargan del envío directo al clie
 # 1. Clonar o copiar el proyecto
 cd /d/Proyectos/DaniMarvisStore
 
-# 2. Instalar dependencias del backend
-cd backend
+# 2. Instalar dependencias (un único node_modules en la raíz del proyecto)
 npm install
 
-# 3. Iniciar el servidor (desde backend/ o desde la raíz del proyecto)
+# 3. Iniciar el servidor desde la raíz del proyecto
 npm start
 # Alternativa con recarga automática:
 npm run dev
@@ -155,7 +154,7 @@ npm run dev
 
 El servidor arranca en `http://localhost:3456`. La base de datos SQLite se crea automáticamente en `backend/danimarvis.db` con un usuario administrador por defecto.
 
-> Desde la raíz del proyecto también puedes usar `npm start` (ejecuta `backend/server.js` directamente).
+> Los scripts `npm run backup` y `npm run restore` (respaldo manual con rclone a Drive) también corren desde la raíz.
 
 ### Credenciales de Acceso
 
@@ -169,7 +168,7 @@ El servidor arranca en `http://localhost:3456`. La base de datos SQLite se crea 
 
 ```
 DaniMarvisStore/
-├── package.json               # Scripts npm desde la raíz del proyecto
+├── package.json               # Deps y scripts npm (único node_modules del proyecto, en la raíz)
 ├── scripts/
 │   └── generate-catalog.js    # Script CLI para regenerar el catálogo público
 ├── public-catalog/
@@ -177,13 +176,13 @@ DaniMarvisStore/
 │   └── images/                # Imágenes de productos copiadas para el catálogo
 ├── utilidades/
 │   └── fb-ranking/
+│       ├── package.json                # type=commonjs (estos scripts usan require)
 │       ├── content_library_views.js    # Scraper: filas de la Biblioteca de Contenido
 │       └── analyze_views.js            # Análisis alternativo por métricas del grid
 ├── electron/
 │   └── main.js                # Placeholder para aplicación Electron (próximamente)
 ├── backend/
 │   ├── server.js              # Servidor Express (puerto 3456)
-│   ├── package.json           # Dependencias Node.js
 │   ├── danimarvis.db          # Base de datos SQLite (auto-creada)
 │   ├── uploads/               # Imágenes subidas por los usuarios
 │   ├── db/

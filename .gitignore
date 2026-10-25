@@ -21,3 +21,15 @@ precios-importacion/
 # Salida generada: lo escribe utilidades/fb-ranking/content_library_views.js al
 # correr el POC de forma manual. Es un artefacto de runtime, no fuente.
 utilidades/fb-ranking/reporte_POC_fechas.json
+
+# Logs de runtime (cualquier carpeta).
+*.log
+
+# Datos de entrenamiento de tesseract (~8.5 MB cada uno); tesseract.js los baja
+# y cachea por su cuenta, estas copias locales no van al repo.
+*.traineddata
+
+# Scripts de debugging desechables (no deben vivir en el repo: el primero
+# fabrica tokens validos leyendo auth_secret de la BD).
+backend/_token-tmp.mjs
+backend/tmp_find_upload.js
