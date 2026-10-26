@@ -226,7 +226,7 @@ async function findComposer(page) {
 
     const isComment = (el) => {
       const label = norm(el.getAttribute('aria-label')) + ' ' + norm(el.getAttribute('aria-placeholder')) + ' ' + norm(el.getAttribute('data-placeholder'));
-      if (/comentas como|comentario|escrib[eí] un coment|respond[eí]|reply|comenta como/.test(label)) return true;
+      if (/comentas como|comentar como|comentario|escrib[eí] un coment|respond[eí]|reply|comenta como/.test(label)) return true;
       if (el.closest('[role="article"]') || el.closest('[role="feeditem"]')) return true;
       return false;
     };
@@ -1155,6 +1155,30 @@ async function clickPublish(page, dryRun) {
 // Tilda `n` grupos del diálogo "Añadir grupos", arrancando después de `desde`
 // y dando la vuelta al llegar al final. Devuelve los nombres efectivamente
 // tildados para que el backend registre a dónde fue.
+
+// Textos válidos para el botón/diálogo "Añadir grupos" en distintos idiomas.
+const TEXTOS_ANYADIR_GRUPOS = [
+  'Añadir grupos', 'Agregar grupos',
+  'Add groups', 'Add to groups',
+  'Agregar a grupos',
+];
+
+const TEXTOS_ATRAS = [
+  'Atrás', 'Atras',
+  'Back',
+  'Volver',
+];
+
+function incluyeAnyadirGrupos(texto) {
+  const t = (texto || '').toLowerCase();
+  return TEXTOS_ANYADIR_GRUPOS.some(v => t.includes(v.toLowerCase()));
+}
+
+function incluyeAtras(texto) {
+  const t = (texto || '').trim().toLowerCase();
+  return TEXTOS_ATRAS.some(v => t === v.toLowerCase() || t.startsWith(v.toLowerCase() + ' '));
+}
+
 async function probeEtapa(page, tag) {
   try {
     const info = await page.evaluate(() => {
@@ -1176,7 +1200,7 @@ async function seleccionarLoteGrupos(page, { n, desde } = {}) {
   // 1) el botón "Añadir grupos". Solo existe con al menos una imagen adjunta,
   //    y no trae aria-label: el texto es la única ancla estable. Las clases de
   //    sus ancestros son hashes de Facebook y cambian con cada rediseño.
-  const buscarBoton = () => page.evaluate(() => {
+  const buscarBoton = () => page.evaluate((textosValidos) => {
     const vis = (el) => {
       const r = el.getBoundingClientRect();
       if (r.width <= 0 || r.height <= 0) return false;
@@ -1185,11 +1209,11 @@ async function seleccionarLoteGrupos(page, { n, desde } = {}) {
     };
     const el = Array.from(document.querySelectorAll('div[role="button"]'))
       .filter(vis)
-      .find(x => (x.textContent || '').trim() === 'Añadir grupos');
+      .find(x => textosValidos.includes((x.textContent || '').trim()));
     if (!el) return null;
     const r = el.getBoundingClientRect();
     return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
-  });
+  }, TEXTOS_ANYADIR_GRUPOS);
   // "Añadir grupos" puede tardar en montarse: Facebook lo muestra recién cuando
   // termina de procesar los adjuntos, y el texto del botón cambia con el rediseño.
   // Antes se buscaba UNA sola vez y si no estaba en ese instante el lote se daba
@@ -1348,20 +1372,23 @@ async function seleccionarLoteGrupos(page, { n, desde } = {}) {
   //    editor de la página queda vacío en el DOM y su botón Publicar sale
   //    deshabilitado (habia botones con aria-disabled=true en todas las
   //    corridas). Cerrarlo devuelve el post al compositor con los grupos
-  //    ya aplicados. "Atrás" es el botón del pie del diálogo (aria-label
-  //    "Atrás"); también hay un botón "Cerrar cuadro de diálogo del editor",
-  //    pero el usuario confirmó que el flujo real cierra con Atrás.
-  const cerrado = await page.evaluate(() => {
+//    ya aplicados. "Atrás" es el botón del pie del diálogo (aria-label
+//    "Atrás"); también hay un botón "Cerrar cuadro de diálogo del editor",
+//    pero el usuario confirmó que el flujo real cierra con Atrás.
+  const cerrado = await page.evaluate((textosAtras) => {
     const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
     const dialogs = Array.from(document.querySelectorAll('[role="dialog"]')).filter(vis);
-    const picker = dialogs.find(d => (d.innerText || '').includes('Añadir grupos'));
+    const picker = dialogs.find(d => textosAtras.some(t => (d.innerText || '').toLowerCase().includes(t.toLowerCase())));
     if (!picker) return { modo: 'sin-dialogo' };
     const btn = Array.from(picker.querySelectorAll('div[role="button"], button'))
-      .find(e => vis(e) && /^atr[aá]s/i.test((e.getAttribute('aria-label') || e.innerText || '').trim()));
+      .find(e => vis(e) && textosAtras.some(t => {
+        const label = (e.getAttribute('aria-label') || e.innerText || '').trim().toLowerCase();
+        return label === t.toLowerCase() || label.startsWith(t.toLowerCase() + ' ');
+      }));
     if (!btn) return { modo: 'sin-atra' };
     const r = btn.getBoundingClientRect();
     return { modo: 'atras', x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
-  });
+  }, TEXTOS_ATRAS);
   if (cerrado.modo === 'atras') {
     const btnXY = { x: cerrado.x, y: cerrado.y };
     try {
@@ -1383,8 +1410,9 @@ async function seleccionarLoteGrupos(page, { n, desde } = {}) {
   // diálogo se haya ido; si sigue, se fuerza con Escape.
   const pickerAbierto = () => page.evaluate(() => {
     const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    const textosValidos = ['añadir grupos', 'agregar grupos', 'add groups', 'add to groups', 'agregar a grupos'];
     return Array.from(document.querySelectorAll('[role="dialog"]')).filter(vis)
-      .some(d => (d.innerText || '').includes('Añadir grupos'));
+      .some(d => textosValidos.some(t => (d.innerText || '').toLowerCase().includes(t)));
   }).catch(() => false);
   let cierreFinal = cerrado.modo;
   if (await pickerAbierto()) {

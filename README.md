@@ -16,9 +16,11 @@ Panel de gestión para gestores de ventas que trabajan con importadores de elect
 - [Generador de Imágenes](#generador-de-imágenes)
 - [Exportaciones PDF](#exportaciones-pdf)
 - [Importación / Sincronización OCR](#importación--sincronización-ocr)
+- [Reglas de Garantía (Warranty Rules)](#reglas-de-garantía-warranty-rules)
 - [Anuncios generados con IA](#anuncios-generados-con-ia)
 - [Catálogo Público (GitHub Pages)](#catálogo-público-github-pages)
 - [Publicaciones en Redes Sociales](#publicaciones-en-redes-sociales)
+- [Rutinas de Página (Page Routines)](#rutinas-de-página-page-routines)
 - [Publicador automático de grupos](#publicador-automático-de-grupos)
 - [Ranking de grupos (Biblioteca de Contenido)](#ranking-de-grupos-biblioteca-de-contenido)
 - [Sistema de Respaldos](#sistema-de-respaldos)
@@ -39,14 +41,17 @@ Este sistema permite a un **gestor de ventas**:
 4. **Generar imágenes promocionales** 1080x1080 con 5 plantillas distintas, fondo con IA y personalización completa de colores y textos.
 5. **Exportar reportes PDF** de productos con selección de campos y estilos (tabla o lista detallada).
 6. **Importar precios desde imágenes** del proveedor usando OCR (tesseract.js), con detección automática de productos y precios.
-7. **Generar textos de publicación** con IA (compatible con OpenAI) usando plantillas personalizables.
-8. **Publicar directamente en Facebook e Instagram** mediante la Graph API.
-9. **Generar un catálogo web público** con todos los productos activos, filtros por categoría, búsqueda y botón directo a WhatsApp. Se despliega en GitHub Pages.
-10. **Crear anuncios con IA (ChatGPT)** — copiar prompts generados por producto e importar los resultados.
-11. **Dar seguimiento** a entregas y comisiones pendientes.
-12. **Configurar el tipo de cambio** USD → MN para mostrar precios en moneda nacional.
-13. **Respaldar y restaurar** todos los datos del sistema como archivos JSON.
-14. **Ranking de grupos por desempeño** — medir con la Biblioteca de Contenido de Facebook qué grupos devuelven más y menos visualizaciones por publicación, con historial consultable por fecha y evolución por grupo.
+7. **Reglas de garantía automáticas** — asignar texto de garantía por palabra clave según proveedor.
+8. **Generar textos de publicación** con IA (compatible con OpenAI) usando plantillas personalizables.
+9. **Publicar directamente en Facebook e Instagram** mediante la Graph API.
+10. **Generar un catálogo web público** con todos los productos activos, filtros por categoría, búsqueda y botón directo a WhatsApp. Se despliega en GitHub Pages.
+11. **Crear anuncios con IA (ChatGPT)** — copiar prompts generados por producto e importar los resultados.
+12. **Rutinas de página recurrentes** — programar publicaciones automáticas en Página FB con horarios fijos y rotación de productos.
+13. **Dar seguimiento** a entregas y comisiones pendientes.
+14. **Configurar el tipo de cambio** USD → MN para mostrar precios en moneda nacional.
+15. **Respaldar y restaurar** todos los datos del sistema como archivos JSON.
+16. **Ranking de grupos por desempeño** — medir con la Biblioteca de Contenido de Facebook qué grupos devuelven más y menos visualizaciones por publicación, con historial consultable por fecha y evolución por grupo.
+17. **Publicador automático en grupos** — cola de publicaciones que se publica sola en grupos de Facebook vía CDP (Chrome real), con dos cuentas, límites de ritmo y reintento automático.
 
 El negocio funciona así:
 
@@ -170,7 +175,10 @@ El servidor arranca en `http://localhost:3456`. La base de datos SQLite se crea 
 DaniMarvisStore/
 ├── package.json               # Deps y scripts npm (único node_modules del proyecto, en la raíz)
 ├── scripts/
-│   └── generate-catalog.js    # Script CLI para regenerar el catálogo público
+│   ├── generate-catalog.js    # Script CLI para regenerar el catálogo público
+│   ├── check-imports.mjs      # Valida imports/exports en backend
+│   ├── check-carga.mjs        # Carga real de vistas del frontend (DOM mínimo)
+│   └── test-*.mjs             # Tests de comportamiento (20+ módulos)
 ├── public-catalog/
 │   ├── index.html             # Catálogo web estático generado (GitHub Pages)
 │   └── images/                # Imágenes de productos copiadas para el catálogo
@@ -178,41 +186,74 @@ DaniMarvisStore/
 │   └── fb-ranking/
 │       ├── package.json                # type=commonjs (estos scripts usan require)
 │       ├── content_library_views.js    # Scraper: filas de la Biblioteca de Contenido
-│       └── analyze_views.js            # Análisis alternativo por métricas del grid
+│       ├── analyze_views.js            # Análisis alternativo por métricas del grid
+│       ├── group_poster.js             # Poster en grupos vía CDP (Chrome)
+│       ├── metodo_texto.js             # Técnicas de escritura en compositor
+│       └── reporte_POC_fechas.json     # Salida del scraper (gitignored)
 ├── electron/
 │   └── main.js                # Placeholder para aplicación Electron (próximamente)
 ├── backend/
 │   ├── server.js              # Servidor Express (puerto 3456)
 │   ├── danimarvis.db          # Base de datos SQLite (auto-creada)
 │   ├── uploads/               # Imágenes subidas por los usuarios
+│   ├── backups/               # Respaldos JSON (gitignored)
 │   ├── db/
 │   │   └── database.js        # Esquema, migraciones y seed de BD
 │   ├── lib/
+│   │   ├── accountConfig.js    # Config de 2 cuentas FB (A/B) con puertos/perfiles/proxy
+│   │   ├── agendaEstado.js     # Estado persistente del disparador por fecha
 │   │   ├── catalogGenerator.js # Generador de HTML estático del catálogo público
 │   │   ├── chromeLauncher.js   # Auto-arranque de Chrome con puerto 9222 + perfil FB
+│   │   ├── coordination.js     # Coordinación multi-instancia (A/B) para cursos/turnos
 │   │   ├── currency.js         # Formateador de precios en USD
 │   │   ├── duplicarDia.js      # Duplicar un día de la agenda y deshacerlo
 │   │   ├── facebook.js         # Integración con Facebook Graph API
 │   │   ├── groupPublisher/     # Publicador automático de grupos (split por responsabilidades)
+│   │   │   ├── config.js       # Defaults y carga de publish_config
+│   │   │   ├── estado.js       # running, current, lastResult, chrome check
+│   │   │   ├── cola.js         # pickForRun, updateQueue, reencolado automático
+│   │   │   ├── limites.js      # Límites del worker y del disparador (agenda)
+│   │   │   ├── poster.js       # Lógica de publicación en grupo (CDP)
+│   │   │   ├── schedulers.js   # Worker cron + disparador por fecha
+│   │   │   ├── util.js         # Helpers compartidos
+│   │   │   └── index.js        # Barrel export
 │   │   ├── imageUtils.js       # Conversión de imágenes a WebP con sharp
-│   │   └── ocr.js              # OCR con tesseract.js + fuzzy matching
+│   │   ├── ocr.js              # OCR con tesseract.js + fuzzy matching
+│   │   ├── pageRoutineWorker.js# Worker de rutinas recurrentes en Página FB
+│   │   ├── plans.js            # Planificador de slots para rutinas de página
+│   │   ├── promptEngine.js     # Motor de prompts para anuncios IA (familias/variantes)
+│   │   ├── secrets.js          # Reconciliación API key (base ↔ .env)
+│   │   ├── settingsMerge.js    # Merge profundo de publish_config
+│   │   ├── transaccion.js      # Helper transacciones SQLite
+│   │   ├── ventanas.js         # Gestión de ventanas/pestañas CDP
+│   │   ├── vision.js           # Análisis visual (fallback OCR)
+│   │   └── warranty.js         # Motor de reglas de garantía por palabra clave
 │   ├── jobs/
 │   │   └── dailyRanking.js     # Corrida diaria del ranking + estado en disco
 │   ├── routes/
 │   │   ├── agenda.js           # Agenda de grupos: calendario, duplicar/deshacer día, disparador
-│   │   ├── products.js        # CRUD productos + visibilidad
-│   │   ├── providers.js       # CRUD proveedores
-│   │   ├── sales.js           # CRUD ventas + PATCH estado
-│   │   ├── categories.js      # CRUD categorías
-│   │   ├── publications.js    # CRUD publicaciones + publicar en FB/IG + reorder
-│   │   ├── exports.js         # CRUD historial de exportaciones
-│   │   ├── import.js          # Análisis OCR + aplicación de precios
-│   │   ├── images.js           # Importación de imágenes generadas con IA
+│   │   ├── backup.js           # Exportar/restaurar datos como JSON
+│   │   ├── categories.js       # CRUD categorías
+│   │   ├── coordination.js     # API coordinación multi-instancia (token dedicado)
+│   │   ├── exports.js          # CRUD historial de exportaciones
 │   │   ├── groupPublish.js     # API del publicador de grupos (202 + status)
-│   │   └── backup.js          # Exportar/restaurar datos como JSON
-│   │   └── rankingsRouter.js  # Ranking de grupos + historial (Biblioteca de Contenido)
+│   │   ├── groups.js           # CRUD grupos FB + importación idempotente desde picker
+│   │   ├── images.js           # Importación de imágenes generadas con IA
+│   │   ├── import.js           # Análisis OCR + aplicación de precios
+│   │   ├── pageRoutines.js     # Rutinas recurrentes en Página FB (horarios, formatos)
+│   │   ├── products.js         # CRUD productos + visibilidad
+│   │   ├── providers.js        # CRUD proveedores
+│   │   ├── providerStyles.js   # Perfiles de estilo visual por proveedor (IA)
+│   │   ├── pubQueue.js         # Cola de publicación simple (un destino por item)
+│   │   ├── publications.js     # CRUD publicaciones + publicar en FB/IG + reorder
+│   │   ├── rankingsRouter.js   # Ranking de grupos + historial (Biblioteca de Contenido)
+│   │   ├── sales.js            # CRUD ventas + PATCH estado
+│   │   ├── warrantyRules.js    # Reglas de garantía automáticas por keyword/proveedor
+│   │   └── rankings.js         # (legacy) Ranking básico
 │   └── scripts/
-│       └── generate-icon.js   # Generador de ícono PNG con canvas
+│       ├── backup.js           # Exportar backup JSON (CLI)
+│       ├── generate-icon.js    # Generador de ícono PNG con canvas
+│       └── restore-backup.mjs  # Restaurar backup JSON (CLI)
 │
 ├── frontend/
 │   ├── index.html             # Shell SPA: sidebar, modal, confirmación apilada, toast
@@ -246,13 +287,14 @@ DaniMarvisStore/
 │           ├── salesView.js          # CRUD ventas + cálculo comisiones
 │           ├── publicationsView.js   # CRUD publicaciones + publicar en FB/IG
 │           ├── catalogImagesView.js  # Generador de catálogo público
-│           ├── settingsView.js       # Configuración general
+│           ├── settingsView.js       # Configuración general (cuentas FB, estilos, IA, etc.)
 │           ├── backupView.js         # Exportar/restaurar datos
 │           ├── exportsView.js        # Panel de exportaciones (PDF + imágenes)
 │           ├── exportsNewView.js     # Nueva exportación PDF
 │           ├── exportsConfigView.js  # Configuración de exportaciones
 │           ├── exportsImagesView.js  # Generador de imágenes promocionales
-│           └── importView.js         # Importar/sincronizar precios con OCR
+│           ├── importView.js         # Importar/sincronizar precios con OCR
+│           ├── pageRoutinesView.js   # Rutinas recurrentes en Página FB
 │           └── rankingsView.js       # Ranking del día + historial por fecha
 │
 └── README.md
@@ -534,6 +576,104 @@ Es el **seguro del publicador**: publica solo lo que ya venció, con límites de
 
 ---
 
+### Rutinas de Página (Page Routines)
+
+Publicación recurrente programada en una **Página de Facebook** (no en grupos). Permite definir rutinas con horarios fijos, formato de imagen y selección de productos.
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/page-routines` | Listar rutinas (incluye `last_scheduled` del log) |
+| `POST` | `/api/page-routines` | Crear rutina (`name`, `products[]`, `times[]`, `default_text`, `format`, `lead_minutes`, `active`) |
+| `PUT` | `/api/page-routines/:id` | Actualizar rutina completa |
+| `PATCH` | `/api/page-routines/:id/active` | Activar/desactivar rutina |
+| `DELETE` | `/api/page-routines/:id` | Eliminar rutina (cancela posts programados pendientes) |
+| `GET` | `/api/page-routines/logs` | Historial de programación (`routine_id`, `status`, `limit`) |
+| `GET` | `/api/page-routines/test` | Test de configuración: valida token, página y muestra slots futuros |
+| `POST` | `/api/page-routines/run-now` | Ejecutar ciclo de programación manualmente |
+| `DELETE` | `/api/page-routines/logs/:logId` | Cancelar post programado (elimina en Meta si está `scheduled`) |
+
+**Configuración necesaria** en `publish_config.facebook` (`page_id`, `access_token`). El worker (`pageRoutineWorker.js`) corre cada minuto y agenda posts con `lead_minutes` de antelación (mínimo 11 min). Formatos soportados: `1:1`, `4:5`, `9:16`.
+
+---
+
+### Reglas de Garantía (Warranty Rules)
+
+Asignación automática de texto de garantía a productos según **palabras clave** por proveedor. Al crear/editar un producto, si su nombre contiene una keyword configurada, se sugiere/aplica la garantía correspondiente (la más larga que coincida).
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/warranty-rules` | Listar reglas (`provider_id` opcional) |
+| `POST` | `/api/warranty-rules` | Crear regla (`provider_id`, `keyword`, `warranty_text`) |
+| `POST` | `/api/warranty-rules/bulk` | Crear/actualizar en lote (`provider_id`, `rules[]`) |
+| `POST` | `/api/warranty-rules/match` | Probar coincidencia (`provider_id`, `product_name`) → devuelve `warranty` y `matched` |
+| `DELETE` | `/api/warranty-rules/:id` | Eliminar regla |
+| `DELETE` | `/api/warranty-rules/provider/:provider_id` | Eliminar todas las reglas de un proveedor |
+
+---
+
+### Estilos de Proveedor (Provider Styles)
+
+Perfiles de **estilo visual para generación de imágenes con IA** por proveedor. Cada estilo define paleta, reglas de fondo/acento/firma/negativo/envío y un `style_name` que inyecta el motor de prompts.
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/provider-styles` | Listar estilos (palette parseado) |
+| `GET` | `/api/provider-styles/:code` | Obtener estilo por código |
+| `POST` | `/api/provider-styles` | Crear (`code`, `name`, `style_name`, `palette`, `background_rules`, `accent_rules`, `signature_rules`, `negative_rules`, `shipping_rule`) |
+| `PUT` | `/api/provider-styles/:code` | Actualizar estilo |
+| `DELETE` | `/api/provider-styles/:code` | Eliminar (bloqueado si hay proveedores usándolo) |
+
+Los proveedores referencian el estilo vía `provider_style_code`. Códigos actuales: `GE`, `EM`, `MM`.
+
+---
+
+### Grupos de Facebook (Groups)
+
+CRUD de grupos para el publicador automático, con **importación idempotente** desde el picker de Facebook (clave `fb_id`).
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/groups` | Listar grupos (ordenados por `sort_order`) |
+| `POST` | `/api/groups` | Crear grupo manual (`name`, `url`) |
+| `POST` | `/api/groups/import` | Importar lote desde picker (`groups[]` con `name`, `url`, `fb_id`) — idempotente por `fb_id` |
+| `PUT` | `/api/groups/:id` | Actualizar grupo |
+| `PATCH` | `/api/groups/reorder` | Reordenar (`order: string[]`) |
+| `DELETE` | `/api/groups/:id` | Eliminar grupo |
+
+---
+
+### Coordinación Multi-Instancia
+
+API interna para coordinar **dos servidores (A y B)** que comparten la cola de publicación en grupos. Protegida con header `X-Coord-Token` (variable `COORD_TOKEN`). Solo expuesta en la instancia coordinadora (`COORD_URL` no seteado).
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/coordination/estado` | Estado completo del coordinador |
+| `POST` | `/api/coordination/turno/claim` | Reclamar turno para una cuenta (`account`, `leaseMs`) |
+| `POST` | `/api/coordination/turno/release` | Liberar turno (`account`) |
+| `GET` | `/api/coordination/lote` | Cursor actual del lote de grupos |
+| `POST` | `/api/coordination/lote/commit` | Avanzar cursor (`ultimo` grupo procesado) |
+| `GET` | `/api/coordination/destinos` | Previsualizar próximos N destinos (`n`) |
+| `POST` | `/api/coordination/destinos/advance` | Avanzar destinos manualmente (`k`) |
+| `GET` | `/api/coordination/catalogo` | Catálogo completo de grupos para reparto |
+| `POST` | `/api/coordination/distribuir` | Repartir slots en ventana (`ini`, `fin`, `cantidad`, `minGapMs`) |
+
+---
+
+### Cola de Publicación (Publication Queue)
+
+Cola simplificada que alimenta al publicador de grupos: **un solo destino por ítem**.
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/publication-queue` | Listar toda la cola (con texto, imágenes, producto) |
+| `GET` | `/api/publication-queue/due` | Ítems vencidos/listos (`status=pending`, `scheduled_at <= now`) |
+| `POST` | `/api/publication-queue` | Encolar (`publication_id`, `group_name`/`group_url`/`group_ids`, `variant_text`, `scheduled_at`, `images`) |
+| `PATCH` | `/api/publication-queue/:id` | Actualizar (`status`, `notes`, `variant_text`, `images`) |
+| `DELETE` | `/api/publication-queue/:id` | Eliminar de la cola |
+
+---
+
 ## Panel de Gestión (Frontend)
 
 El frontend es una **SPA** (Single Page Application) construida con JavaScript vanilla. Usa un router por hash (`#/ruta`) para la navegación.
@@ -549,7 +689,8 @@ El frontend es una **SPA** (Single Page Application) construida con JavaScript v
 | `#/publications` | Publicaciones | CRUD de publicaciones con texto, imágenes, generación con IA, reordenamiento y publicación directa en Facebook/Instagram |
 | `#/catalog-images` | Catálogo público | Generador de catálogo web estático + despliegue en GitHub Pages |
 | `#/import` | Importar / Sincronizar | OCR de imágenes del proveedor, detección de precios, actualización masiva |
-| `#/settings` | Configuración | Tipo de cambio, plantilla de publicación, configuración de IA, configuración de Facebook/Instagram, gestión de categorías |
+| `#/page-routines` | Rutinas de Página | Programación recurrente de posts en Página FB (horarios, formatos, productos) |
+| `#/settings` | Configuración | Tipo de cambio, plantilla de publicación, configuración de IA, cuentas FB (A/B), estilos de proveedor, categorías |
 | `#/backup` | Respaldos | Exportar e importar todos los datos del sistema como JSON |
 | `#/exports` | Exportaciones | Generación de PDF, imágenes promocionales, historial de exportaciones |
 | `#/rankings` | Ranking grupos | Top y menos grupos por visualizaciones + historial por fecha |
@@ -667,6 +808,44 @@ Funcionalidad para actualizar precios y disponibilidad de productos a partir de 
 
 ---
 
+## Reglas de Garantía (Warranty Rules)
+
+Asignación **automática de texto de garantía** a productos según **palabras clave** configuradas por proveedor. Cuando se crea o edita un producto, el sistema sugiere/aplica la garantía correspondiente si el nombre del producto contiene alguna keyword (gana la coincidencia más larga).
+
+### Cómo funciona
+
+1. **Configurar reglas** — En `#/settings` (pestaña Garantías) o vía API:
+   - Seleccionar proveedor
+   - Definir **palabra clave** (ej: "nevera", "lavadora", "split")
+   - Definir **texto de garantía** completo (ej: "Garantía 12 meses compresor + 3 meses partes")
+
+2. **Aplicación automática** — Al guardar un producto:
+   - El backend busca reglas del proveedor del producto
+   - Si el nombre del producto contiene la keyword (case-insensitive), se sugiere la garantía
+   - Si hay múltiples coincidencias, **gana la keyword más larga** (más específica)
+   - El usuario puede aceptar o sobrescribir
+
+3. **Endpoint de prueba** — `POST /api/warranty-rules/match` permite testear qué garantía aplicaría a un nombre dado sin guardar.
+
+### Características
+
+- **Por proveedor** — Cada proveedor tiene sus propias reglas (un proveedor de neveras no pisa al de aires)
+- **Carga masiva** — `POST /bulk` permite subir muchas reglas a la vez (CSV → JSON → import)
+- **Idempotente** — Re-importar la misma regla actualiza el texto si cambió, no duplica
+- **Eliminación en cascada** — `DELETE /provider/:provider_id` limpia todas las reglas de un proveedor
+
+### Ejemplo
+
+| Proveedor | Keyword | Garantía aplicada |
+|-----------|---------|-------------------|
+| Frigidaire | `nevera` | `Garantía 12 meses compresor / 3 meses partes / 1 mano de obra` |
+| Frigidaire | `nevera no frost` | `Garantía 24 meses compresor no frost / 12 meses partes` |
+| Mabe | `lavadora` | `Garantía 10 años motor / 2 años partes` |
+
+Si el producto se llama "Nevera No Frost 300L", coincide con ambas keywords de Frigidaire → **gana "nevera no frost"** (más larga).
+
+---
+
 ## Anuncios generados con IA
 
 El panel incluye un **motor de prompts** que construye el texto listo para generar anuncios publicitarios en **ChatGPT**, con identidad visual DaniMarvis, plantillas por familia creativa y rotación de variantes.
@@ -691,9 +870,25 @@ El panel incluye un **motor de prompts** que construye el texto listo para gener
 5. Guarda la imagen en la carpeta indicada.
 6. Importa la carpeta desde el panel.
 
-### Estilos visuales de proveedor
+### Estilos visuales de proveedor (Provider Styles)
 
-Cada proveedor puede tener un **perfil de estilo visual** (`style_name`) que define paleta de colores, reglas de fondo, acentos, firma visual y restricciones. El prompt generado inyecta automáticamente ese bloque `[PROVIDER_STYLE]`.
+Perfiles completos de **estilo visual para generación de imágenes con IA** por proveedor. Se gestionan en `#/settings` (pestaña **Estilos**) y vía API `/api/provider-styles`. Cada estilo inyecta un bloque `[PROVIDER_STYLE]` estructurado en los prompts del motor de anuncios.
+
+#### Estructura de un estilo
+
+| Campo | Tipo | Descripción |
+|-------|------|-------------|
+| `code` | STRING | Código corto único (ej: `GE`, `EM`, `MM`). Clave foránea en `providers.provider_style_code`. |
+| `name` | STRING | Nombre legible (ej: "MiPime Gabriel y Erika"). |
+| `style_name` | STRING | Identificador interno para el motor de prompts (ej: `DANIMARVIS_G_ERIKA`). |
+| `palette` | JSON | Paleta de colores: `primary`, `secondary`, `accent`, `background`, `text`, `badge_bg`, `badge_text`. |
+| `background_rules` | TEXT | Reglas de fondo: texturas, gradientes, ambientes, restricciones. |
+| `accent_rules` | TEXT | Reglas de acentos: bordes, sombras, highlights, elementos decorativos. |
+| `signature_rules` | TEXT | Firma visual: logo placement, watermark, tagline, posición. |
+| `negative_rules` | TEXT | Restricciones: qué NO hacer (colores prohibidos, estilos vetados, elementos禁用). |
+| `shipping_rule` | TEXT | Regla de envío/entrega a incluir en el copy visual.
+
+#### Códigos actuales
 
 | Código | Proveedor | `style_name` |
 |--------|-----------|--------------|
@@ -702,6 +897,12 @@ Cada proveedor puede tener un **perfil de estilo visual** (`style_name`) que def
 | `MM` | MiPimeMelani | `DANIMARVIS_MELANI` |
 
 > **Badge de proveedor:** si la pieza incluye un badge o sello de proveedor (p. ej. en el header), los prompts instructan mostrar **solo el código** (`GE`, `EM`, `MM`, etc.), nunca el nombre completo. Aplica a todos los estilos y variantes.
+
+#### Gestión
+
+- **Crear/Editar** — Formulario en Settings con campos de texto largo para reglas y color picker para paleta.
+- **Validación** — No se puede eliminar un estilo si hay proveedores usándolo (error 409).
+- **Herencia** — El proveedor referencia el estilo vía `provider_style_code`; al generar prompt, se mergea la config del estilo con la familia/variante elegida.
 
 ### Familias creativas y variantes
 
@@ -774,6 +975,46 @@ En **Configuración** del panel, configura:
 - **Token de acceso** de Facebook (con permisos `pages_publish_posts` y `instagram_basic`, `instagram_content_publish`)
 - **Plantilla de publicación** con placeholders: `{NAME}`, `{PRICE}`, `{DESCRIPTION}`, `{WARRANTY}`, `{CATEGORY}`, `{STOCK}`
 - **Configuración de IA** (URL, clave, modelo, prompt) para generación automática de textos
+
+---
+
+## Rutinas de Página (Page Routines)
+
+Programación **recurrente de publicaciones en una Página de Facebook** (no en grupos). Ideal para mantener presencia constante sin intervención manual diaria.
+
+### Cómo funciona
+
+1. **Crear rutina** — En `#/page-routines` se define:
+   - **Nombre** identificativo
+   - **Productos** a rotar (lista específica o *"todos los activos"*)
+   - **Horarios** fijos (formato `HH:MM`, múltiples por día)
+   - **Texto base** de la publicación (usa la misma plantilla que Publicaciones)
+   - **Formato de imagen**: `1:1` (cuadrado), `4:5` (retrato), `9:16` (stories/reels)
+   - **Antelación** (`lead_minutes`): minutos antes del horario para programar en Meta (mínimo 11 min)
+   - **Activa/Inactiva**: interruptor para pausar sin borrar
+
+2. **Worker automático** — Cada minuto, `pageRoutineWorker.js` revisa rutinas activas y agenda en Meta los slots que caen dentro de la ventana de `lead_minutes`. Usa `facebook.js` (Graph API) para crear *unpublished posts* programados.
+
+3. **Rotación de productos** — Si la rutina tiene múltiples productos, el worker rota secuencialmente (round-robin) guardando el índice en `publish_config.page_routine_cursor` para que sea persistente entre reinicios.
+
+4. **Logs** — Cada programación queda registrada en `page_schedule_log` con estado `scheduled`/`published`/`cancelled`/`failed`, permitiendo auditoría y cancelación manual.
+
+### Características
+
+- **Graph API nativa** — No usa CDP/Chrome; publica directo via `/{page_id}/published_posts` con `published=false` y `scheduled_publish_time`.
+- **Múltiples horarios por día** — Ej: `09:00, 14:30, 20:00` todos los días.
+- **Formatos adaptados** — El generador de imágenes (Canvas) produce el tamaño correcto según el formato elegido.
+- **Test integrado** — Botón "Probar" valida token, página y muestra los próximos slots que se programarían.
+- **Ejecución manual** — Botón "Correr ahora" fuerza un ciclo del worker fuera de su horario.
+- **Cancelación** — Desde el log se puede cancelar un post programado (llama a `DELETE /{post_id}` en Graph API).
+
+### Configuración necesaria
+
+En **Configuración → Facebook**:
+- `page_id`: ID de la Página (no perfil personal)
+- `access_token`: Token de larga duración con `pages_publish_posts`, `pages_read_engagement`
+
+> ⚠️ El token debe ser de **Página** (Page Access Token), no de usuario. Se obtiene en Graph API Explorer seleccionando la página tras autenticar la app.
 
 ---
 
