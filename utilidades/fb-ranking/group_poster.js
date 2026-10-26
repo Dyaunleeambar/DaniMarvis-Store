@@ -1169,16 +1169,6 @@ const TEXTOS_ATRAS = [
   'Volver',
 ];
 
-function incluyeAnyadirGrupos(texto) {
-  const t = (texto || '').toLowerCase();
-  return TEXTOS_ANYADIR_GRUPOS.some(v => t.includes(v.toLowerCase()));
-}
-
-function incluyeAtras(texto) {
-  const t = (texto || '').trim().toLowerCase();
-  return TEXTOS_ATRAS.some(v => t === v.toLowerCase() || t.startsWith(v.toLowerCase() + ' '));
-}
-
 async function probeEtapa(page, tag) {
   try {
     const info = await page.evaluate(() => {
@@ -1372,13 +1362,16 @@ async function seleccionarLoteGrupos(page, { n, desde } = {}) {
   //    editor de la página queda vacío en el DOM y su botón Publicar sale
   //    deshabilitado (habia botones con aria-disabled=true en todas las
   //    corridas). Cerrarlo devuelve el post al compositor con los grupos
-//    ya aplicados. "Atrás" es el botón del pie del diálogo (aria-label
-//    "Atrás"); también hay un botón "Cerrar cuadro de diálogo del editor",
-//    pero el usuario confirmó que el flujo real cierra con Atrás.
-  const cerrado = await page.evaluate((textosAtras) => {
+  //    ya aplicados. "Atrás" es el botón del pie del diálogo (aria-label
+  //    "Atrás"); también hay un botón "Cerrar cuadro de diálogo del editor",
+  //    pero el usuario confirmó que el flujo real cierra con Atrás.
+  const cerrado = await page.evaluate((textosAtras, textosPicker) => {
     const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
     const dialogs = Array.from(document.querySelectorAll('[role="dialog"]')).filter(vis);
-    const picker = dialogs.find(d => textosAtras.some(t => (d.innerText || '').toLowerCase().includes(t.toLowerCase())));
+    // El diálogo se reconoce por su título/contenido ("Añadir grupos"), NO por el
+    // texto de "Atrás": ese botón suele ser solo un aria-label y no aparece en el
+    // innerText, y "back" casaría con cualquier "feedback"/"background".
+    const picker = dialogs.find(d => textosPicker.some(t => (d.innerText || '').toLowerCase().includes(t.toLowerCase())));
     if (!picker) return { modo: 'sin-dialogo' };
     const btn = Array.from(picker.querySelectorAll('div[role="button"], button'))
       .find(e => vis(e) && textosAtras.some(t => {
@@ -1388,7 +1381,7 @@ async function seleccionarLoteGrupos(page, { n, desde } = {}) {
     if (!btn) return { modo: 'sin-atra' };
     const r = btn.getBoundingClientRect();
     return { modo: 'atras', x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
-  }, TEXTOS_ATRAS);
+  }, TEXTOS_ATRAS, TEXTOS_ANYADIR_GRUPOS);
   if (cerrado.modo === 'atras') {
     const btnXY = { x: cerrado.x, y: cerrado.y };
     try {
@@ -1408,12 +1401,11 @@ async function seleccionarLoteGrupos(page, { n, desde } = {}) {
   // puesto y no sale; los fallos "no se envió" del 2026-10-16). Antes se intentaba
   // "Atrás" una vez y no se verificaba el resultado. Ahora se comprueba que el
   // diálogo se haya ido; si sigue, se fuerza con Escape.
-  const pickerAbierto = () => page.evaluate(() => {
+  const pickerAbierto = () => page.evaluate((textosPicker) => {
     const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-    const textosValidos = ['añadir grupos', 'agregar grupos', 'add groups', 'add to groups', 'agregar a grupos'];
     return Array.from(document.querySelectorAll('[role="dialog"]')).filter(vis)
-      .some(d => textosValidos.some(t => (d.innerText || '').toLowerCase().includes(t)));
-  }).catch(() => false);
+      .some(d => textosPicker.some(t => (d.innerText || '').toLowerCase().includes(t.toLowerCase())));
+  }, TEXTOS_ANYADIR_GRUPOS).catch(() => false);
   let cierreFinal = cerrado.modo;
   if (await pickerAbierto()) {
     await page.keyboard.press('Escape').catch(() => {});
@@ -1468,10 +1460,22 @@ async function debugComposer(page) {
   } catch (e) { console.log('DEBUG composer error:', e.message); }
 }
 
+// Textos (en minúsculas) del botón que abre el compositor de un grupo. Una sola
+// lista para clickComposerButton y hayDialogoCompositor. Las variantes en
+// español son las de siempre; las de inglés cubren una cuenta con Facebook en
+// ese idioma ("Create public post" NO contiene "create post", por eso va aparte).
+const TEXTOS_COMPOSITOR = [
+  'escribe algo', 'escribir algo', 'write something', 'publicá algo', 'publica algo',
+  'publicar algo', 'vender algo', 'sell something', 'crear publicación', 'crear publicacion',
+  'crea una publicación', 'crea una publicacion', 'añadir algo', 'añade algo',
+  'agregar algo', 'algo en mente', "what's on your mind", 'create post',
+  'create public post', 'create a public post', 'comparte algo',
+];
+
 // En el layout actual de FB el compositor de post se abre con un botón
 // "Escribe algo…". Lo clicamos para que se expanda/abra el editor.
 async function clickComposerButton(page) {
-  return page.evaluate(() => {
+  return page.evaluate((CLAVES) => {
     const norm = (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
     const vis = (el) => { const r = el.getBoundingClientRect(); if (r.width <= 0 || r.height <= 0) return false; const cs = getComputedStyle(el); return cs.visibility !== 'hidden' && cs.display !== 'none' && cs.opacity !== '0'; };
     // El texto del botón de compositor cambia según el tipo de grupo: los de
@@ -1479,12 +1483,6 @@ async function clickComposerButton(page) {
     // pensando?". Antes solo se miraban 4 variantes y el resto terminaba en
     // "No se encontró el compositor del grupo". Se amplía la lista y se
     // descartan las cajas de comentarios del feed (viven dentro de un article).
-    const CLAVES = [
-      'escribe algo', 'escribir algo', 'write something', 'publicá algo', 'publica algo',
-      'publicar algo', 'vender algo', 'crear publicación', 'crear publicacion',
-      'crea una publicación', 'crea una publicacion', 'añadir algo', 'añade algo',
-      'agregar algo', 'algo en mente', "what's on your mind", 'create post', 'comparte algo',
-    ];
     let best = null;
     for (const el of document.querySelectorAll('div[role="button"], span[role="button"], button')) {
       if (!vis(el)) continue;
@@ -1498,7 +1496,7 @@ async function clickComposerButton(page) {
     if (!best) return false;
     best.el.click();
     return true;
-  });
+  }, TEXTOS_COMPOSITOR);
 }
 
 // ¿Ya hay un compositor de post abierto (como diálogo)? Si es así, NO hay que
@@ -1511,7 +1509,7 @@ async function hayDialogoCompositor(page) {
     for (const d of Array.from(document.querySelectorAll('[role="dialog"]')).filter(vis)) {
       if (d.querySelector('input[type="file"]')) return true;
       const t = (d.innerText || '').toLowerCase();
-      if (/escribe algo|escribir algo|crear publica|publica algo|add groups/.test(t)) return true;
+      if (/escribe algo|escribir algo|crear publica|publica algo|add groups|write something|create (a )?(public )?post/.test(t)) return true;
     }
     return false;
   }).catch(() => false);
