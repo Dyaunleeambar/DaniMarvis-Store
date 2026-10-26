@@ -27,6 +27,7 @@ const fs = require('fs');
 const path = require('path');
 const { elegirIndicesLote } = require('./lote_grupos.js');
 const { pistaSinCompositor, decidirEnvio } = require('./diagnostico_fb.js');
+const { vigilarRed, redQuieta, sondearHasta } = require('./envio_rapido.js');
 const { METODOS_TEXTO, normMetodo, metricasDeInfo, verificarTexto, saltosPerdidos } = require('./metodo_texto.js');
 
 const args = process.argv.slice(2);
@@ -67,6 +68,13 @@ const METODO_TEXTO = (val(args, '--metodo-texto') || 'teclado').trim();
 // otro (p.ej. 9223). Se resuelve por argumento y, si no viene, por entorno. Así
 // el poster se conecta al Chrome de la cuenta correcta y no siempre al de A.
 const DEBUG_PORT = parseInt(val(args, '--debug-port') || process.env.FB_DEBUG_PORT || '9222', 10) || 9222;
+
+// Confirmación rápida por red (ver envio_rapido.js). Por defecto está en MODO
+// SOMBRA: se mide cuándo habría podido cerrarse la pestaña y se deja en el log
+// (`[ENVIO-RED]`), pero la decisión sigue siendo la de siempre. Con
+// `--confirm-red=1` (o FB_CONFIRM_RED=1 en el entorno) la señal pasa a cerrar la
+// espera de verdad. Conviene activarla solo tras ver varias corridas en sombra.
+const CONFIRM_RED = (val(args, '--confirm-red') || process.env.FB_CONFIRM_RED || '') === '1';
 
 const splitList = (raw, sep = ';') => String(raw || '').split(sep).map(s => s.trim()).filter(Boolean);
 const groups = splitList(GROUPS_RAW, ';');
@@ -1118,9 +1126,11 @@ async function clickPublish(page, dryRun) {
       await page.evaluate((x, y) => { const el = document.elementFromPoint(x, y); if (el) el.click(); }, btn.x, btn.y);
     }
   }
-  await sleep(rand(1400, 2200));
-
-  const tooltip = await page.evaluate(() => {
+  // ¿Apareció el aviso "Publicando…" con su botón Publicar/Continuar? Se SONDEA
+  // en vez de dormir 1.4-2.2 s + 2.5-4 s a ciegas: corta apenas aparece el aviso
+  // o apenas el compositor queda vacío (señal de que el post ya salió y no habrá
+  // aviso). La ventana máxima es la de antes (2.2 s) escalada por la red.
+  const leerTooltip = () => page.evaluate(() => {
     const norm = (s) => (s || '').trim().toLowerCase();
     const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
     for (const el of document.querySelectorAll('div[role="dialog"], div[role="tooltip"], [role="menu"]')) {
@@ -1135,7 +1145,15 @@ async function clickPublish(page, dryRun) {
       if (pub) { const r = pub.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), w: Math.round(r.width), h: Math.round(r.height) }; }
     }
     return null;
-  });
+  }).catch(() => null);
+  const ventanaTooltip = Math.round(2200 * (T.publishWaitMs / PUBLISH_WAIT_MS));
+  const sondeo = await sondearHasta(async () => {
+    const tip = await leerTooltip();
+    if (tip) return { tip };
+    const len = await currentComposerLen(page).catch(() => -1);
+    return len === 0 ? { vacio: true } : null;
+  }, { ventanaMs: ventanaTooltip, pasoMs: 300, dormir: sleep });
+  const tooltip = sondeo && sondeo.tip ? sondeo.tip : null;
   let tooltipClicked = false;
   if (tooltip && tooltip.w >= 6 && tooltip.h >= 6) {
     try {
@@ -1148,7 +1166,8 @@ async function clickPublish(page, dryRun) {
       tooltipClicked = true;
     }
   }
-  await sleep(rand(2500, 4000));
+  // Sin espera fija al final: el bucle de vaciado y la confirmación del envío
+  // (que vienen justo después) ya esperan lo que haga falta, y por señal.
   return { clicked: true, tooltip: tooltipClicked, label: btn.label, aria: btn.aria };
 }
 
@@ -1655,12 +1674,15 @@ async function dumpPublishCandidates(page) {
  *  - el texto del post aparece en un [role="article"] del feed (confirmación
  *    fuerte), o
  *  - desaparecen los indicadores de subida/publicación Y el compositor sigue
- *    vacío, sostenido 2 muestras seguidas (evita el parpadeo del re-render).
+ *    vacío, sostenido ENVIO_VACIO_SOSTENIDO muestras seguidas (evita el parpadeo
+ *    del re-render), o
+ *  - (solo con --confirm-red) el mutation del envío ya respondió, no queda nada
+ *    en vuelo y el compositor está vacío (ver envio_rapido.js).
  *
  * Devuelve { ok, motivo }. `ok:false` es "no se pudo confirmar en el tiempo",
  * que NO es lo mismo que "no se envió".
  */
-async function esperarEnvioConfirmado(page, snippet, budgetMs) {
+async function esperarEnvioConfirmado(page, snippet, budgetMs, red) {
   const limite = Date.now() + (budgetMs || T.envioConfirmMs);
   let vacioSostenido = 0;
   let ultimo = { aparecio: false, enCurso: false, conTexto: 1 };
@@ -1688,21 +1710,34 @@ async function esperarEnvioConfirmado(page, snippet, budgetMs) {
       )) {
         if (vis(el)) { enCurso = true; break; }
       }
-      if (!enCurso) {
-        for (const d of document.querySelectorAll('[role="dialog"]')) {
-          if (vis(d) && /publicando|subiendo|enviando|posting|uploading/i.test(d.innerText || '')) { enCurso = true; break; }
-        }
+      // Aviso explícito de "Publicando…/Subiendo…" en un diálogo. Se separa de
+      // `enCurso` porque los indicadores genéricos de arriba (barras de carga del
+      // feed) casi siempre están presentes en una página de grupo.
+      let dialogoPublicando = false;
+      for (const d of document.querySelectorAll('[role="dialog"]')) {
+        if (vis(d) && /publicando|subiendo|enviando|posting|uploading/i.test(d.innerText || '')) { dialogoPublicando = true; break; }
       }
+      if (dialogoPublicando) enCurso = true;
       // 3) ¿quedó texto en algún compositor visible?
       const conTexto = Array.from(document.querySelectorAll('[contenteditable="true"]'))
         .filter(el => vis(el) && (el.innerText || '').trim().length > 0).length;
-      return { aparecio, enCurso, conTexto };
+      return { aparecio, enCurso, conTexto, dialogoPublicando };
     }, snippet).catch(() => ({ aparecio: false, enCurso: true, conTexto: 1, error: true }));
 
     if (ultimo.aparecio) return { ok: true, motivo: 'el post apareció en el feed' };
     const paso = decidirEnvio(ultimo, vacioSostenido);
     vacioSostenido = paso.vacioSostenido;
+    // Señal por red: el mutation del envío ya se mandó y respondió, no queda nada
+    // en vuelo, el compositor está vacío y no hay aviso de "Publicando…". Cerrar la
+    // pestaña ya no aborta nada. Siempre se mide (modo sombra); solo corta la
+    // espera si CONFIRM_RED está activo.
+    let porRed = false;
+    if (red && ultimo.conTexto === 0 && !ultimo.dialogoPublicando && redQuieta(red.estado())) {
+      if (red.listoMs == null) red.listoMs = Date.now() - red.t0;
+      porRed = CONFIRM_RED;
+    }
     if (paso.done) return { ok: true, motivo: paso.motivo };
+    if (porRed) return { ok: true, motivo: 'red quieta y compositor vacío (confirmación rápida)' };
     await sleep(ENVIO_POLL_MS);
   }
   return { ok: false, motivo: 'no se pudo confirmar el envío a tiempo', ultimo };
@@ -1879,7 +1914,10 @@ async function processGroup(browser, groupUrl, label) {
     // preferable decir "no pude verificar" a anotar "0 de 6" y mentir.
     const confirmados = imgs.images === 0 ? true : !!imgs.hasRemove;
 
+    // Se empieza a vigilar la red ANTES del clic para ver el mutation del envío.
+    const red = vigilarRed(page);
     const pub = await clickPublish(page, false);
+    const tClick = Date.now();
 
     // Esperar a que el compositor se vacíe (post publicado). El bucle es por
     // TIEMPO, no por número fijo de vueltas: antes eran 20 x 1.5s = 30s fijos y
@@ -1897,8 +1935,9 @@ async function processGroup(browser, groupUrl, label) {
     while (Date.now() < drainDeadline) {
       len = await currentComposerLen(page);
       if (len === 0) { cleared = true; break; }
-      await sleep(1500);
+      await sleep(500);
     }
+    const tDrain = Date.now();
     if (!pub.clicked) {
       // Mismo trato que el fallo de abajo: si no se encontró el botón, la
       // pantalla es la evidencia. Este caso también apareció en el 2026-10-03
@@ -1928,7 +1967,7 @@ async function processGroup(browser, groupUrl, label) {
       // editor tardar en vaciarse. Así que primero se mira el feed con la misma
       // verificación del camino feliz: si el post está publicado, es un éxito (la
       // lectura del editor llegó tarde), no un error.
-      const envioTarde = await esperarEnvioConfirmado(page, text).catch(() => ({ ok: false, motivo: 'error al verificar el envío' }));
+      const envioTarde = await esperarEnvioConfirmado(page, text, 0, red).catch(() => ({ ok: false, motivo: 'error al verificar el envío' }));
       console.error('[ENVIO-TARDE] ' + JSON.stringify(envioTarde));
       if (envioTarde.ok) {
         return out({ group_url: groupUrl, ok: true, status: 'published',
@@ -2052,13 +2091,27 @@ async function processGroup(browser, groupUrl, label) {
     // después. Antes se cerraba la pestaña (en el finally) a los pocos segundos,
     // abortando el envío a mitad: se veía como "la pestaña se cierra mientras
     // publica". Se espera a que el envío termine de verdad.
-    const envio = await esperarEnvioConfirmado(page, text).catch(() => ({ ok: false, motivo: 'error al verificar el envío' }));
+    const envio = await esperarEnvioConfirmado(page, text, 0, red).catch(() => ({ ok: false, motivo: 'error al verificar el envío' }));
+    const tConfirm = Date.now();
     console.error('[ENVIO] ' + JSON.stringify(envio));
-    // diagnosticar el post recién publicado (¿trae la foto?) en esta misma pestaña
+    // Modo sombra / activo de la confirmación por red: deja en el log cuándo
+    // habría podido cerrarse la pestaña frente a cuándo se cerró de verdad, y qué
+    // operaciones GraphQL vio (para conocer el nombre real del mutation).
+    {
+      const e = red.estado();
+      console.error('[ENVIO-RED] ' + JSON.stringify({
+        modo: CONFIRM_RED ? 'activo' : 'sombra',
+        red_lista_ms: red.listoMs ?? null,
+        confirmado_ms: tConfirm - red.t0,
+        motivo: envio.motivo,
+        peticiones_terminadas: e.terminadas,
+        operaciones: e.nombres,
+      }));
+      red.detener();
+    }
+    // diagnosticar el post recién publicado (¿trae la foto?) en esta misma pestaña.
+    // Sin esperas fijas: la confirmación de arriba ya le dio su tiempo a FB.
     try {
-      // La espera de arriba ya le dio tiempo a FB: solo un respiro mínimo antes
-      // de releer, no los 6s de antes.
-      await sleep(1200);
       const fresh = await page.evaluate((snippet) => {
         const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
         const s = norm(String(snippet)).slice(0, 40);
@@ -2078,9 +2131,19 @@ async function processGroup(browser, groupUrl, label) {
         return { found: false, articles: document.querySelectorAll('[role="article"]').length };
       }, text).catch(() => ({}));
       console.error('[FRESH] ' + JSON.stringify(fresh));
-      await page.screenshot({ path: require('path').join(require('os').tmpdir(), 'danimarvis_published_check.png') }).catch(() => {});
+      // La captura del éxito solo sirve para depurar: tomarla cuesta ~1 s y
+      // retrasa el cierre de la pestaña, así que solo si hay DEBUG o dudas.
+      if (DEBUG || !envio.ok) {
+        await page.screenshot({ path: require('path').join(require('os').tmpdir(), 'danimarvis_published_check.png') }).catch(() => {});
+      }
     } catch (_) {}
-    const postUrl = await grabPostUrl(page);
+    // URL del post: se sondea hasta 1.2 s y corta apenas aparece, en vez de
+    // dormir 1.2 s fijos y leerla una sola vez.
+    const postUrl = (await sondearHasta(() => grabPostUrl(page), { ventanaMs: 1200, pasoMs: 300, dormir: sleep }).catch(() => '')) || '';
+    console.error('[TIEMPOS] ' + JSON.stringify({
+      clic_ms: tClick - t0, vaciado_ms: tDrain - tClick, confirmacion_ms: tConfirm - tDrain,
+      cierre_ms: Date.now() - tConfirm, total_ms: Date.now() - t0,
+    }));
     return out({
       group_url: groupUrl, ok: true, status: 'published',
       message: 'Publicado en el grupo.'
@@ -2150,7 +2213,9 @@ async function processGroup(browser, groupUrl, label) {
     const worker = processGroup(browser, groupUrl, `${LABEL}#${i + 1}`)
       .catch(err => out({ group_url: groupUrl, ok: false, status: 'error', message: (err.message || '').slice(0, 200) }));
     await Promise.race([worker, guard]);
-    await sleep(rand(2000, 4000));
+    // La pausa entre grupos solo tiene sentido si viene otro: tras el último, el
+    // proceso se quedaba 2-4 s dormido antes de salir y retrasaba al worker.
+    if (i < groups.length - 1) await sleep(rand(2000, 4000));
     if (Date.now() - started > remaining * 1000) break;
   }
 
