@@ -16,7 +16,13 @@
 export {
   DEFAULT_AUTO_PUBLISH, DEFAULT_AGENDA, DEFAULT_MASTER, METODOS_TEXTO, DEFAULT_METODO_TEXTO,
   metodoTextoDeConfig, getAutopublishConfig, setLoteCursor, getMasterConfig, getAgendaConfig, getMetodoTexto,
+  confirmRedDeConfig, getConfirmRed, getTiemposPoster,
 } from './config.js';
+
+export {
+  TIEMPOS_DEFAULTS, TIEMPOS_LIMITES, TIEMPOS_PERFILES, TIEMPOS_UI, PERFIL_NOMBRES,
+  normalizarValor, normalizarTiempos, resolverTiempos, tiemposParaPoster,
+} from './tiempos.js';
 
 export { elegirAnclaIntento } from './estado.js';
 

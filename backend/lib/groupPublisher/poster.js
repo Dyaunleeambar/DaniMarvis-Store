@@ -5,7 +5,7 @@ import { execFile } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getAccountConfig } from '../accountConfig.js';
-import { getMetodoTexto } from './config.js';
+import { getMetodoTexto, getConfirmRed, getTiemposPoster } from './config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const POSTER_JS = path.join(__dirname, '..', '..', '..', 'utilidades', 'fb-ranking', 'group_poster.js');
@@ -94,6 +94,12 @@ export function spawnPoster({ groupUrl, messageFile, imageFiles, mode, label, de
       // un cambio en el panel aplica sin reiniciar el server.
       '--metodo-texto=' + getMetodoTexto(),
     ];
+    // Confirmación rápida por red (Ajustes). Solo se pasa cuando está activada:
+    // apagada no se manda nada, y así FB_CONFIRM_RED=1 en el entorno sigue
+    // funcionando como interruptor manual. Se lee por corrida.
+    if (getConfirmRed()) args.push('--confirm-red=1');
+    // Tiempos de Ajustes > Tiempos (ya validados por rango). Se leen por corrida.
+    args.push('--tiempos=' + getTiemposPoster());
     if (debug) args.push('--debug=1');
     if (imageFiles.length) args.push('--images=' + imageFiles.join(';'));
     // El lote solo se pide si hay imágenes que adjuntar: "Añadir grupos" no

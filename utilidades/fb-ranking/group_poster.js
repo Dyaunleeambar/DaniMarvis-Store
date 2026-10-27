@@ -28,6 +28,7 @@ const path = require('path');
 const { elegirIndicesLote } = require('./lote_grupos.js');
 const { pistaSinCompositor, decidirEnvio } = require('./diagnostico_fb.js');
 const { vigilarRed, redQuieta, sondearHasta } = require('./envio_rapido.js');
+const { leerTiempos } = require('./tiempos_poster.js');
 const { METODOS_TEXTO, normMetodo, metricasDeInfo, verificarTexto, saltosPerdidos } = require('./metodo_texto.js');
 
 const args = process.argv.slice(2);
@@ -76,6 +77,12 @@ const DEBUG_PORT = parseInt(val(args, '--debug-port') || process.env.FB_DEBUG_PO
 // espera de verdad. Conviene activarla solo tras ver varias corridas en sombra.
 const CONFIRM_RED = (val(args, '--confirm-red') || process.env.FB_CONFIRM_RED || '') === '1';
 
+// Tiempos de Ajustes > Tiempos (JSON en --tiempos). Sin argumento o con valores
+// fuera de rango se usan los de siempre. Son los valores BASE: con internet lenta
+// `escalar` los multiplica (hasta 3x) igual que antes.
+const TIEMPOS = leerTiempos(val(args, '--tiempos'));
+console.error('[TIEMPOS-CFG] ' + JSON.stringify({ ...TIEMPOS, confirm_red: CONFIRM_RED }));
+
 const splitList = (raw, sep = ';') => String(raw || '').split(sep).map(s => s.trim()).filter(Boolean);
 const groups = splitList(GROUPS_RAW, ';');
 const images = splitList(IMAGES_RAW, ';');
@@ -121,14 +128,14 @@ const PUBLISH_POLL_MS = 700;
 // la pestaña. Con imágenes FB se toma su tiempo subiendo; cerrar antes aborta el
 // post. El presupuesto es generoso pero con corte: si nunca se confirma, se
 // sigue (no se cuelga la corrida entera).
-const ENVIO_CONFIRM_MS = 120000;
+const ENVIO_CONFIRM_MS = Math.round(TIEMPOS.confirmacion_s * 1000);
 const ENVIO_POLL_MS = 1000;
 // Presupuesto del "vaciado" del compositor: cuánto se espera a que el editor
 // quede vacío tras el clic. Es CORTO a propósito: normalmente se vacía en
 // segundos. Si no se vacía, no es un fallo: `esperarEnvioConfirmado` comprueba
 // contra el feed. Mantenerlo corto evita que la suma drain + confirmación
 // desborde el guard de --max-seconds (que mataría el grupo por "Timeout").
-const DRAIN_MS = 30000;
+const DRAIN_MS = Math.round(TIEMPOS.vaciado_s * 1000);
 
 // Objeto MUTABLE con los presupuestos ya escalados. Se actualiza una vez por
 // página tras medir la red (ver `escalar`). Usar T.* en el momento de esperar,
@@ -1146,7 +1153,7 @@ async function clickPublish(page, dryRun) {
     }
     return null;
   }).catch(() => null);
-  const ventanaTooltip = Math.round(2200 * (T.publishWaitMs / PUBLISH_WAIT_MS));
+  const ventanaTooltip = Math.round(TIEMPOS.aviso_s * 1000 * (T.publishWaitMs / PUBLISH_WAIT_MS));
   const sondeo = await sondearHasta(async () => {
     const tip = await leerTooltip();
     if (tip) return { tip };
@@ -1725,14 +1732,14 @@ async function esperarEnvioConfirmado(page, snippet, budgetMs, red) {
     }, snippet).catch(() => ({ aparecio: false, enCurso: true, conTexto: 1, error: true }));
 
     if (ultimo.aparecio) return { ok: true, motivo: 'el post apareció en el feed' };
-    const paso = decidirEnvio(ultimo, vacioSostenido);
+    const paso = decidirEnvio(ultimo, vacioSostenido, TIEMPOS.muestras_vacio);
     vacioSostenido = paso.vacioSostenido;
     // Señal por red: el mutation del envío ya se mandó y respondió, no queda nada
     // en vuelo, el compositor está vacío y no hay aviso de "Publicando…". Cerrar la
     // pestaña ya no aborta nada. Siempre se mide (modo sombra); solo corta la
     // espera si CONFIRM_RED está activo.
     let porRed = false;
-    if (red && ultimo.conTexto === 0 && !ultimo.dialogoPublicando && redQuieta(red.estado())) {
+    if (red && ultimo.conTexto === 0 && !ultimo.dialogoPublicando && redQuieta(red.estado(), Math.round(TIEMPOS.colchon_red_s * 1000))) {
       if (red.listoMs == null) red.listoMs = Date.now() - red.t0;
       porRed = CONFIRM_RED;
     }
@@ -1798,7 +1805,8 @@ async function processGroup(browser, groupUrl, label) {
         await sleep(rand(1200, 2000));
       } else {
         await clickComposerButton(page);
-        await sleep(rand(2200, 3200) * escala);
+        // Espera por intento (Ajustes > Tiempos): el rango conserva la proporción de siempre (2200-3200 ms con el valor por defecto).
+        await sleep(rand(Math.round(TIEMPOS.composer_s * 1000 * 0.6875), Math.round(TIEMPOS.composer_s * 1000)) * escala);
       }
       composer = await findComposer(page);
     }

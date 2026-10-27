@@ -43,12 +43,14 @@ const ENVIO_VACIO_SOSTENIDO = 6;
  * Devuelve { done, vacioSostenido, motivo }. `done:true` = el envío se puede dar
  * por terminado; `motivo` explica la señal que lo decidió.
  */
-function decidirEnvio(muestra, vacioSostenido) {
+function decidirEnvio(muestra, vacioSostenido, minSostenido) {
   const m = muestra || {};
+  // Muestras seguidas exigidas (Ajustes > Tiempos). Sin valor o inválido: el de siempre.
+  const minimo = Number.isFinite(minSostenido) && minSostenido >= 1 ? Math.floor(minSostenido) : ENVIO_VACIO_SOSTENIDO;
   if (m.aparecio) return { done: true, vacioSostenido: 0, motivo: 'el post apareció en el feed' };
   if (!m.enCurso && m.conTexto === 0) {
     const n = (vacioSostenido || 0) + 1;
-    if (n >= ENVIO_VACIO_SOSTENIDO) return { done: true, vacioSostenido: n, motivo: 'sin indicadores y compositor vacío' };
+    if (n >= minimo) return { done: true, vacioSostenido: n, motivo: 'sin indicadores y compositor vacío' };
     return { done: false, vacioSostenido: n, motivo: '' };
   }
   return { done: false, vacioSostenido: 0, motivo: '' };

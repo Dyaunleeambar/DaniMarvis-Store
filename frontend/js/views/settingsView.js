@@ -179,6 +179,150 @@ function metodoTextoCardHTML(METODO) {
       </div>`;
 }
 
+// Rangos, valores de siempre y perfiles de Ajustes > Tiempos. COPIA de
+// backend/lib/groupPublisher/tiempos.js (TIEMPOS_UI): la vista no puede importar
+// el backend. scripts/test-tiempos.mjs verifica que este literal sea idéntico;
+// si cambias un rango o un perfil, cámbialo en los dos sitios. El backend vuelve
+// a validar todo al guardar, esto solo guía los campos de la pantalla.
+const TIEMPOS_UI = {
+  "defaults": {
+    "composer_s": 3.2,
+    "aviso_s": 2.2,
+    "vaciado_s": 30,
+    "confirmacion_s": 120,
+    "muestras_vacio": 6,
+    "colchon_red_s": 1.5
+  },
+  "limites": {
+    "composer_s": {
+      "min": 1.5,
+      "max": 5
+    },
+    "aviso_s": {
+      "min": 1,
+      "max": 6
+    },
+    "vaciado_s": {
+      "min": 10,
+      "max": 60
+    },
+    "confirmacion_s": {
+      "min": 30,
+      "max": 120
+    },
+    "muestras_vacio": {
+      "min": 3,
+      "max": 10,
+      "entero": true
+    },
+    "colchon_red_s": {
+      "min": 0.5,
+      "max": 5
+    }
+  },
+  "perfiles": {
+    "seguro": {
+      "composer_s": 3.2,
+      "aviso_s": 2.2,
+      "vaciado_s": 30,
+      "confirmacion_s": 120,
+      "muestras_vacio": 6,
+      "colchon_red_s": 1.5,
+      "confirm_red": false
+    },
+    "rapido": {
+      "composer_s": 2.5,
+      "aviso_s": 1.5,
+      "vaciado_s": 15,
+      "confirmacion_s": 60,
+      "muestras_vacio": 4,
+      "colchon_red_s": 1,
+      "confirm_red": true
+    }
+  }
+};
+
+const TIEMPOS_CAMPOS = [
+  { clave: 'composer_s', grupo: 'Compositor', titulo: 'Espera por intento (s)',
+    ayuda: 'Cuánto espera tras cada intento de abrir el compositor (hasta 6 intentos). Más bajo reintenta antes.', paso: 0.1 },
+  { clave: 'aviso_s', grupo: 'Después de publicar', titulo: 'Ventana del aviso «Publicando…» (s)',
+    ayuda: 'Tras pulsar Publicar, cuánto se busca el aviso de confirmación de Facebook.', paso: 0.1 },
+  { clave: 'vaciado_s', grupo: 'Después de publicar', titulo: 'Tope para que el compositor se vacíe (s)',
+    ayuda: 'Si el texto sigue en el compositor pasado este tiempo, se avisa y se sigue.', paso: 1 },
+  { clave: 'confirmacion_s', grupo: 'Después de publicar', titulo: 'Tope para confirmar el envío (s)',
+    ayuda: 'Si pasa este tiempo sin confirmación se cierra igual y se anota «no se pudo confirmar».', paso: 1 },
+  { clave: 'muestras_vacio', grupo: 'Cierre de la pestaña', titulo: 'Lecturas seguidas con el compositor vacío',
+    ayuda: 'Cada lectura es de ~1 s. Menos lecturas cierra antes, con menos certeza.', paso: 1 },
+  { clave: 'colchon_red_s', grupo: 'Cierre de la pestaña', titulo: 'Colchón de red quieta (s)',
+    ayuda: 'Silencio de red exigido antes de cerrar. Solo cuenta con la confirmación rápida.', paso: 0.1 },
+];
+
+/**
+ * Sección de Ajustes > Tiempos. Tres perfiles: Seguro (los valores de siempre),
+ * Rápido y Personalizado (cada tiempo editable dentro de su rango). La
+ * confirmación rápida por red vive acá: apagada, el publicador solo MIDE cuándo
+ * habría podido cerrar la pestaña (`[ENVIO-RED]` en el log) sin cambiar nada;
+ * encendida, cierra apenas la red confirma el envío.
+ */
+function tiemposCardHTML(perfil, valores, confirmRed) {
+  const grupos = [];
+  for (const c of TIEMPOS_CAMPOS) {
+    let g = grupos.find((x) => x.nombre === c.grupo);
+    if (!g) { g = { nombre: c.grupo, campos: [] }; grupos.push(g); }
+    g.campos.push(c);
+  }
+  const lim = TIEMPOS_UI.limites;
+  const camposHTML = grupos.map((g) => `
+          <fieldset style="border:0;padding:0;margin:0 0 12px">
+            <legend style="font-weight:600;font-size:.85rem;margin-bottom:6px">${g.nombre}</legend>
+            ${g.campos.map((c) => `
+            <div class="form-group" style="margin-bottom:8px">
+              <label style="display:block">${c.titulo}
+                <span style="color:var(--text-secondary);font-size:.78rem">(de siempre: ${TIEMPOS_UI.defaults[c.clave]}; permitido ${lim[c.clave].min}–${lim[c.clave].max})</span>
+              </label>
+              <input type="number" class="form-control" name="t_${c.clave}" step="${c.paso}"
+                min="${lim[c.clave].min}" max="${lim[c.clave].max}" value="${valores[c.clave]}">
+              <small style="color:var(--text-secondary)">${c.ayuda}</small>
+            </div>`).join('')}
+          </fieldset>`).join('');
+  return `
+      <div class="card" style="margin-top:16px">
+        <h3 style="margin:0 0 4px">Tiempos del publicador</h3>
+        <p style="margin:0 0 12px;font-size:.82rem;color:var(--text-secondary)">
+          Ajusta cuánto espera el publicador en cada fase. <strong>Seguro</strong> son los valores de
+          siempre; <strong>Rápido</strong> los acorta; en <strong>Personalizado</strong> puedes probar
+          cada tiempo. Con internet lento el publicador los multiplica solo (hasta 3 veces).
+        </p>
+        <p style="margin:0 0 12px;font-size:.8rem;color:var(--warning,#e8a300)">
+          Ojo: un tiempo demasiado corto puede cerrar la pestaña mientras Facebook todavía envía el
+          post. El post se pierde y aun así queda registrado como publicado (con la nota «no se pudo
+          confirmar el envío»). Cambia de a un parámetro y revisa el log (<code>[TIEMPOS]</code> y
+          <code>[ENVIO-RED]</code>) antes de seguir.
+        </p>
+        <form id="tiempos-form">
+          <div class="form-group">
+            <label>Perfil</label>
+            <select name="t_perfil" class="form-control">
+              <option value="seguro" ${perfil === 'seguro' ? 'selected' : ''}>Seguro — los valores de siempre</option>
+              <option value="rapido" ${perfil === 'rapido' ? 'selected' : ''}>Rápido — esperas más cortas y confirmación rápida</option>
+              <option value="personalizado" ${perfil === 'personalizado' ? 'selected' : ''}>Personalizado — tú eliges cada tiempo</option>
+            </select>
+          </div>
+          ${camposHTML}
+          <div class="form-group">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+              <input type="checkbox" name="t_confirm_red" ${confirmRed ? 'checked' : ''}>
+              Confirmación rápida: cerrar la pestaña apenas la red confirme el envío
+            </label>
+            <small style="color:var(--text-secondary)">Apagada, el publicador solo anota en el log cuándo habría podido cerrar.</small>
+          </div>
+          <div class="form-actions" style="margin-top:8px">
+            <button type="submit" class="btn btn--primary">Guardar tiempos</button>
+          </div>
+        </form>
+      </div>`;
+}
+
 function renderPage(container, settings, categories, providerStyles, status) {
   const pc = settings.publish_config || {};
   const template = pc.template || '';
@@ -216,6 +360,16 @@ function renderPage(container, settings, categories, providerStyles, status) {
   // raro cae a 'teclado', igual que en el backend.
   const METODO = ['teclado', 'insertText', 'ctrlv', 'pasteEvent'].includes(pc.metodo_texto)
     ? pc.metodo_texto : 'teclado';
+
+  // Tiempos (publish_config.tiempos). Mismo criterio que resolverTiempos() del
+  // backend: sin `tiempos` guardado, quien ya tenía la confirmación rápida activada
+  // (publish_config.confirm_red === true) queda como "personalizado".
+  const tg = pc.tiempos && typeof pc.tiempos === 'object' ? pc.tiempos : null;
+  const PERFILES_OK = ['seguro', 'rapido', 'personalizado'];
+  const TIEMPOS_PERFIL = tg && PERFILES_OK.includes(tg.perfil) ? tg.perfil : (pc.confirm_red === true ? 'personalizado' : 'seguro');
+  const TIEMPOS_PERSONAL = { ...TIEMPOS_UI.defaults, ...((tg && tg.valores) || {}) };
+  const TIEMPOS_RED_PERSONAL = tg ? tg.confirm_red === true : pc.confirm_red === true;
+  const TIEMPOS_INICIAL = TIEMPOS_PERFIL === 'personalizado' ? TIEMPOS_PERSONAL : TIEMPOS_UI.perfiles[TIEMPOS_PERFIL];
 
   container.innerHTML = `
     <div class="page">
@@ -576,6 +730,8 @@ function renderPage(container, settings, categories, providerStyles, status) {
 
       ${metodoTextoCardHTML(METODO)}
 
+      ${tiemposCardHTML(TIEMPOS_PERFIL, TIEMPOS_INICIAL, TIEMPOS_PERFIL === 'personalizado' ? TIEMPOS_RED_PERSONAL : TIEMPOS_INICIAL.confirm_red)}
+
       <div class="card" style="margin-top:16px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px">
           <div>
@@ -898,6 +1054,60 @@ function renderPage(container, settings, categories, providerStyles, status) {
         });
         currentSettings = res;
         showToast('Técnica de texto guardada', 'success');
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+  }
+
+  // Tiempos: se manda SOLO `tiempos` y el merge del servidor lo fusiona sobre lo
+  // guardado. Los valores del perfil personalizado se conservan aunque el usuario
+  // pruebe otro perfil: solo se sobrescriben cuando guarda estando en "personalizado".
+  const tForm = document.getElementById('tiempos-form');
+  if (tForm) {
+    const selPerfil = tForm.querySelector('select[name="t_perfil"]');
+    const chkRed = tForm.querySelector('input[name="t_confirm_red"]');
+    const claves = TIEMPOS_CAMPOS.map((c) => c.clave);
+    const input = (k) => tForm.querySelector(`input[name="t_${k}"]`);
+    let personal = { ...TIEMPOS_PERSONAL };
+    let redPersonal = TIEMPOS_RED_PERSONAL;
+    let perfilActual = selPerfil.value;
+
+    const leerInputs = () => {
+      const v = {};
+      for (const k of claves) {
+        const n = Number(input(k).value);
+        const lim = TIEMPOS_UI.limites[k];
+        v[k] = Number.isFinite(n) && input(k).value !== ''
+          ? Math.min(lim.max, Math.max(lim.min, n)) : TIEMPOS_UI.defaults[k];
+      }
+      return v;
+    };
+    const pintar = () => {
+      const esPers = selPerfil.value === 'personalizado';
+      const base = esPers ? personal : TIEMPOS_UI.perfiles[selPerfil.value];
+      for (const k of claves) { input(k).value = base[k]; input(k).disabled = !esPers; }
+      chkRed.checked = esPers ? redPersonal : base.confirm_red === true;
+      chkRed.disabled = !esPers;
+    };
+    selPerfil.addEventListener('change', () => {
+      if (perfilActual === 'personalizado') { personal = leerInputs(); redPersonal = chkRed.checked; }
+      perfilActual = selPerfil.value;
+      pintar();
+    });
+    pintar();
+
+    tForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const perfil = ['seguro', 'rapido', 'personalizado'].includes(selPerfil.value) ? selPerfil.value : 'seguro';
+      if (perfil === 'personalizado') { personal = leerInputs(); redPersonal = chkRed.checked; }
+      try {
+        const res = await api.updateSettings({
+          exchange_rate: currentSettings?.exchange_rate || settings?.exchange_rate || 61000,
+          publish_config: { tiempos: { perfil, valores: personal, confirm_red: redPersonal } },
+        });
+        currentSettings = res;
+        showToast('Tiempos guardados', 'success');
       } catch (err) {
         showToast(err.message, 'error');
       }

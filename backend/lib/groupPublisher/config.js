@@ -1,6 +1,7 @@
 // Configuración del publicador: defaults, lectura desde `settings` y la técnica
 // de texto configurable. Cada getter lee su propia porción de publish_config.
 import { getDB } from '../../db/database.js';
+import { resolverTiempos, tiemposParaPoster } from './tiempos.js';
 
 export const DEFAULT_AUTO_PUBLISH = {
   enabled: false,
@@ -178,4 +179,27 @@ export function getAgendaConfig() {
 export function getMetodoTexto() {
   const pc = leerPublishConfig();
   return metodoTextoDeConfig(pc);
+}
+
+/**
+ * ¿Está activada la confirmación rápida por red? (publish_config.confirm_red).
+ * Función pura (testeable). Solo `true` la activa: un valor ausente, "true" como
+ * texto o basura cae a `false`, o sea al modo sombra (que solo mide y no cambia
+ * cuándo se cierra la pestaña). Así una config rara nunca la enciende sola.
+ */
+export function confirmRedDeConfig(pc) {
+  return resolverTiempos(pc).confirm_red === true;
+}
+
+/** Lee el interruptor en cada corrida: un cambio en Ajustes aplica sin reiniciar. */
+export function getConfirmRed() {
+  return confirmRedDeConfig(leerPublishConfig());
+}
+
+/**
+ * Tiempos de Ajustes > Tiempos como JSON para `--tiempos=` del poster. Se lee en
+ * cada corrida y ya viene validado (rangos) por tiempos.js.
+ */
+export function getTiemposPoster() {
+  return JSON.stringify(tiemposParaPoster(leerPublishConfig()));
 }

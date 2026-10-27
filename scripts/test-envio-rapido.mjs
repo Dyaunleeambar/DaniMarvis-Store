@@ -3,6 +3,9 @@
 // Se importa el módulo REAL; la página es un EventEmitter falso.
 import { createRequire } from 'module';
 import { EventEmitter } from 'events';
+import { readFileSync } from 'node:fs';
+import { confirmRedDeConfig } from '../backend/lib/groupPublisher/index.js';
+import { mergePublishConfig } from '../backend/lib/settingsMerge.js';
 const require_ = createRequire(import.meta.url);
 const { esRelevante, nombreOperacion, vigilarRed, redQuieta, sondearHasta } = require_('../utilidades/fb-ranking/envio_rapido.js');
 
@@ -63,6 +66,39 @@ console.log('\n4. sondearHasta\n');
   t = 0;
   const unaVez = await sondearHasta(async () => 'ya', { ventanaMs: 1000, dormir, ahora });
   ok('si ya se cumple, no espera nada', unaVez === 'ya' && t === 0);
+}
+
+console.log('\n5. interruptor en Ajustes (publish_config.confirm_red)\n');
+{
+  ok('solo true la activa', confirmRedDeConfig({ confirm_red: true }) === true);
+  ok('ausente = apagada (modo sombra)', confirmRedDeConfig({}) === false);
+  ok('config nula no revienta', confirmRedDeConfig(null) === false);
+  ok('"true" como texto NO la activa', confirmRedDeConfig({ confirm_red: 'true' }) === false);
+  ok('1 NO la activa (solo el booleano true)', confirmRedDeConfig({ confirm_red: 1 }) === false);
+  ok('false = apagada', confirmRedDeConfig({ confirm_red: false }) === false);
+
+  // El formulario manda SOLO { confirm_red }: el merge no debe tocar lo demás.
+  const guardada = { metodo_texto: 'pasteEvent', master: { on: true }, agenda: { auto: true, lote_desde: 'grupo X' }, ai: { api_key: 'sk-or-v1-' + 'a'.repeat(40) } };
+  const conRed = mergePublishConfig(guardada, { confirm_red: true });
+  ok('guardar confirm_red lo persiste', conRed.confirm_red === true);
+  ok('y conserva la técnica de texto, el cursor de lote y la API key',
+    conRed.metodo_texto === 'pasteEvent' && conRed.agenda.lote_desde === 'grupo X' && conRed.ai.api_key.startsWith('sk-or-v1-'));
+  const apagada = mergePublishConfig(conRed, { confirm_red: false });
+  ok('desmarcar la casilla la apaga (false pisa a true)', apagada.confirm_red === false && confirmRedDeConfig(apagada) === false);
+  const sinMencion = mergePublishConfig(conRed, { metodo_texto: 'teclado' });
+  ok('guardar la técnica de texto no apaga la confirmación rápida', sinMencion.confirm_red === true);
+
+  // Cableado: backend -> poster -> flag que lee el poster; y el panel.
+  const leer = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
+  const poster = leer('../backend/lib/groupPublisher/poster.js');
+  ok("poster.js pasa --confirm-red=1 solo si está activada", /if \(getConfirmRed\(\)\) args\.push\('--confirm-red=1'\)/.test(poster));
+  ok('apagada no manda ningún valor (no tapa a FB_CONFIRM_RED)', !poster.includes("'--confirm-red=0'"));
+  const gp = leer('../utilidades/fb-ranking/group_poster.js');
+  ok("el poster lee --confirm-red y FB_CONFIRM_RED", gp.includes("val(args, '--confirm-red')") && gp.includes('process.env.FB_CONFIRM_RED'));
+  const view = leer('../frontend/js/views/settingsView.js');
+  ok('el panel tiene la casilla de confirmación rápida (en Tiempos)', view.includes('id="tiempos-form"') && view.includes('name="t_confirm_red"'));
+  ok('el panel guarda la confirmación rápida dentro de tiempos', view.includes('publish_config: { tiempos: { perfil, valores: personal, confirm_red: redPersonal } }'));
+  ok('el panel solo la marca encendida si es true', view.includes('pc.confirm_red === true'));
 }
 
 console.log(fallos ? `\n${fallos} FALLO(S)` : '\nTodo en verde');

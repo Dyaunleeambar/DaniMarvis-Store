@@ -14,6 +14,8 @@
 //
 // La regla que faltaba: **enmascarado es "no enviado"**, igual que vacío.
 
+import { PERFIL_NOMBRES, normalizarTiempos } from './groupPublisher/tiempos.js';
+
 /** La máscara que el propio servidor devuelve en los GET (server.js). */
 export const MASCARA = '•'.repeat(8);
 
@@ -104,6 +106,21 @@ export function mergePublishConfig(existing = {}, incoming = {}) {
   delete facebook.remove_fb_token;
 
   const salida = { ...actual, ...nuevo, ai, facebook, agenda };
+
+  // `tiempos` (Ajustes > Tiempos): el formulario manda el perfil, los valores del
+  // perfil personalizado y la confirmación rápida. Se mezcla campo por campo para
+  // que guardar solo el perfil no borre los valores personalizados, y los valores
+  // se normalizan (rango) al guardar, así lo almacenado nunca queda fuera de rango.
+  // Se escribe SOLO si una de las dos partes lo tiene.
+  if ('tiempos' in actual || 'tiempos' in nuevo) {
+    const ta = actual.tiempos && typeof actual.tiempos === 'object' ? actual.tiempos : {};
+    const tn = nuevo.tiempos && typeof nuevo.tiempos === 'object' ? nuevo.tiempos : {};
+    const perfil = PERFIL_NOMBRES.includes(tn.perfil) ? tn.perfil
+      : (PERFIL_NOMBRES.includes(ta.perfil) ? ta.perfil : 'seguro');
+    const valores = normalizarTiempos({ ...(ta.valores || {}), ...(tn.valores || {}) });
+    const confirm_red = 'confirm_red' in tn ? tn.confirm_red === true : ta.confirm_red === true;
+    salida.tiempos = { perfil, valores, confirm_red };
+  }
 
   // `cuentas` (perfil/puerto/proxy de las dos cuentas de Facebook) se mezcla
   // cuenta por cuenta por la misma razón que `agenda`: el formulario manda A y B
