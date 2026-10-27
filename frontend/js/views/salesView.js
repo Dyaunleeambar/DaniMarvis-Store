@@ -1,6 +1,6 @@
 import { api } from '../db/api.js';
 import { openModal, closeModal, showToast, confirmDialog, refreshSidebarCounts } from '../core/app.js';
-import { formatUSD, formatMN, formatCommission, formatDate, generateId } from '../utils/utils.js';
+import { formatUSD, formatMN, formatCommission, formatDate, generateId, sumarComisiones, ingresosDeVentas, textoComisiones } from '../utils/utils.js';
 import { generateSalesPDF } from '../utils/salesPdfGenerator.js';
 
 let currentContainer = null;
@@ -84,7 +84,9 @@ export async function render(container) {
 }
 
 function renderTable(container, sales) {
-  const totalRevenue = sales.reduce((s, v) => s + v.total_amount, 0);
+  // Ingresos = comisiones YA COBRADAS (USD y MN por separado), sin ventas canceladas.
+  // El valor de los productos vendidos no es ingreso.
+  const ingresosTxt = textoComisiones(ingresosDeVentas(sales));
   const pendingCommissions = sales.filter(v => !v.commission_paid).reduce((s, v) => s + v.commission_amount, 0);
   const pendingCommissionsUSD = sales.filter(v => !v.commission_paid && (v.commission_currency || 'USD') === 'USD').reduce((s, v) => s + v.commission_amount, 0);
   const pendingCommissionsMN = sales.filter(v => !v.commission_paid && (v.commission_currency || 'USD') === 'MN').reduce((s, v) => s + v.commission_amount, 0);
@@ -95,7 +97,7 @@ function renderTable(container, sales) {
       <div class="page-header">
         <div>
           <h1>Ventas</h1>
-          <p>${sales.length} venta(s) · Total: ${formatUSD(totalRevenue)} · Comisiones pendientes: ${pendingCommissionsUSD > 0 ? formatUSD(pendingCommissionsUSD) : ''}${pendingCommissionsUSD > 0 && pendingCommissionsMN > 0 ? ' + ' : ''}${pendingCommissionsMN > 0 ? formatCommission(pendingCommissionsMN, 'MN') : ''}${pendingCommissions === 0 ? '$0.00' : ''}</p>
+          <p>${sales.length} venta(s) · Ingresos: ${ingresosTxt} · Comisiones pendientes: ${pendingCommissionsUSD > 0 ? formatUSD(pendingCommissionsUSD) : ''}${pendingCommissionsUSD > 0 && pendingCommissionsMN > 0 ? ' + ' : ''}${pendingCommissionsMN > 0 ? formatCommission(pendingCommissionsMN, 'MN') : ''}${pendingCommissions === 0 ? '$0.00' : ''}</p>
         </div>
         <div class="page-header-left" style="display:flex;align-items:center;gap:10px">
           <button class="btn btn--primary" onclick="window._openSaleForm(null)">
@@ -116,9 +118,9 @@ function renderTable(container, sales) {
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
           </div>
           <div>
-            <div class="stat-value">${formatUSD(totalRevenue)}</div>
+            <div class="stat-value">${ingresosTxt}</div>
             <div class="stat-label">Ingresos totales</div>
-            <div style="font-size:.72rem;color:var(--text-muted)">${formatMN(totalRevenue, exchangeRate)}</div>
+            <div style="font-size:.72rem;color:var(--text-muted)">comisiones cobradas</div>
           </div>
         </div>
         <div class="card card--stat">

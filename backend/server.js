@@ -10,6 +10,7 @@ import { initDB, getDB, verifyToken, listTables, saveDB, getAuthSecret, verifyPa
 import { mergePublishConfig, MASCARA, pareceSecretoValido } from './lib/settingsMerge.js';
 import { rescheduleGroupPublish, groupPublishSchedulerState, startGroupPublishScheduler, stopGroupPublishScheduler, startAgendaScheduler, rescheduleAgenda, agendaSchedulerState } from './lib/groupPublisher/index.js';
 import { ensureWebp } from './lib/imageUtils.js';
+import { ingresosPorComisiones } from './lib/ingresos.js';
 import { generateCatalogFile } from './lib/catalogGenerator.js';
 
 import { reconciliarApiKey, respaldarApiKey } from './lib/secrets.js';
@@ -371,6 +372,13 @@ app.get('/api/dashboard', (req, res) => {
       (SELECT COALESCE(SUM(commission_amount), 0) FROM sales WHERE commission_paid = 0 AND (commission_currency = 'USD' OR commission_currency IS NULL)) as pending_commissions_usd,
       (SELECT COALESCE(SUM(commission_amount), 0) FROM sales WHERE commission_paid = 0 AND commission_currency = 'MN') as pending_commissions_mn
   `).get();
+
+  // Ingresos = comisiones cobradas (sin ventas canceladas), por moneda. `total_revenue`
+  // (suma del valor de lo vendido) se mantiene en la respuesta por compatibilidad,
+  // pero el panel ya no lo muestra como ingreso.
+  const ingresos = ingresosPorComisiones(db);
+  stats.income_commissions_usd = ingresos.usd;
+  stats.income_commissions_mn = ingresos.mn;
 
   const monthlySales = db.prepare(`
     SELECT strftime('%Y-%m', sale_date) as month,

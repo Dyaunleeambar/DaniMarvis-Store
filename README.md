@@ -515,7 +515,7 @@ Es el **seguro del publicador**: publica solo lo que ya venció, con límites de
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| `GET` | `/api/dashboard` | Estadísticas: totales, ingresos, comisiones (USD y MN por separado), ventas mensuales, top productos, ventas recientes, tipo de cambio |
+| `GET` | `/api/dashboard` | Estadísticas: totales, ingresos (comisiones cobradas de ventas no canceladas, USD y MN por separado: `income_commissions_usd` / `income_commissions_mn`), comisiones pendientes, ventas mensuales, top productos, ventas recientes, tipo de cambio |
 
 ### Conteos
 
@@ -1345,7 +1345,7 @@ Panel → Respaldos → Exportar datos
 Descarga un archivo JSON con todos los datos para tener un respaldo de seguridad.
 
 ### 12. Revisar dashboard
-El dashboard muestra ingresos totales, comisiones pendientes (desglosadas por moneda: USD y MN), productos más vendidos y ventas mensuales.
+El dashboard muestra ingresos totales (la suma de las comisiones ya cobradas, sin contar ventas canceladas), comisiones pendientes (desglosadas por moneda: USD y MN), productos más vendidos y ventas mensuales.
 
 ---
 

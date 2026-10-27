@@ -25,6 +25,7 @@ export const TIEMPOS_DEFAULTS = Object.freeze({
   confirmacion_s: 120,  // tope para confirmar que el envío salió
   muestras_vacio: 6,    // lecturas seguidas (~1 s c/u) con el compositor vacío para dar por enviado
   colchon_red_s: 1.5,   // silencio de red exigido por la confirmación rápida
+  gap_min: 15,          // separación mínima entre publicaciones consecutivas (s)
 });
 
 // Rangos permitidos. Los topes de espera no suben por encima del valor de
@@ -36,6 +37,7 @@ export const TIEMPOS_LIMITES = Object.freeze({
   confirmacion_s: { min: 30, max: 120 },
   muestras_vacio: { min: 3, max: 10, entero: true },
   colchon_red_s: { min: 0.5, max: 5 },
+  gap_min: { min: 5, max: 300 },
 });
 
 export const TIEMPOS_CLAVES = Object.freeze(Object.keys(TIEMPOS_DEFAULTS));
@@ -45,7 +47,7 @@ export const TIEMPOS_PERFILES = Object.freeze({
   seguro: Object.freeze({ ...TIEMPOS_DEFAULTS, confirm_red: false }),
   rapido: Object.freeze({
     composer_s: 2.5, aviso_s: 1.5, vaciado_s: 15, confirmacion_s: 60,
-    muestras_vacio: 4, colchon_red_s: 1, confirm_red: true,
+    muestras_vacio: 4, colchon_red_s: 1, confirm_red: true, gap_min: 30,
   }),
 });
 export const PERFIL_NOMBRES = Object.freeze(['seguro', 'rapido', 'personalizado']);

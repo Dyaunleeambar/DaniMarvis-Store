@@ -1,4 +1,5 @@
 import { sanitize } from './pdfGenerator.js';
+import { sumarComisiones, ingresosDeVentas, textoComisiones } from './utils.js';
 
 const DELIVERY_LABELS = {
   pending: 'Pendiente',
@@ -67,7 +68,8 @@ export function generateSalesPDF(sales, options = {}) {
   let startY = 44;
 
   if (options.includeSummary !== false) {
-    const totalRevenue = all.reduce((s, v) => s + (v.total_amount || 0), 0);
+    // Ingresos = comisiones ya cobradas, sin ventas canceladas (el valor de lo vendido no es ingreso).
+    const ingresosTxt = textoComisiones(ingresosDeVentas(all), fmtUSD, (n) => fmtCommission(n, 'MN'));
     const pendingComm = all
       .filter(v => !v.commission_paid)
       .reduce((s, v) => s + (v.commission_amount || 0), 0);
@@ -81,7 +83,7 @@ export function generateSalesPDF(sales, options = {}) {
 
     const lines = [
       `Ventas: ${all.length}${cancelledCount > 0 ? `  ·  Canceladas excluidas: ${cancelledCount}` : ''}`,
-      `Ingresos totales: ${fmtUSD(totalRevenue)}  (≈ ${fmtMN(totalRevenue, exchangeRate)})`,
+      `Ingresos totales (comisiones cobradas): ${ingresosTxt}`,
       `Comisiones pendientes: ${pendingComm === 0 ? '$0.00' : `${pendingUSD > 0 ? fmtUSD(pendingUSD) : ''}${pendingUSD > 0 && pendingMN > 0 ? ' + ' : ''}${pendingMN > 0 ? fmtCommission(pendingMN, 'MN') : ''}`}`,
       `Entregadas: ${delivered}  ·  Enviadas: ${all.filter(v => v.delivery_status === 'shipped').length}  ·  Pendientes: ${all.filter(v => v.delivery_status === 'pending').length}`,
     ];
@@ -165,12 +167,12 @@ export function generateSalesPDF(sales, options = {}) {
     doc.line(14, footerBottom - 3, pageW - 14, footerBottom - 3);
   }
 
-  const totalRevenue = all.reduce((s, v) => s + (v.total_amount || 0), 0);
+  const ingresosPie = textoComisiones(ingresosDeVentas(all), fmtUSD, (n) => fmtCommission(n, 'MN'));
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10);
   doc.setTextColor(60, 60, 60);
   doc.text(
-    sanitize(`Total: ${all.length} venta(s)  ·  Ingresos: ${fmtUSD(totalRevenue)}${all.length > 0 ? `  (≈ ${fmtMN(totalRevenue, exchangeRate)})` : ''}`),
+    sanitize(`Total: ${all.length} venta(s)  ·  Ingresos (comisiones cobradas): ${ingresosPie}`),
     14,
     pageH - 5
   );

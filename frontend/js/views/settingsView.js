@@ -191,7 +191,8 @@ const TIEMPOS_UI = {
     "vaciado_s": 30,
     "confirmacion_s": 120,
     "muestras_vacio": 6,
-    "colchon_red_s": 1.5
+    "colchon_red_s": 1.5,
+    "gap_min": 15
   },
   "limites": {
     "composer_s": {
@@ -218,6 +219,10 @@ const TIEMPOS_UI = {
     "colchon_red_s": {
       "min": 0.5,
       "max": 5
+    },
+    "gap_min": {
+      "min": 5,
+      "max": 300
     }
   },
   "perfiles": {
@@ -228,6 +233,7 @@ const TIEMPOS_UI = {
       "confirmacion_s": 120,
       "muestras_vacio": 6,
       "colchon_red_s": 1.5,
+      "gap_min": 15,
       "confirm_red": false
     },
     "rapido": {
@@ -237,7 +243,8 @@ const TIEMPOS_UI = {
       "confirmacion_s": 60,
       "muestras_vacio": 4,
       "colchon_red_s": 1,
-      "confirm_red": true
+      "confirm_red": true,
+      "gap_min": 30
     }
   }
 };
@@ -255,6 +262,8 @@ const TIEMPOS_CAMPOS = [
     ayuda: 'Cada lectura es de ~1 s. Menos lecturas cierra antes, con menos certeza.', paso: 1 },
   { clave: 'colchon_red_s', grupo: 'Cierre de la pestaña', titulo: 'Colchón de red quieta (s)',
     ayuda: 'Silencio de red exigido antes de cerrar. Solo cuenta con la confirmación rápida.', paso: 0.1 },
+  { clave: 'gap_min', grupo: 'Entre publicaciones', titulo: 'Gap mínimo entre publicaciones (min)',
+    ayuda: 'Tiempo mínimo que separa una publicación de la siguiente. Evita saturar Facebook.', paso: 1 },
 ];
 
 /**

@@ -19,6 +19,44 @@ export function formatCommission(amount, currency) {
   return formatUSD(amount);
 }
 
+/**
+ * Suma las comisiones de una lista de ventas, separadas por moneda (USD y MN no se
+ * pueden sumar entre sí sin convertir). `cobradas` = true suma solo las ya cobradas
+ * (commission_paid); false, las pendientes. Un monto vacío o inválido cuenta como 0.
+ */
+export function sumarComisiones(sales, cobradas) {
+  let usd = 0;
+  let mn = 0;
+  for (const v of sales || []) {
+    if (!!v.commission_paid !== !!cobradas) continue;
+    const monto = Number(v.commission_amount) || 0;
+    const moneda = v.commission_currency || 'USD';
+    if (moneda === 'USD') usd += monto;
+    else if (moneda === 'MN') mn += monto;
+  }
+  return { usd, mn };
+}
+
+/**
+ * Ingresos = comisiones YA COBRADAS de las ventas que no están canceladas, por
+ * moneda. Misma regla que backend/lib/ingresos.js (el Dashboard); Ventas y su PDF
+ * usan esta.
+ */
+export function ingresosDeVentas(sales) {
+  return sumarComisiones((sales || []).filter((v) => v.delivery_status !== 'cancelled'), true);
+}
+
+/**
+ * "$12.00 + $5.000 MN" a partir de { usd, mn }; "$0.00" si no hay nada. Los
+ * formateadores son inyectables porque el PDF usa los suyos.
+ */
+export function textoComisiones({ usd, mn }, fUsd = formatUSD, fMn = (n) => formatCommission(n, 'MN')) {
+  const partes = [];
+  if (usd > 0) partes.push(fUsd(usd));
+  if (mn > 0) partes.push(fMn(mn));
+  return partes.length ? partes.join(' + ') : fUsd(0);
+}
+
 /** Fecha local a partir de un valor. Un "YYYY-MM-DD" se arma como medianoche LOCAL:
  *  new Date('YYYY-MM-DD') interpreta UTC y en zonas con offset negativo corre el
  *  día para atrás (una publicación del 30 se veía "29"). */

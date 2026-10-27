@@ -1,5 +1,5 @@
 import { api } from '../db/api.js';
-import { formatUSD, formatMN, formatCommission, formatDate, formatDateTime } from '../utils/utils.js';
+import { formatUSD, formatCommission, formatDate, formatDateTime, textoComisiones } from '../utils/utils.js';
 import { showToast } from '../core/app.js';
 
 function escHtml(str) {
@@ -31,8 +31,7 @@ function countdown(target) {
 }
 
 function renderDashboard(container, data, scheduledLogs = []) {
-  const { stats, monthlySales, topProducts, recentSales, exchange_rate } = data;
-  const rate = exchange_rate || 61000;
+  const { stats, monthlySales, topProducts, recentSales } = data;
   const wr = data.warrantyReminders || { expiringNow: [], recentlyExpired: [], count: 0 };
   const hasReminders = wr.expiringNow.length > 0 || wr.recentlyExpired.length > 0;
 
@@ -123,9 +122,9 @@ function renderDashboard(container, data, scheduledLogs = []) {
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
           </div>
           <div>
-            <div class="stat-value">${formatUSD(stats.total_revenue)}</div>
-            <div class="stat-label">Ingresos totales (USD)</div>
-            <div style="font-size:.72rem;color:var(--text-muted)">${formatMN(stats.total_revenue, rate)}</div>
+            <div class="stat-value">${textoComisiones({ usd: Number(stats.income_commissions_usd) || 0, mn: Number(stats.income_commissions_mn) || 0 })}</div>
+            <div class="stat-label">Ingresos totales</div>
+            <div style="font-size:.72rem;color:var(--text-muted)">comisiones cobradas</div>
           </div>
         </div>
         <div class="card card--stat">
