@@ -5,7 +5,7 @@ import { getDB } from '../../db/database.js';
 import { debugChromeReachable } from '../chromeLauncher.js';
 import { toIsoUtc } from './util.js';
 import { getAgendaConfig, getAutopublishConfig, getMasterConfig } from './config.js';
-import { cuantosPorTick, decisionActual, leerBreaker, marcarDuplicados } from './limites.js';
+import { cuantosPorTick, decisionActual, describirGap, leerBreaker, marcarDuplicados } from './limites.js';
 import { getCurrentRun, getLastResult, isRunning, pickForRun, resolveGroupUrl, startGroupPublish } from './cola.js';
 
 // ----------------------------------------------------------- worker auto ---
@@ -300,6 +300,8 @@ export function agendaSchedulerState() {
       decision: decision.codigo,
       motivo: decision.motivo,
       min_gap_min: cfg ? cfg.min_gap_min : null,
+      gap_modo: cfg ? cfg.gap_modo : null,
+      gap_max_min: cfg ? cfg.gap_max_min : null,
       max_per_hour: cfg ? cfg.max_per_hour : null,
       dedupe_hours: cfg ? cfg.dedupe_hours : null,
       breaker_failures: cfg ? cfg.breaker_failures : null,
@@ -449,6 +451,7 @@ export function runAgendaTick() {
       quarantined: descartados, duplicados: dup.omitidos,
       pendientes: trasDup.length - elegidas.length,
       proximo_min_gap: cfg.min_gap_min,
+      gap: describirGap(cfg),
     }
     : { skipped: true, reason: res.reason, at: lastAgendaTickAt };
 
@@ -458,7 +461,7 @@ export function runAgendaTick() {
     // freno que se alterna con publicaciones se leería como uno solo y se
     // perderían las pausas.
     ultimoSaltoAgenda = null;
-    console.log(`[agenda] vencidas: ${elegidas.length} de ${trasDup.length} (corrida ${res.runId.slice(0, 8)}) — gap ${cfg.min_gap_min} min, tope ${cfg.max_per_hour}/h`);
+    console.log(`[agenda] vencidas: ${elegidas.length} de ${trasDup.length} (corrida ${res.runId.slice(0, 8)}) — gap ${describirGap(cfg)}, tope ${cfg.max_per_hour}/h`);
     // Por qué se pudo publicar AHORA y no en el tick anterior. Antes el log decía
     // solo "vencidas: 1 de 4", y sin el motivo no había forma de distinguir un
     // tick que obeyed el freno de uno que lo pasó por alto.

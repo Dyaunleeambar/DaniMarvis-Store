@@ -41,7 +41,10 @@ export const DEFAULT_AGENDA = {
   catchup_hours: 24,   // vencido hace más de esto NO se recupera solo
   grupos_por_post: 9,  // cuántos grupos se tildan por publicación en Facebook
   lote_desde: '',      // cursor: el último grupo del lote anterior ('' = desde el 0)
-  min_gap_min: 5,      // separación mínima entre publicaciones, de INICIO a INICIO
+  min_gap_min: 5,      // separación mínima entre publicaciones, de INICIO a INICIO (en modo 'rango', el mínimo del rango)
+  gap_modo: 'fijo',    // 'fijo' = siempre min_gap_min | 'rango' = un valor al azar entre min_gap_min y gap_max_min
+  // gap_max_min: máximo del rango (solo en modo 'rango'). Sin valor guardado es igual a
+  // min_gap_min, y nunca queda por debajo de él (ver getAgendaConfig).
   max_per_hour: 12,    // tope duro por hora, por si el gap se afloja
   dedupe_hours: 6,     // no repetir el mismo texto en el mismo grupo antes de esto (0 = no)
   breaker_failures: 3, // fallos seguidos que pausan el disparador
@@ -154,6 +157,11 @@ export function getAgendaConfig() {
   // DESACTIVAR la guardia, no caerse al default por el `||` (que también se
   // come los NaN). Por eso ese usa Number.isFinite y los demás el `||`.
   cfg.min_gap_min = Math.max(1, Math.min(1440, Number(cfg.min_gap_min) || DEFAULT_AGENDA.min_gap_min));
+  // Modo del gap: fijo, o un valor al azar dentro de [min_gap_min, gap_max_min]. Un modo
+  // desconocido cae a fijo (lo de siempre) y el máximo nunca baja del mínimo.
+  cfg.gap_modo = cfg.gap_modo === 'rango' ? 'rango' : 'fijo';
+  const gMax = Number(cfg.gap_max_min);
+  cfg.gap_max_min = Math.max(cfg.min_gap_min, Math.min(1440, Number.isFinite(gMax) && gMax > 0 ? gMax : cfg.min_gap_min));
   cfg.max_per_hour = Math.max(1, Math.min(60, Number(cfg.max_per_hour) || DEFAULT_AGENDA.max_per_hour));
   const dd = Number(cfg.dedupe_hours);
   cfg.dedupe_hours = Number.isFinite(dd) ? Math.max(0, Math.min(168, dd)) : DEFAULT_AGENDA.dedupe_hours;

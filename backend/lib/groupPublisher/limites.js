@@ -4,7 +4,7 @@
 import { getDB } from '../../db/database.js';
 import { fechaMs, toIsoUtc } from './util.js';
 import { DEFAULT_AGENDA } from './config.js';
-import { countAttemptsSince, lastAttemptInfo } from './estado.js';
+import { attemptTimesSince, countAttemptsSince, lastAttemptInfo, lastAttemptGapMs } from './estado.js';
 
 // Todo lo de acá gira alrededor de una idea: el disparador por fecha NO puede
 // convertir un día de 190 destinos en 17 publicaciones por hora. Facebook no
@@ -55,12 +55,15 @@ function escribirBreaker(b) {
  * Sobrevive a reinicios, que es lo que importa: si se perdiera, el primer post
  * después de apagar el panel se saltaría el gap sin que nadie lo notara.
  */
-export function marcarIntentoAhora() {
+export function marcarIntentoAhora(cfg = null) {
   try {
     const db = getDB();
     const row = db.prepare('SELECT publish_config FROM settings WHERE id = 1').get();
     const pc = JSON.parse(row?.publish_config || '{}');
     pc._ultimoIntento = { at: toIsoUtc(new Date()), ms: Date.now() };
+    // En modo 'rango' se sortea ACÁ, una vez por publicación, y se guarda en la marca.
+    const gapMs = sortearGapMs(cfg);
+    if (gapMs) pc._ultimoIntento.gap_ms = gapMs;
     db.prepare("UPDATE settings SET publish_config = ?, updated_at = datetime('now') WHERE id = 1")
       .run(JSON.stringify(pc));
   } catch (err) {
@@ -93,6 +96,75 @@ export function limpiarFallos() {
   escribirBreaker({ ...prev, failures: 0 });
 }
 
+// ----------------------------------------------------------- gap por rango ---
+//
+// El gap puede ser fijo (siempre `min_gap_min`) o un valor al azar dentro de
+// [min_gap_min, gap_max_min]. Si fuera al azar, el valor se SORTEA UNA SOLA VEZ por
+// publicación (al marcar el inicio del intento) y se guarda en la marca: el
+// disparador corre cada minuto, y sortear en cada tick haría que el gap efectivo
+// tendiera al mínimo del rango (cada minuto es otra oportunidad de sacar uno corto).
+
+const minutosDe = (v, def) => Math.max(1, Number(v) || def);
+
+/**
+ * Sortea el gap (ms) para la PRÓXIMA publicación. null si el modo es fijo. `rand` se
+ * inyecta para poder probarlo; devuelve un valor entre 0 y 1.
+ */
+export function sortearGapMs(cfg, rand = Math.random) {
+  if (!cfg || cfg.gap_modo !== 'rango') return null;
+  const minMs = minutosDe(cfg.min_gap_min, DEFAULT_AGENDA.min_gap_min) * 60000;
+  const maxMs = Math.max(minMs, (Number(cfg.gap_max_min) || 0) * 60000);
+  const r = Math.min(1, Math.max(0, Number(rand()) || 0));
+  return Math.round((minMs + r * (maxMs - minMs)) / 1000) * 1000; // resolución de 1 s
+}
+
+/**
+ * Gap (ms) que rige AHORA: el fijo, o el sorteado al registrar el último intento,
+ * acotado al rango vigente (si el usuario cambió el rango después del sorteo, el
+ * valor viejo no se sale de él). Sin sorteo guardado (recién pasado a 'rango') se
+ * usa el máximo, el lado prudente, y solo por esa vez.
+ */
+export function gapEfectivoMs(cfg, gapMsGuardado = null) {
+  const minMs = minutosDe(cfg?.min_gap_min, DEFAULT_AGENDA.min_gap_min) * 60000;
+  if (!cfg || cfg.gap_modo !== 'rango') return minMs;
+  const maxMs = Math.max(minMs, (Number(cfg.gap_max_min) || 0) * 60000);
+  const g = Number(gapMsGuardado);
+  if (Number.isFinite(g) && g > 0) return Math.min(maxMs, Math.max(minMs, g));
+  return maxMs;
+}
+
+const fmtMin = (n) => String(Math.round(n * 10) / 10);
+
+const VENTANA_TOPE_MS = 3600000; // el tope "por hora" es una ventana deslizante de 60 min
+
+/**
+ * Minutos que faltan para que el tope por hora vuelva a dejar salir. Con `n`
+ * intentos en la ventana y tope `C`, se libera cuando el intento número (n - C + 1)
+ * en orden de antigüedad cumple la hora y sale de la ventana: ahí el conteo baja a
+ * C - 1. null si no hay datos o todavía no se llegó al tope. Mínimo 1 min, para no
+ * decir "0 min" mientras sigue frenado.
+ */
+export function minutosParaTope(tiempos, tope, nowMs = Date.now(), ventanaMs = VENTANA_TOPE_MS) {
+  if (!Array.isArray(tiempos) || !(tope >= 1) || tiempos.length < tope) return null;
+  const ordenados = tiempos.filter((t) => Number.isFinite(t)).sort((a, b) => a - b);
+  if (ordenados.length < tope) return null;
+  // El conteo es inclusivo (published_at >= ahora - 60 min): un intento sale de la
+  // ventana 1 ms DESPUÉS de cumplir la hora. Sin ese +1, justo en el borde el mensaje
+  // diría "puede salir" y el tope seguiría frenando un minuto más.
+  const sale = ordenados[ordenados.length - tope] + ventanaMs + 1;
+  return Math.max(1, Math.ceil((sale - nowMs) / 60000));
+}
+
+/** "5 min" o "1–3 min (al azar)": para los logs y el estado. */
+export function describirGap(cfg) {
+  const min = minutosDe(cfg?.min_gap_min, DEFAULT_AGENDA.min_gap_min);
+  if (cfg?.gap_modo === 'rango') {
+    const max = Math.max(min, Number(cfg.gap_max_min) || 0);
+    return `${fmtMin(min)}–${fmtMin(max)} min (al azar)`;
+  }
+  return `${fmtMin(min)} min`;
+}
+
 /**
  * Decide si el disparador puede salir ahora, y por qué no si no puede.
  *
@@ -102,7 +174,7 @@ export function limpiarFallos() {
  * El orden de las comprobaciones es el que se ve en los mensajes: primero lo
  * que frena en seco (el corte), después los topes.
  */
-export function evaluarLimites({ cfg, nowMs = Date.now(), lastAttemptMs = null, intentosHora = 0, breaker = null }) {
+export function evaluarLimites({ cfg, nowMs = Date.now(), lastAttemptMs = null, intentosHora = 0, breaker = null, gapMsGuardado = null, intentosTiempos = null }) {
   const b = breaker || { failures: 0, until: 0, reason: '' };
   if (b.until && nowMs < b.until) {
     const min = Math.ceil((b.until - nowMs) / 60000);
@@ -111,14 +183,22 @@ export function evaluarLimites({ cfg, nowMs = Date.now(), lastAttemptMs = null, 
       + (b.reason ? ` (${b.reason.slice(0, 60)})` : '')
       + ` — reintenta en ${min} min`, codigo: 'breaker' };
   }
-  const gapMin = Math.max(1, Number(cfg?.min_gap_min) || DEFAULT_AGENDA.min_gap_min);
+  const gapMs = gapEfectivoMs(cfg, gapMsGuardado);
   if (lastAttemptMs) {
-    const faltan = Math.ceil((lastAttemptMs + gapMin * 60000 - nowMs) / 60000);
-    if (faltan > 0) return { ok: false, motivo: `separación mínima de ${gapMin} min: faltan ${faltan} min`, codigo: 'gap' };
+    const faltan = Math.ceil((lastAttemptMs + gapMs - nowMs) / 60000);
+    if (faltan > 0) return { ok: false, motivo: `separación mínima de ${fmtMin(gapMs / 60000)} min: faltan ${faltan} min`, codigo: 'gap' };
   }
   const topeHora = Math.max(1, Number(cfg?.max_per_hour) || DEFAULT_AGENDA.max_per_hour);
   if (intentosHora >= topeHora) {
-    return { ok: false, motivo: `tope de ${topeHora} publicaciones por hora alcanzado`, codigo: 'tope_hora' };
+    // Con las horas de los intentos se dice cuánto falta; sin ellas, el mensaje de siempre.
+    const falta = minutosParaTope(intentosTiempos, topeHora, nowMs);
+    return {
+      ok: false,
+      motivo: `tope de ${topeHora} publicaciones por hora alcanzado`
+        + (falta ? ` — puede salir otra en ${falta} min` : ''),
+      codigo: 'tope_hora',
+      ...(falta ? { esperaMin: falta } : {}),
+    };
   }
   return { ok: true, motivo: '', codigo: 'ok' };
 }
@@ -247,7 +327,9 @@ export function decisionActual(cfg, nowMs = Date.now()) {
     cfg,
     nowMs,
     lastAttemptMs: lastAttemptInfo(),
+    gapMsGuardado: cfg?.gap_modo === 'rango' ? lastAttemptGapMs() : null,
     intentosHora,
+    intentosTiempos: attemptTimesSince(nowMs - 3600000),
     breaker: leerBreaker(),
   });
   return { ...decision, intentosHora };

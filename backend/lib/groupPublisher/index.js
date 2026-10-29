@@ -29,6 +29,7 @@ export { elegirAnclaIntento } from './estado.js';
 export {
   leerBreaker, registrarFallo, limpiarFallos, evaluarLimites, cuantosPorTick,
   claveDuplicado, marcarDuplicadosEn, decisionActual,
+  sortearGapMs, gapEfectivoMs, describirGap, marcarIntentoAhora, minutosParaTope,
 } from './limites.js';
 
 export { parsePosterOutput, parsePosterDiag, notaLote, CAUSAS, classifyFailure, esFalloTransitorio } from './poster.js';

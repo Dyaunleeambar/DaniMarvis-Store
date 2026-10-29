@@ -14,7 +14,6 @@ const DEFAULTS = Object.freeze({
   confirmacion_s: 120,
   muestras_vacio: 6,
   colchon_red_s: 1.5,
-  gap_min: 15,
 });
 
 const LIMITES = Object.freeze({
@@ -24,7 +23,6 @@ const LIMITES = Object.freeze({
   confirmacion_s: { min: 30, max: 120 },
   muestras_vacio: { min: 3, max: 10, entero: true },
   colchon_red_s: { min: 0.5, max: 5 },
-  gap_min: { min: 5, max: 300 },
 });
 
 function aNumero(v) {

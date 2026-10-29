@@ -121,6 +121,10 @@ console.log('\n7. cableado del Dashboard\n');
   ok('el Dashboard muestra las comisiones cobradas como Ingresos totales', dash.includes('stats.income_commissions_usd') && dash.includes('stats.income_commissions_mn') && dash.includes('<div class="stat-label">Ingresos totales</div>'));
   ok('el Dashboard ya no muestra el valor de lo vendido como ingreso', !dash.includes('stats.total_revenue'));
   ok('un servidor viejo (sin los campos nuevos) no rompe el panel', dash.includes('Number(stats.income_commissions_usd) || 0'));
+  ok('y si el servidor no los trae, el Dashboard los calcula con la regla de Ventas (no muestra un 0 engañoso)',
+    dash.includes('async function completarIngresos(data)') && dash.includes('ingresosDeVentas(await api.getSales())') && dash.includes('await completarIngresos(data);'));
+  ok('solo completa cuando faltan los dos campos (con el servidor nuevo manda el SQL)',
+    dash.includes('s.income_commissions_usd !== undefined || s.income_commissions_mn !== undefined'));
 }
 
 console.log(fallos ? `\n${fallos} FALLO(S)` : '\nTodo en verde');

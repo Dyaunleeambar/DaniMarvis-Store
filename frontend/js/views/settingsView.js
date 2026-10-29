@@ -191,8 +191,7 @@ const TIEMPOS_UI = {
     "vaciado_s": 30,
     "confirmacion_s": 120,
     "muestras_vacio": 6,
-    "colchon_red_s": 1.5,
-    "gap_min": 15
+    "colchon_red_s": 1.5
   },
   "limites": {
     "composer_s": {
@@ -219,10 +218,6 @@ const TIEMPOS_UI = {
     "colchon_red_s": {
       "min": 0.5,
       "max": 5
-    },
-    "gap_min": {
-      "min": 5,
-      "max": 300
     }
   },
   "perfiles": {
@@ -233,7 +228,6 @@ const TIEMPOS_UI = {
       "confirmacion_s": 120,
       "muestras_vacio": 6,
       "colchon_red_s": 1.5,
-      "gap_min": 15,
       "confirm_red": false
     },
     "rapido": {
@@ -243,8 +237,7 @@ const TIEMPOS_UI = {
       "confirmacion_s": 60,
       "muestras_vacio": 4,
       "colchon_red_s": 1,
-      "confirm_red": true,
-      "gap_min": 30
+      "confirm_red": true
     }
   }
 };
@@ -262,8 +255,6 @@ const TIEMPOS_CAMPOS = [
     ayuda: 'Cada lectura es de ~1 s. Menos lecturas cierra antes, con menos certeza.', paso: 1 },
   { clave: 'colchon_red_s', grupo: 'Cierre de la pestaña', titulo: 'Colchón de red quieta (s)',
     ayuda: 'Silencio de red exigido antes de cerrar. Solo cuenta con la confirmación rápida.', paso: 0.1 },
-  { clave: 'gap_min', grupo: 'Entre publicaciones', titulo: 'Gap mínimo entre publicaciones (min)',
-    ayuda: 'Tiempo mínimo que separa una publicación de la siguiente. Evita saturar Facebook.', paso: 1 },
 ];
 
 /**
@@ -273,7 +264,7 @@ const TIEMPOS_CAMPOS = [
  * habría podido cerrar la pestaña (`[ENVIO-RED]` en el log) sin cambiar nada;
  * encendida, cierra apenas la red confirma el envío.
  */
-function tiemposCardHTML(perfil, valores, confirmRed) {
+function tiemposCardHTML(perfil, valores, confirmRed, gap) {
   const grupos = [];
   for (const c of TIEMPOS_CAMPOS) {
     let g = grupos.find((x) => x.nombre === c.grupo);
@@ -318,6 +309,33 @@ function tiemposCardHTML(perfil, valores, confirmRed) {
             </select>
           </div>
           ${camposHTML}
+          <fieldset style="border:0;padding:0;margin:0 0 12px">
+            <legend style="font-weight:600;font-size:.85rem;margin-bottom:6px">Entre publicaciones (gap)</legend>
+            <div class="form-group" style="margin-bottom:8px">
+              <label style="display:block">Modo</label>
+              <select name="g_modo" class="form-control">
+                <option value="fijo" ${gap.modo === 'fijo' ? 'selected' : ''}>Fijo — siempre el mismo tiempo</option>
+                <option value="rango" ${gap.modo === 'rango' ? 'selected' : ''}>Rango — un tiempo al azar entre un mínimo y un máximo</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <div class="form-group" style="margin-bottom:8px">
+                <label id="g-min-label" style="display:block">${gap.modo === 'rango' ? 'Mínimo (min)' : 'Gap (min)'}</label>
+                <input type="number" class="form-control" name="g_min" min="1" max="1440" step="1" value="${gap.min}">
+              </div>
+              <div class="form-group" id="g-max-wrap" style="margin-bottom:8px;${gap.modo === 'rango' ? '' : 'display:none'}">
+                <label style="display:block">Máximo (min)</label>
+                <input type="number" class="form-control" name="g_max" min="1" max="1440" step="1" value="${gap.max}">
+              </div>
+            </div>
+            <small style="color:var(--text-muted);font-size:.72rem;display:block">
+              Espera desde que <em>empieza</em> una publicación hasta que puede empezar la siguiente.
+              En modo rango se sortea un valor nuevo después de cada publicación. El reloj de la agenda
+              revisa cada ${gap.tick} min, así que el gap real puede pasarse hasta ese tiempo. Cada corrida
+              tarda 2-4 min: por debajo de eso el gap casi no pesa. El <strong>tope por hora</strong> sigue
+              aplicando y es el límite real de ritmo (con A y B alternando, cada cuenta hace la mitad).
+            </small>
+          </fieldset>
           <div class="form-group">
             <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
               <input type="checkbox" name="t_confirm_red" ${confirmRed ? 'checked' : ''}>
@@ -345,7 +363,7 @@ function renderPage(container, settings, categories, providerStyles, status) {
   // esto los inputs se verían vacíos aunque el servidor esté aplicando otro valor.
   const AG = {
     auto: true, tick_min: 1, catchup_hours: 24,
-    min_gap_min: 15, max_per_hour: 4, dedupe_hours: 6,
+    min_gap_min: 5, max_per_hour: 12, dedupe_hours: 6, gap_modo: 'fijo', gap_max_min: 5,
     breaker_failures: 3, breaker_cooldown_min: 60,
     auto_retry: true, retry_max: 2, retry_delay_min: 15,
   };
@@ -379,6 +397,19 @@ function renderPage(container, settings, categories, providerStyles, status) {
   const TIEMPOS_PERSONAL = { ...TIEMPOS_UI.defaults, ...((tg && tg.valores) || {}) };
   const TIEMPOS_RED_PERSONAL = tg ? tg.confirm_red === true : pc.confirm_red === true;
   const TIEMPOS_INICIAL = TIEMPOS_PERFIL === 'personalizado' ? TIEMPOS_PERSONAL : TIEMPOS_UI.perfiles[TIEMPOS_PERFIL];
+
+  // Gap entre publicaciones. Lo lee el disparador desde `publish_config.agenda`
+  // (min_gap_min = el gap fijo o el mínimo del rango; gap_modo; gap_max_min), pero se
+  // edita en la tarjeta de Tiempos. Independiente del perfil: un perfil de "rápido" no
+  // debe cambiar el ritmo de publicación sin que lo veas.
+  const GAP_MIN0 = Number(ag.min_gap_min) > 0 ? Number(ag.min_gap_min) : AG.min_gap_min;
+  const GAP = {
+    modo: ag.gap_modo === 'rango' ? 'rango' : 'fijo',
+    min: GAP_MIN0,
+    max: Math.max(GAP_MIN0, Number(ag.gap_max_min) > 0 ? Number(ag.gap_max_min) : GAP_MIN0),
+    tick: Number(ag.tick_min) > 0 ? Number(ag.tick_min) : AG.tick_min,
+  };
+  const GAP_TXT = GAP.modo === 'rango' ? `${GAP.min}–${GAP.max} min (al azar)` : `${GAP.min} min`;
 
   container.innerHTML = `
     <div class="page">
@@ -557,12 +588,12 @@ function renderPage(container, settings, categories, providerStyles, status) {
             </div>
             <div class="form-row">
               <div class="form-group">
-                <label>Separación mínima entre posts (min)</label>
-                <input type="number" name="ag_gap" class="form-control" min="1" max="1440" value="${ag.min_gap_min ?? AG.min_gap_min}" />
+                <label>Separación entre posts</label>
+                <div style="padding:6px 0"><strong>${GAP_TXT}</strong></div>
                 <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">
-                  Espera mínima desde el último <em>intento</em>, no desde el último post: si
-                  un post falla, la espera igual corre. Contra el reloj real cada corrida
-                  tarda 2-4 min, así que abajo de 4 no cambia nada.
+                  Se configura en la tarjeta <strong>Tiempos del publicador</strong> (más abajo): fija
+                  o un rango al azar. Cuenta desde el último <em>intento</em>, no desde el último post:
+                  si un post falla, la espera igual corre.
                 </small>
               </div>
               <div class="form-group">
@@ -739,7 +770,7 @@ function renderPage(container, settings, categories, providerStyles, status) {
 
       ${metodoTextoCardHTML(METODO)}
 
-      ${tiemposCardHTML(TIEMPOS_PERFIL, TIEMPOS_INICIAL, TIEMPOS_PERFIL === 'personalizado' ? TIEMPOS_RED_PERSONAL : TIEMPOS_INICIAL.confirm_red)}
+      ${tiemposCardHTML(TIEMPOS_PERFIL, TIEMPOS_INICIAL, TIEMPOS_PERFIL === 'personalizado' ? TIEMPOS_RED_PERSONAL : TIEMPOS_INICIAL.confirm_red, GAP)}
 
       <div class="card" style="margin-top:16px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px">
@@ -905,7 +936,8 @@ function renderPage(container, settings, categories, providerStyles, status) {
         // Límites de ritmo. Antes vivían solo en DEFAULT_AGENDA (código) y no había
         // forma de verlos ni tocarlos desde acá. Los rangos son los mismos clamps
         // de getAgendaConfig() en backend/lib/groupPublisher/config.js.
-        min_gap_min: limite(fd.get('ag_gap'), 5, 1, 1440),
+        // min_gap_min / gap_modo / gap_max_min NO van acá: se editan en la tarjeta Tiempos
+        // y el merge de `agenda` (campo por campo) los conserva.
         max_per_hour: limite(fd.get('ag_hour'), 12, 1, 60),
         // 0 tiene que poder DESACTIVAR el dedupe (lo dice el default del backend),
         // por eso no puede caer en el `|| default`: de ahí el helper `limite`.
@@ -1099,6 +1131,18 @@ function renderPage(container, settings, categories, providerStyles, status) {
       chkRed.checked = esPers ? redPersonal : base.confirm_red === true;
       chkRed.disabled = !esPers;
     };
+    // Gap entre publicaciones: el máximo solo se ve en modo rango.
+    const gModo = tForm.querySelector('select[name="g_modo"]');
+    const gMin = tForm.querySelector('input[name="g_min"]');
+    const gMax = tForm.querySelector('input[name="g_max"]');
+    const pintarGap = () => {
+      const rango = gModo.value === 'rango';
+      document.getElementById('g-max-wrap').style.display = rango ? '' : 'none';
+      document.getElementById('g-min-label').textContent = rango ? 'Mínimo (min)' : 'Gap (min)';
+    };
+    gModo.addEventListener('change', pintarGap);
+    pintarGap();
+
     selPerfil.addEventListener('change', () => {
       if (perfilActual === 'personalizado') { personal = leerInputs(); redPersonal = chkRed.checked; }
       perfilActual = selPerfil.value;
@@ -1110,10 +1154,25 @@ function renderPage(container, settings, categories, providerStyles, status) {
       e.preventDefault();
       const perfil = ['seguro', 'rapido', 'personalizado'].includes(selPerfil.value) ? selPerfil.value : 'seguro';
       if (perfil === 'personalizado') { personal = leerInputs(); redPersonal = chkRed.checked; }
+      // Gap: enteros de 1 a 1440 min. En modo fijo el máximo es el mismo valor.
+      const modoGap = gModo.value === 'rango' ? 'rango' : 'fijo';
+      const entero = (el, def) => {
+        const n = Math.round(Number(el.value));
+        return el.value !== '' && Number.isFinite(n) ? Math.min(1440, Math.max(1, n)) : def;
+      };
+      const gapMin = entero(gMin, GAP.min);
+      const gapMax = modoGap === 'rango' ? entero(gMax, gapMin) : gapMin;
+      if (modoGap === 'rango' && gapMax < gapMin) {
+        showToast('En modo rango el máximo no puede ser menor que el mínimo', 'error');
+        return;
+      }
       try {
         const res = await api.updateSettings({
           exchange_rate: currentSettings?.exchange_rate || settings?.exchange_rate || 61000,
-          publish_config: { tiempos: { perfil, valores: personal, confirm_red: redPersonal } },
+          publish_config: {
+            tiempos: { perfil, valores: personal, confirm_red: redPersonal },
+            agenda: { min_gap_min: gapMin, gap_modo: modoGap, gap_max_min: gapMax },
+          },
         });
         currentSettings = res;
         showToast('Tiempos guardados', 'success');

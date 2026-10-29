@@ -66,6 +66,43 @@ export function lastAttemptInfo() {
   return elegirAnclaIntento({ marca, finMs: Number.isNaN(ms) ? null : ms });
 }
 
+/**
+ * Gap (ms) que se sorteó al registrar el último intento, o null si no hay (modo fijo,
+ * marca vieja o sin marca). Solo vale si el ancla del gap es esa marca.
+ */
+export function lastAttemptGapMs() {
+  try {
+    const db = getDB();
+    const cfgRow = db.prepare('SELECT publish_config FROM settings WHERE id = 1').get();
+    const marca = JSON.parse(cfgRow?.publish_config || '{}')._ultimoIntento;
+    const g = Number(marca?.gap_ms);
+    const tieneAncla = Number(marca?.ms) > 0 || !Number.isNaN(fechaMs(marca?.at));
+    return tieneAncla && Number.isFinite(g) && g > 0 ? g : null;
+  } catch { return null; }
+}
+
+/**
+ * Hora (ms) de cada intento (acierto o fallo) desde `msDesde`, de más viejo a más
+ * nuevo. Mismas filas que cuenta countAttemptsSince, pero con su hora: sirve para
+ * decir cuánto falta para que el tope por hora vuelva a dejar salir.
+ */
+export function attemptTimesSince(msDesde) {
+  const db = getDB();
+  const desde = new Date(msDesde).toISOString();
+  const desdeSql = desde.replace('T', ' ');
+  const filas = db.prepare(`
+    SELECT CASE WHEN published_at IS NOT NULL AND replace(published_at,'T',' ') >= ?
+                THEN published_at ELSE updated_at END AS t
+    FROM publication_queue
+    WHERE status IN ('published','error')
+      AND (
+        (published_at IS NOT NULL AND replace(published_at,'T',' ') >= ?)
+        OR (status = 'error' AND replace(updated_at,'T',' ') >= ?)
+      )
+  `).all(desdeSql, desdeSql, desdeSql);
+  return filas.map((f) => fechaMs(f.t)).filter((ms) => Number.isFinite(ms)).sort((a, b) => a - b);
+}
+
 /** Intentos (aciertos o fallos) en la última hora, para el tope por hora. */
 export function countAttemptsSince(msDesde) {
   const db = getDB();

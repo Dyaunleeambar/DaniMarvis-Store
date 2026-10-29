@@ -1,9 +1,24 @@
 import { api } from '../db/api.js';
-import { formatUSD, formatCommission, formatDate, formatDateTime, textoComisiones } from '../utils/utils.js';
+import { formatUSD, formatCommission, formatDate, formatDateTime, textoComisiones, ingresosDeVentas } from '../utils/utils.js';
 import { showToast } from '../core/app.js';
 
 function escHtml(str) {
   return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/**
+ * Los ingresos del Dashboard (comisiones cobradas) los calcula el servidor. Si la
+ * respuesta no los trae — un backend anterior al cambio que todavía no se reinició —
+ * se calculan acá con la MISMA regla que usa Ventas, en vez de mostrar un 0 engañoso.
+ */
+async function completarIngresos(data) {
+  const s = data && data.stats;
+  if (!s || s.income_commissions_usd !== undefined || s.income_commissions_mn !== undefined) return;
+  try {
+    const r = ingresosDeVentas(await api.getSales());
+    s.income_commissions_usd = r.usd;
+    s.income_commissions_mn = r.mn;
+  } catch (_) { /* sin la lista de ventas: queda en cero */ }
 }
 
 export async function render(container) {
@@ -14,6 +29,7 @@ export async function render(container) {
       api.getDashboard(),
       api.getPageRoutineLogs({ status: 'scheduled', limit: 3 }).catch(() => []),
     ]);
+    await completarIngresos(data);
     renderDashboard(container, data, logs);
   } catch (err) {
     container.innerHTML = `<div class="empty-state"><h3>Error al cargar</h3><p>${escHtml(err.message)}</p></div>`;

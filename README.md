@@ -1131,7 +1131,9 @@ Estos son los de `DEFAULT_AGENDA` en `backend/lib/groupPublisher.js`, y son **ot
 | `auto` | `true` | Disparador armado |
 | `tick_min` | `1` | Cada cuánto mira los vencidos |
 | `catchup_hours` | `24` | Vencido hace más que esto **no** se recupera solo |
-| `min_gap_min` | `5` | Separación mínima, medida **de inicio a inicio** |
+| `min_gap_min` | `5` | Separación mínima, medida **de inicio a inicio** (en modo `rango`, el mínimo del rango) |
+| `gap_modo` | `fijo` | `fijo` = siempre `min_gap_min`; `rango` = un valor al azar entre `min_gap_min` y `gap_max_min`, sorteado **una vez por publicación** y guardado en `_ultimoIntento.gap_ms` |
+| `gap_max_min` | `5` | Máximo del rango (solo en modo `rango`); nunca menor que `min_gap_min`. Se edita en Ajustes > Tiempos |
 | `max_per_hour` | `12` | Tope duro por hora |
 | `grupos_por_post` | `9` | Cuántos grupos se tildan por publicación (el "lote") |
 | `dedupe_hours` | `6` | No repetir el mismo texto en el mismo grupo antes de esto (`0` = no) |

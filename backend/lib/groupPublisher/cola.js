@@ -435,7 +435,7 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
       // cuando termina. Medirlo contra `published_at` hacía que el ritmo real
       // fuera 1/(gap + duración de la corrida): con 1m35s de media, un gap de
       // 8 min daba 6,3/h y el tope de 6/h era el que nunca mandaba.
-      marcarIntentoAhora();
+      marcarIntentoAhora(agendaCfg);
       // Heartbeat del turno: renueva el lease mientras dure la corrida para que
       // la otra cuenta no lo reclame por vencimiento a mitad de camino.
       try { await claimTurn(accountId); } catch { /* el próximo ítem reintenta */ }

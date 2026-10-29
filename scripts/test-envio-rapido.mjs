@@ -97,7 +97,7 @@ console.log('\n5. interruptor en Ajustes (publish_config.confirm_red)\n');
   ok("el poster lee --confirm-red y FB_CONFIRM_RED", gp.includes("val(args, '--confirm-red')") && gp.includes('process.env.FB_CONFIRM_RED'));
   const view = leer('../frontend/js/views/settingsView.js');
   ok('el panel tiene la casilla de confirmación rápida (en Tiempos)', view.includes('id="tiempos-form"') && view.includes('name="t_confirm_red"'));
-  ok('el panel guarda la confirmación rápida dentro de tiempos', view.includes('publish_config: { tiempos: { perfil, valores: personal, confirm_red: redPersonal } }'));
+  ok('el panel guarda la confirmación rápida dentro de tiempos', view.includes('tiempos: { perfil, valores: personal, confirm_red: redPersonal }'));
   ok('el panel solo la marca encendida si es true', view.includes('pc.confirm_red === true'));
 }
 
