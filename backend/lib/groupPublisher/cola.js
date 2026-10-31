@@ -180,7 +180,7 @@ function writeMessageFile(item) {
   return file;
 }
 
-function updateQueue(item, result, mode) {
+function updateQueue(item, result, mode, intentosConsumidos = 1) {
   const db = getDB();
   const now = toIsoUtc(new Date());
   const base = (item.notes || '').trim();
@@ -273,18 +273,18 @@ function updateQueue(item, result, mode) {
     // Y si mientras tanto lo cancelaron, el cancelado gana: un fallo no puede
     // resucitar un destino que el usuario ya Sacó de la cola.
     const cfg = getAgendaConfig();
-    const puedeAuto = mode === 'publish'
+    const intentosNuevos = intentosPrevios + intentosConsumidos;
+    const puedeReintentar = mode === 'publish'
       && !fueCancelado
       && result.status !== 'revisar'
       && cfg.auto_retry
-      && intentosPrevios < cfg.retry_max
-      && esFalloTransitorio(result.message);
-    if (puedeAuto) {
+      && intentosNuevos < cfg.retry_max;
+    if (puedeReintentar) {
       const cuando = new Date(Date.now() + cfg.retry_delay_min * 60000);
-      const nota = `${notes} | auto-reintento ${intentosPrevios + 1}/${cfg.retry_max} programado ${cuando.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`.slice(0, 500);
+      const nota = `${notes} | auto-reintento ${intentosNuevos + 1}/${cfg.retry_max} programado en ${cfg.retry_delay_min} min`.slice(0, 500);
       const n = db.prepare("UPDATE publication_queue SET status = 'pending', notes = ?, scheduled_at = ?, published_at = NULL, attempts = ?, updated_at = datetime('now') WHERE id = ? AND status = 'pending'")
-        .run(nota, toIsoUtc(cuando), intentosPrevios + 1, item.id);
-      if (n) return { aplicado: true, estadoPrevio, autoReintento: true, intentos: intentosPrevios + 1 };
+        .run(nota, toIsoUtc(cuando), intentosNuevos, item.id);
+      if (n) return { aplicado: true, estadoPrevio, autoReintento: true, intentos: intentosNuevos };
     }
     db.prepare("UPDATE publication_queue SET status = 'error', notes = ?, published_at = NULL, updated_at = datetime('now') WHERE id = ? AND status = 'pending'")
       .run(notes, item.id);
@@ -422,93 +422,98 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
     let pausedByMaster = false;
     for (const item of items) {
       // Corte a mitad de corrida: si el usuario apagó el interruptor mientras
-      // corría, NO se procesa el siguiente ítem. Entre post y post hay 45-135s
-      // de separación, así que el corte es casi inmediato en la práctica. Lo que
-      // queda sin procesar NO se toca: sigue en 'pending' y se publica cuando se
-      // prende de nuevo.
+      // corría, NO se procesa el siguiente ítem.
       if (!getMasterConfig().on) {
         pausedByMaster = true;
         break;
       }
       currentRun.current_group = item.group_name;
       // El reloj del gap arranca AQUÍ, cuando el post empieza a escribirse, y no
-      // cuando termina. Medirlo contra `published_at` hacía que el ritmo real
-      // fuera 1/(gap + duración de la corrida): con 1m35s de media, un gap de
-      // 8 min daba 6,3/h y el tope de 6/h era el que nunca mandaba.
+      // cuando termina.
       marcarIntentoAhora(agendaCfg);
-      // Heartbeat del turno: renueva el lease mientras dure la corrida para que
-      // la otra cuenta no lo reclame por vencimiento a mitad de camino.
-      try { await claimTurn(accountId); } catch { /* el próximo ítem reintenta */ }
+
+      // Reintentos en rondas de 2, sin gap entre intentos de la misma ronda.
+      const retryBatch = 2;
+      const retryMax = agendaCfg.retry_max;
+      let intentosConsumidos = 0;
+      let resultadoFinal = null;
+
+      let intentosPrevios = 0;
+      try {
+        const fila = db.prepare('SELECT attempts FROM publication_queue WHERE id = ?').get(item.id);
+        intentosPrevios = Number(fila?.attempts) || 0;
+      } catch { /* si no se puede leer, se asume 0 */ }
+
+      // Resolver imágenes y mensaje una sola vez para la ronda
       const groupUrl = resolveGroupUrl(item);
       const imageFiles = await resolveImages(item.images);
       const messageFile = writeMessageFile(item);
       temps.push(messageFile, ...imageFiles);
 
-      const result = await spawnPoster({
-        groupUrl,
-        messageFile,
-        imageFiles,
-        mode: effectiveMode,
-        label: item.group_name,
-        debug,
-        loteN: agendaCfg.grupos_por_post,
-        loteDesde: await getLote(),
-        // Puerto del Chrome de ESTA cuenta: sin esto el poster siempre hablaría
-        // con el 9222 del perfil de A aunque la corrida sea de B.
-        debugPort: acc.debugPort,
-      });
-      // El cursor avanza SOLO si el lote se tildó de verdad. Si el botón no
-      // apareció, o si no se pudo tildar nada, se deja donde estaba: avanzar a
-      // ciegas saltaría 9 grupos y el reparto perdería ese tramo para siempre.
-      // Se commitea al coordinador para que el próximo lote (lo publique A o B)
-      // siga desde acá. Como el turno es exclusivo, no hay carrera.
-      if (Array.isArray(result.lote_grupos) && result.lote_grupos.length) {
-        await commitLote(result.lote_grupos[result.lote_grupos.length - 1]);
+      while (intentosConsumidos < retryBatch && (intentosPrevios + intentosConsumidos) < retryMax) {
+        if (!getMasterConfig().on) {
+          pausedByMaster = true;
+          break;
+        }
+        intentosConsumidos++;
+        // Heartbeat del turno: renueva el lease mientras dure la corrida.
+        try { await claimTurn(accountId); } catch { /* el próximo ítem reintenta */ }
+
+        const result = await spawnPoster({
+          groupUrl,
+          messageFile,
+          imageFiles,
+          mode: effectiveMode,
+          label: item.group_name,
+          debug,
+          loteN: agendaCfg.grupos_por_post,
+          loteDesde: await getLote(),
+          // Puerto del Chrome de ESTA cuenta: sin esto el poster siempre hablaría
+          // con el 9222 del perfil de A aunque la corrida sea de B.
+          debugPort: acc.debugPort,
+        });
+        resultadoFinal = result;
+
+        if (result.ok) break; // salió bien, no hay que reintentar
+        if (result.status === 'revisar') break; // no reintentar 'revisar' (evita duplicados)
+        // falló: si queda cupo en la ronda, seguir inmediatamente sin espera
       }
-      const escritura = updateQueue(item, result, effectiveMode);
-      // Corte automático: cuenta fallos CONSECUTIVOS de cualquier origen (worker,
-      // disparador o clic manual), porque lo que se rompió es el canal de
-      // Facebook, no quién apretó el botón. Al llegar al tope el disparador queda
-      // pausado un rato en vez de seguir sacando destinos de a uno. Sin esto, el
-      // 2026-10-03, la cola se consumió entera en 2 horas y Facebook dejó de
-      // aceptar los envíos sin decir nada.
-      //
-      // EXCEPCIÓN `revisar`: los resultados que el poster no pudo confirmar pero
-      // tampoco son un fallo declarado (el compositor no se vació y Facebook no
-      // mostró ningún aviso) NO cuentan como fallo del canal. Con internet lento
-      // el post puede haber salido igual; contarlos disparaba el breaker por
-      // falsos negativos y cortaba corridas buenas. Sí se registran en el
-      // historial para que el usuario los revise.
-      if (result.ok) limpiarFallos();
-      else if (result.status !== 'revisar') registrarFallo(agendaCfg, result.message);
-      const avisos = Array.isArray(result.warnings) && result.warnings.length
-        ? result.warnings.join('; ') : '';
+
+      // El cursor avanza SOLO si el lote se tildó de verdad.
+      if (resultadoFinal && Array.isArray(resultadoFinal.lote_grupos) && resultadoFinal.lote_grupos.length) {
+        await commitLote(resultadoFinal.lote_grupos[resultadoFinal.lote_grupos.length - 1]);
+      }
+
+      const escritura = updateQueue(item, resultadoFinal, effectiveMode, intentosConsumidos);
+
+      // Corte automático: cuenta fallos de cualquier origen. Al llegar al tope
+      // el disparador queda pausado un rato en vez de seguir sacando destinos.
+      if (resultadoFinal.ok) limpiarFallos();
+      else if (resultadoFinal.status !== 'revisar') registrarFallo(agendaCfg, resultadoFinal.message);
+      const avisos = Array.isArray(resultadoFinal.warnings) && resultadoFinal.warnings.length
+        ? resultadoFinal.warnings.join('; ') : '';
       const row = {
         item_id: item.id,
         group: item.group_name,
         url: groupUrl,
         mode: effectiveMode,
-        ok: result.ok,
-        status: result.status,
-        message: ((result.message || '') + (escritura && escritura.aplicado === false ? ' | el destino ya no estaba pendiente: no se sobrescribió' : '') + (avisos ? ` | aviso: ${avisos}` : '') + (result.img_adjunta !== undefined ? ` | img_adjunta:${result.img_adjunta}` : '') + (result.img_pedidas !== undefined ? ` de ${result.img_pedidas}` : '')).slice(0, 220),
-        post_url: result.post_url || '',
-        // El lote va explícito en el row: `notaLote` lo persiste en las notas,
-        // pero el log necesita el dato crudo para no tener que parsear texto.
-        lote: Array.isArray(result.lote_grupos) ? result.lote_grupos.length : null,
-        lote_total: result.grupos_en_lista || null,
-        lote_estado: result.lote_estado || null,
-        warnings: Array.isArray(result.warnings) ? result.warnings : [],
+        ok: resultadoFinal.ok,
+        status: resultadoFinal.status,
+        message: ((resultadoFinal.message || '') + (escritura && escritura.aplicado === false ? ' | el destino ya no estaba pendiente: no se sobrescribió' : '') + (avisos ? ` | aviso: ${avisos}` : '') + (resultadoFinal.img_adjunta !== undefined ? ` | img_adjunta:${resultadoFinal.img_adjunta}` : '') + (resultadoFinal.img_pedidas !== undefined ? ` de ${resultadoFinal.img_pedidas}` : '')).slice(0, 220),
+        post_url: resultadoFinal.post_url || '',
+        lote: Array.isArray(resultadoFinal.lote_grupos) ? resultadoFinal.lote_grupos.length : null,
+        lote_total: resultadoFinal.grupos_en_lista || null,
+        lote_estado: resultadoFinal.lote_estado || null,
+        warnings: Array.isArray(resultadoFinal.warnings) ? resultadoFinal.warnings : [],
       };
-      // El aviso de sesión/Chrome puede aparecer en cualquier ítem: se marca
-      // para que la UI lo diga aunque el run siga y termine con otros errores.
-      if (!result.ok) {
-        const cause = classifyFailure(result.message);
+      if (!resultadoFinal.ok) {
+        const cause = classifyFailure(resultadoFinal.message);
         if (cause) currentRun[cause] = true;
       }
       results.push(row);
       currentRun.results.push(row);
       currentRun.done += 1;
-      if (result.ok) currentRun.ok += 1; else currentRun.errors += 1;
+      if (resultadoFinal.ok) currentRun.ok += 1; else currentRun.errors += 1;
       currentRun.current_group = null;
       // separación natural entre posts consecutivos (simula flujo humano)
       if (results.length < items.length) {

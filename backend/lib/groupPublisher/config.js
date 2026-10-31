@@ -49,14 +49,13 @@ export const DEFAULT_AGENDA = {
   dedupe_hours: 6,     // no repetir el mismo texto en el mismo grupo antes de esto (0 = no)
   breaker_failures: 3, // fallos seguidos que pausan el disparador
   breaker_cooldown_min: 60,
-  // Reintento automático SOLO de fallos transitorios (timeout, frame caído,
-  // red). No toca errores deterministas (grupo cerrado, sin permiso), los de
-  // ritmo de Facebook ni los 'revisar': reintentar esos empeora el bloqueo o
-  // duplica un post que sí salió. Respeta gap, tope por hora y breaker, porque
-  // vuelve a dejar la fila en 'pending' y la toma el disparador normal.
+  // Reintento automático de cualquier fallo (salvo 'revisar' y cancelados).
+  // Se ejecutan en rondas de 2 intentos consecutivos sin gap entre ellos.
+  // Si se agotan los 2 de una ronda y aún queda cupo, se espera `retry_delay_min`
+  // minutos y se lanza otra ronda de 2, hasta llegar a `retry_max`.
   auto_retry: true,
-  retry_max: 2,        // auto-reintentos por destino antes de dejarlo en 'error'
-  retry_delay_min: 15, // espera antes de reencolarlo (no inmediato)
+  retry_max: 2,        // máximo de intentos totales por destino (1 a 6)
+  retry_delay_min: 2,  // minutos de espera entre rondas de 2 intentos
 };
 
 // Interruptor MAESTRO del publicador. Es una puerta aparte de autopublish.enabled
@@ -173,7 +172,7 @@ export function getAgendaConfig() {
   // 0 desactiva los auto-reintentos sin apagar el interruptor; el `||` se
   // comería el 0, así que va con Number.isFinite igual que dedupe_hours.
   const rm = Number(cfg.retry_max);
-  cfg.retry_max = Number.isFinite(rm) ? Math.max(0, Math.min(10, rm)) : DEFAULT_AGENDA.retry_max;
+  cfg.retry_max = Number.isFinite(rm) ? Math.max(1, Math.min(6, rm)) : DEFAULT_AGENDA.retry_max;
   const rd = Number(cfg.retry_delay_min);
   cfg.retry_delay_min = Number.isFinite(rd) ? Math.max(1, Math.min(1440, rd)) : DEFAULT_AGENDA.retry_delay_min;
   return cfg;
