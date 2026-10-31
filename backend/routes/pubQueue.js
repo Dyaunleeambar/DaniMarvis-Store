@@ -16,7 +16,7 @@ const router = Router();
 // hasta varias imágenes por post (dependiendo del tipo de cuenta), y este tope
 // es nuestro, no un dato de FB. Si se adjuntan más de MAX_IMAGES, se conservan
 // solo las primeras y se descarta el resto al guardar la publicación.
-const MAX_IMAGES = 20;
+const MAX_IMAGES = 50;
 const UPLOADS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'uploads');
 
 const MIME_EXT = {
