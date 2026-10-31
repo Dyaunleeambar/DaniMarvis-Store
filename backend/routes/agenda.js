@@ -20,7 +20,7 @@ const router = Router();
 // Con 'cancelled' como estado terminal, el evento sigue teniendo historial pero
 // ya no cuenta como pendiente.
 
-const MAX_IMAGES = 10;
+const MAX_IMAGES = 20;
 
 /** Estados que un destino puede tener. 'cancelled' y 'omitted' los usa la agenda. */
 const ACTIVE_STATUSES = ['pending', 'published', 'error'];
