@@ -9,7 +9,7 @@ function escAttr(str) {
   return String(str ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 }
 
-const MAX_IMAGES = 10;
+const MAX_IMAGES = 50;
 const DIA_MS = 86400000;
 const HORA_MIN = 6;
 const HORA_MAX = 23;

@@ -72,7 +72,7 @@ async function resolveImages(imagesArr) {
       const local = resolveLocalUpload(img);
       if (local) out.push(await toFacebookFriendly(local));
     }
-    if (out.length >= 10) break;
+    if (out.length >= 50) break;
   }
   return out;
 }
