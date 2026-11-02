@@ -34,12 +34,13 @@ export {
 
 export { parsePosterOutput, parsePosterDiag, notaLote, CAUSAS, classifyFailure, esFalloTransitorio } from './poster.js';
 
-export { logFinCorrida, startGroupPublish } from './cola.js';
+export { logFinCorrida, startGroupPublish, retryLotesFallidosDelDia } from './cola.js';
 
 export {
   runSchedulerTick, groupPublishStatus, schedulerState,
   startGroupPublishScheduler, stopGroupPublishScheduler, rescheduleGroupPublish,
   agendaSchedulerState, runAgendaTick, startAgendaScheduler, stopAgendaScheduler, rescheduleAgenda,
+  startLoteRetryScheduler, stopLoteRetryScheduler, loteRetrySchedulerState,
 } from './schedulers.js';
 
 // alias explícito: server.js lo usa para leer si el worker estaba activo antes de

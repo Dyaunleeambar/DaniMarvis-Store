@@ -664,6 +664,140 @@ export function startGroupPublish({ auto, force = false, ids = [], mode = null, 
   return { accepted: true, runId, started, total: ids.length || cfg.worker_batch };
 }
 
+/**
+ * Reintento de lotes fallidos al final del día.
+ *
+ * Solo aplica cuando:
+ *  - `agenda.lote_retry` está habilitado (opt-in en Ajustes)
+ *  - Modo de cuentas es 'alternado' (A+B)
+ *  - Hay publicaciones publicadas hoy con lote fallido ('sin-boton' o 'sin-grupos' en notas)
+ *  - Ha pasado al menos 1 hora sin actividad de publicación (día considerado terminado)
+ *  - No hay breaker activo ni se excede el tope por hora
+ *
+ * Crea una nueva fila en publication_queue para la cuenta alternativa (la que
+ * NO disparó originalmente) y la publica inmediatamente con force:true.
+ * Cada publicación solo recibe un reintento de lote.
+ */
+export async function retryLotesFallidosDelDia() {
+  const cfg = getAgendaConfig();
+  if (cfg.lote_retry !== true) {
+    return { skipped: true, reason: 'lote_retry_desactivado' };
+  }
+
+  const cuentaCfg = getCuentasConfig();
+  const modo = String(cuentaCfg.modo || 'alternado').toUpperCase();
+  if (modo !== 'ALTERNADO') {
+    return { skipped: true, reason: 'lote_retry_requiere_modo_alternado' };
+  }
+
+  // Cuenta alternativa: la opuesta a la última usada. Si no hay registro, 'B'.
+  const cuentaAlt = ultimaCuenta === 'A' ? 'B' : 'A';
+
+  const db = getDB();
+  const hoy = new Date();
+  hoy.setHours(0, 0, 0, 0);
+  const hoySql = hoy.toISOString().replace('T', ' ');
+
+  // Una hora atrás para medir inactividad
+  const haceUnaHora = new Date(Date.now() - 3600000).toISOString().replace('T', ' ');
+
+  // 1) ¿Hubo actividad de publicación en la última hora?
+  const actividadReciente = db.prepare(`
+    SELECT COUNT(*) AS c FROM publication_queue
+    WHERE status IN ('published', 'error')
+      AND replace(updated_at, 'T', ' ') >= ?
+  `).get(haceUnaHora);
+  if (Number(actividadReciente?.c || 0) > 0) {
+    return { skipped: true, reason: 'actividad_reciente_menos_de_1h' };
+  }
+
+  // 2) ¿Hay publicaciones pendientes para hoy o futuro?
+  const pendientesFuturo = db.prepare(`
+    SELECT COUNT(*) AS c FROM publication_queue
+    WHERE status = 'pending'
+      AND (scheduled_at IS NULL OR scheduled_at >= ?)
+  `).get(hoySql);
+  if (Number(pendientesFuturo?.c || 0) > 0) {
+    return { skipped: true, reason: 'hay_pendientes_para_hoy_o_futuro' };
+  }
+
+  // 3) Breaker activo?
+  const breaker = leerBreaker();
+  if (breaker.until && Date.now() < breaker.until) {
+    return { skipped: true, reason: 'breaker_activo' };
+  }
+
+  // 4) Tope por hora: contar intentos de la última hora
+  const intentosHora = db.prepare(`
+    SELECT COUNT(*) AS c FROM publication_queue
+    WHERE status IN ('published', 'error')
+      AND (
+        (published_at IS NOT NULL AND replace(published_at, 'T', ' ') >= ?)
+        OR (status = 'error' AND replace(updated_at, 'T', ' ') >= ?)
+      )
+  `).get(haceUnaHora, haceUnaHora);
+  const maxPerHour = Math.max(1, Number(cfg.max_per_hour) || 12);
+  if (Number(intentosHora?.c || 0) >= maxPerHour) {
+    return { skipped: true, reason: 'tope_por_hora_alcanzado' };
+  }
+
+  // 5) Buscar publicaciones publicadas hoy con lote fallido y sin reintento previo
+  const fallidos = db.prepare(`
+    SELECT pq.id, pq.publication_id, pq.group_name, pq.group_url, pq.variant_text,
+           pq.images, pq.notes, p.publish_text, p.product_name, p.images AS pub_images
+    FROM publication_queue pq
+    LEFT JOIN publications p ON p.id = pq.publication_id
+    WHERE pq.status = 'published'
+      AND replace(pq.updated_at, 'T', ' ') >= ?
+      AND (pq.notes LIKE '%ATENCIÓN lote%' OR pq.notes LIKE '%sin-boton%' OR pq.notes LIKE '%sin-grupos%')
+      AND pq.notes NOT LIKE '%lote_reintento%'
+    ORDER BY pq.updated_at ASC
+  `).all(hoySql);
+
+  if (!fallidos.length) {
+    return { skipped: true, reason: 'no_hay_lotes_fallidos_hoy' };
+  }
+
+  const nuevosIds = [];
+  const ahora = toIsoUtc(new Date());
+
+  for (const f of fallidos) {
+    // Imágenes: usar las de la cola, si no, las de la publicación
+    let imagesArr = [];
+    try { imagesArr = JSON.parse(f.images || '[]'); } catch {}
+    if (!imagesArr.length) {
+      try { imagesArr = JSON.parse(f.pub_images || '[]'); } catch { imagesArr = []; }
+    }
+
+    const id = uuid();
+    const notes = `auto:lote_reintento | reintento de propagación de lote fallido (${f.publication_id}) | cuenta: ${cuentaAlt} | ${f.notes || ''}`.slice(0, 500);
+
+    db.prepare(`
+      INSERT INTO publication_queue
+        (id, publication_id, group_name, group_url, status, scheduled_at,
+         variant_index, variant_text, images, pending_approval, notes)
+      VALUES (?, ?, ?, ?, 'pending', ?, 0, ?, ?, 0, ?)
+    `).run(id, f.publication_id, f.group_name, f.group_url || '', ahora,
+      f.variant_text || f.publish_text || '', JSON.stringify(imagesArr), notes);
+
+    nuevosIds.push(id);
+    console.log(`[lote-retry] nueva fila ${id.slice(0, 8)} para publicación ${f.publication_id.slice(0, 8)} cuenta=${cuentaAlt} grupo="${f.group_name}"`);
+  }
+
+  if (!nuevosIds.length) {
+    return { skipped: true, reason: 'no_se_crearon_filas' };
+  }
+
+  // Publicar inmediatamente las nuevas filas (force:true salta gap/franja/cap)
+  const res = await startGroupPublish({ ids: nuevosIds, force: true, origen: 'lote_retry_dia' });
+  return {
+    procesados: fallidos.length,
+    creados: nuevosIds.length,
+    cuenta: cuentaAlt,
+    result: res,
+  };
+}
+
 // Accesores de solo lectura del estado de corrida, para los schedulers y el
 // status. No se re-exportan en el barrel: la API pública no expone este estado.
 export function isRunning() {

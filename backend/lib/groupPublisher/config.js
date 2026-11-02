@@ -56,6 +56,10 @@ export const DEFAULT_AGENDA = {
   auto_retry: true,
   retry_max: 2,        // máximo de intentos totales por destino (1 a 6)
   retry_delay_min: 2,  // minutos de espera entre rondas de 2 intentos
+  // Reintento de lotes fallidos (sin-boton / sin-grupos) al final del día.
+  // Solo aplica en modo A+B: crea una nueva fila en la cuenta alternativa
+  // para recuperar la propagación a grupos adicionales. Default apagado.
+  lote_retry: false,
 };
 
 // Interruptor MAESTRO del publicador. Es una puerta aparte de autopublish.enabled
@@ -169,6 +173,8 @@ export function getAgendaConfig() {
   // `auto_retry` es booleano; cualquier otra cosa se resuelve a true salvo un
   // false explícito, para que una config vieja (sin la clave) herede el default.
   cfg.auto_retry = cfg.auto_retry !== false;
+  // `lote_retry` es booleano; default false (apagado). Solo se activa con true explícito.
+  cfg.lote_retry = cfg.lote_retry === true;
   // 0 desactiva los auto-reintentos sin apagar el interruptor; el `||` se
   // comería el 0, así que va con Number.isFinite igual que dedupe_hours.
   const rm = Number(cfg.retry_max);

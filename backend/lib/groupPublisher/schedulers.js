@@ -6,7 +6,7 @@ import { debugChromeReachable } from '../chromeLauncher.js';
 import { toIsoUtc } from './util.js';
 import { getAgendaConfig, getAutopublishConfig, getMasterConfig } from './config.js';
 import { cuantosPorTick, decisionActual, describirGap, leerBreaker, marcarDuplicados } from './limites.js';
-import { getCurrentRun, getLastResult, isRunning, pickForRun, resolveGroupUrl, startGroupPublish } from './cola.js';
+import { getCurrentRun, getLastResult, isRunning, pickForRun, resolveGroupUrl, startGroupPublish, retryLotesFallidosDelDia } from './cola.js';
 
 // ----------------------------------------------------------- worker auto ---
 // El worker que faltaba. La etiqueta de Ajustes promete "cada 5 minutos" pero
@@ -522,4 +522,56 @@ export function rescheduleAgenda({ wasActive = true } = {}) {
   const state = startAgendaScheduler();
   console.log(`[agenda] temporizador cambiado a ${Math.round(after / 60000)} min`);
   return { rescheduled: true, from_ms: before, to_ms: after, state };
+}
+
+// ════════════════════ reintento de lotes fallidos al final del día ════════════════════
+// Tick opcional que revisa periódicamente si hay publicaciones con lote fallido
+// (sin-boton / sin-grupos) del día y crea reintentos en la cuenta alternativa.
+// Solo actúa si agenda.lote_retry está habilitado y el modo de cuentas es 'alternado'.
+// Intervalo: 30 min. La función interna valida inactividad de 1h, breaker y tope.
+let loteRetryTimer = null;
+let loteRetryLastResult = null;
+
+const LOTE_RETRY_INTERVAL_MS = 30 * 60 * 1000;
+
+function loteRetryIntervalMs() {
+  return LOTE_RETRY_INTERVAL_MS;
+}
+
+export async function runLoteRetryTick() {
+  const res = await retryLotesFallidosDelDia();
+  loteRetryLastResult = res;
+  return res;
+}
+
+export function startLoteRetryScheduler() {
+  if (loteRetryTimer) {
+    console.log('[lote-retry] scheduler ya estaba activo');
+    return loteRetrySchedulerState();
+  }
+  loteRetryTimer = setInterval(() => {
+    runLoteRetryTick().catch((err) => {
+      console.error('[lote-retry] error en tick:', err.message);
+      loteRetryLastResult = { skipped: true, error: err.message.slice(0, 200) };
+    });
+  }, loteRetryIntervalMs());
+  loteRetryTimer.unref?.();
+  console.log(`[lote-retry] scheduler activo cada ${Math.round(loteRetryIntervalMs() / 60000)} min`);
+  return loteRetrySchedulerState();
+}
+
+export function stopLoteRetryScheduler() {
+  if (loteRetryTimer) {
+    clearInterval(loteRetryTimer);
+    loteRetryTimer = null;
+  }
+  return loteRetrySchedulerState();
+}
+
+export function loteRetrySchedulerState() {
+  return {
+    active: Boolean(loteRetryTimer),
+    interval_ms: loteRetryIntervalMs(),
+    last_result: loteRetryLastResult,
+  };
 }
