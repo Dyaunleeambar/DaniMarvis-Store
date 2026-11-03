@@ -760,6 +760,255 @@ tr:hover td { background: rgba(201,132,122,.03); }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   IMPORT / SYNC — nueva distribución de 3 áreas (carrusel inferior + 2 listas)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.import-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+/* Área superior: 2/3 del alto, dos columnas iguales */
+.import-top {
+  display: flex;
+  gap: 10px;
+  flex: 2;
+  min-height: 0;
+}
+
+.import-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.import-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+}
+
+.import-panel-header span:first-child {
+  font-weight: 600;
+  font-size: .85rem;
+  color: var(--text);
+}
+
+/* Listas: scrollables */
+.import-list-left,
+.import-list-right {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  min-height: 0;
+}
+
+/* Tarjeta izquierda (procesado, resumida) */
+.import-card-left {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  font-size: .78rem;
+  cursor: default;
+  transition: border-color .15s, box-shadow .15s;
+}
+
+.import-card-left.linked-active {
+  border-color: var(--rose);
+  box-shadow: 0 0 0 2px rgba(201,132,122,.2);
+}
+
+.import-card-left:hover {
+  border-color: var(--border);
+}
+
+/* Tarjeta derecha (catálogo proveedor) */
+.import-card-right {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  cursor: default;
+  transition: background .15s;
+}
+
+.import-card-right:hover {
+  background: #faf7f5;
+}
+
+/* Filtros de la lista derecha */
+.import-filters-right {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+/* ── Carrusel inferior (1/3 del alto) ────────────────────────────────── */
+.import-carousel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.carousel-viewport {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.carousel-track {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+  padding: 8px 10px;
+  gap: 8px;
+  min-height: 0;
+}
+
+.carousel-item {
+  flex: none;
+  width: 150px;
+  height: 150px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  scroll-snap-align: center;
+  scroll-snap-stop: always;
+  border-radius: var(--radius-sm);
+  border: 2px solid transparent;
+  background: var(--bg);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color .15s, transform .15s;
+}
+
+.carousel-item.active {
+  border-color: var(--rose);
+  transform: scale(1.05);
+  z-index: 2;
+}
+
+.carousel-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  flex-shrink: 0;
+}
+
+.carousel-caption {
+  font-size: .68rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+  padding: 0 4px;
+}
+
+.carousel-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: rgba(255,255,255,.85);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--text);
+  font-size: 1.1rem;
+  cursor: pointer;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(0,0,0,.15);
+}
+
+.carousel-arrow:hover {
+  background: #fff;
+  border-color: var(--rose);
+  color: var(--rose-dark);
+}
+
+.carousel-arrow.carousel-prev { left: 8px; }
+.carousel-arrow.carousel-next { right: 8px; }
+
+.carousel-counter {
+  font-size: .72rem;
+  color: var(--text-muted);
+  padding: 6px 10px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* ── Responsive: apilar en pantallas pequeñas ────────────────────────── */
+@media (max-width: 900px) {
+  .import-top {
+    flex-direction: column;
+    flex: 1;
+  }
+  .import-carousel {
+    flex: 0 0 auto;
+    height: 200px;
+  }
+}
+
+@media (max-width: 768px) {
+  .import-card-left,
+  .import-card-right {
+    font-size: .72rem;
+    padding: 6px 8px;
+  }
+  .carousel-item {
+    width: 120px;
+    height: 120px;
+  }
+  .import-filters-right {
+    gap: 6px;
+  }
+  .import-filters-right .form-control--small {
+    min-width: 120px;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    AGENDA — reemplaza al grid de tarjetas y a la "Cola de Publicaciones".
    Inspirado en Meta Business Suite: columnas de día, eventos colocados por
    hora, y un panel de detalle con el desglose de destinos.
