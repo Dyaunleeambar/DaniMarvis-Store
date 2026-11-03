@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, renameSync } from 'fs';
 import { v4 as uuid } from 'uuid';
 import { initDB, getDB, verifyToken, listTables, saveDB, getAuthSecret, verifyPassword, signToken, hashPassword, isLegacyPlaintext } from './db/database.js';
 import { mergePublishConfig, MASCARA, pareceSecretoValido } from './lib/settingsMerge.js';
-import { rescheduleGroupPublish, groupPublishSchedulerState, startGroupPublishScheduler, stopGroupPublishScheduler, startAgendaScheduler, rescheduleAgenda, agendaSchedulerState } from './lib/groupPublisher/index.js';
+import { rescheduleGroupPublish, groupPublishSchedulerState, startGroupPublishScheduler, stopGroupPublishScheduler, startAgendaScheduler, rescheduleAgenda, agendaSchedulerState, startLoteRetryScheduler, stopLoteRetryScheduler, loteRetrySchedulerState } from './lib/groupPublisher/index.js';
 import { ensureWebp } from './lib/imageUtils.js';
 import { ingresosPorComisiones } from './lib/ingresos.js';
 import { generateCatalogFile } from './lib/catalogGenerator.js';
@@ -546,6 +546,12 @@ async function start() {
   // interruptor (por defecto encendido). Evencia si auto=false se limita a
   // tener el timer armado mirando la cola sin publicar nada.
   startAgendaScheduler();
+
+  // Reintento opcional de lotes fallidos al final del día. Solo actúa si
+  // agenda.lote_retry está habilitado (default false) y el modo de cuentas es
+  // 'alternado'. Revisa cada 30 min si hay publicaciones con lote sin-boton /
+  // sin-grupos y crea reintentos en la cuenta alternativa.
+  startLoteRetryScheduler();
 }
 
 start();
