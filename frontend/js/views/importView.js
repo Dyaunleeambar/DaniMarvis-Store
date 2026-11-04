@@ -1,5 +1,6 @@
 import { api } from '../db/api.js';
-import { showToast, openModal } from '../core/app.js';
+import { showToast, openModal, confirmDialog, refreshSidebarCounts } from '../core/app.js';
+import { invalidateProductsCache } from '../services/index.js';
 import { openProductForm } from './productsView.js';
 
 function escHtml(str) {
@@ -21,6 +22,8 @@ function suggestName(text) {
 function updateEyeIcon(btn, visible) {
   btn.innerHTML = visible ? EYE_OPEN : EYE_CLOSED;
   btn.title = visible ? 'Visible en catálogo. Clic para ocultar.' : 'Oculto del catálogo. Clic para mostrar.';
+  btn.setAttribute('aria-label', visible ? 'Ocultar del catálogo' : 'Mostrar en catálogo');
+  btn.setAttribute('aria-pressed', String(visible));
   btn.style.color = visible ? 'var(--success)' : 'var(--text-muted)';
 }
 
@@ -37,13 +40,20 @@ function getProviderFolder(providerName) {
 }
 
 export async function renderImport(container) {
+  const appShell = document.getElementById('app-shell');
+  appShell?.classList.remove('import-focus');
   container.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-secondary)">Cargando...</div>';
+  let cleanupForm = () => {};
   try {
     const providers = await api.getProviders();
-    renderForm(container, providers);
+    cleanupForm = renderForm(container, providers);
   } catch (err) {
     container.innerHTML = `<div class="empty-state"><h3>Error</h3><p>${escHtml(err.message)}</p></div>`;
   }
+  return () => {
+    cleanupForm();
+    appShell?.classList.remove('import-focus');
+  };
 }
 
 function renderForm(container, providers) {
@@ -55,7 +65,7 @@ function renderForm(container, providers) {
   let busy = false;
 
   container.innerHTML = `
-    <div class="page">
+    <div class="page import-page">
       <div class="page-header">
         <div>
           <h1>Importar / Sincronizar</h1>
@@ -63,35 +73,35 @@ function renderForm(container, providers) {
         </div>
       </div>
 
-      <div class="card" style="padding:20px;max-width:760px">
-        <h3 style="margin:0 0 4px;font-size:1rem">Lista del proveedor</h3>
-        <p style="margin:0 0 16px;font-size:.8rem;color:var(--text-secondary)">
+      <div class="card import-config" style="padding:20px;max-width:760px">
+        <h3 class="import-config-title" style="margin:0 0 4px;font-size:1rem">Lista del proveedor</h3>
+        <p class="import-instructions" style="margin:0 0 16px;font-size:.8rem;color:var(--text-secondary)">
           1) Elegí el proveedor y la carpeta donde guardaste las imágenes (una por producto).<br />
           2) El sistema lee cada imagen (nombre + precio USD) y propone el producto y el precio.<br />
-          3) Revisá, corregís si hace falta y aplicás: actualiza precio, define si el producto está visible en el catálogo y elimina de la carpeta las imágenes ya aplicadas. Con el botón <b>+</b> creás un producto nuevo directamente desde la imagen.
+          3) Revisá, corregís si hace falta y aplicás: actualiza precio, define si el producto está visible en el catálogo y elimina de la carpeta las imágenes ya aplicadas. También podés eliminar imágenes individuales desde el carrusel. Con el botón <b>+</b> creás un producto nuevo directamente desde la imagen.
         </p>
-        <div style="display:flex;flex-direction:column;gap:12px">
-          <div>
+        <div class="import-config-fields" style="display:flex;flex-direction:column;gap:12px">
+          <div class="import-config-field">
             <label style="font-size:.82rem;color:var(--text-secondary);display:block;margin-bottom:4px">Proveedor</label>
             <select id="imp-provider" class="form-control">
               ${providers.map(p => `<option value="${p.id}" ${p.id === providerId ? 'selected' : ''}>${escHtml(p.name)}</option>`).join('')}
             </select>
           </div>
-          <div>
+          <div class="import-config-field">
             <label style="font-size:.82rem;color:var(--text-secondary);display:block;margin-bottom:4px">Carpeta con las imágenes</label>
             <input type="text" id="imp-folder" class="form-control" value="${escHtml(folder)}" />
           </div>
-          <div>
+          <div class="import-config-field import-engine-field">
             <label style="font-size:.82rem;color:var(--text-secondary);display:block;margin-bottom:4px">Motor de lectura</label>
             <select id="imp-engine" class="form-control">
               <option value="local" ${engine === 'local' ? 'selected' : ''}>Local (OCR, sin internet)</option>
               <option value="vision" ${engine === 'vision' ? 'selected' : ''}>IA · visión (varios productos por imagen)</option>
             </select>
-            <p style="margin:4px 0 0;font-size:.72rem;color:var(--text-muted)">
+            <p class="import-engine-note" style="margin:4px 0 0;font-size:.72rem;color:var(--text-muted)">
               IA usa la API de Ajustes &gt; Publicaciones y necesita un modelo con visión. Es más preciso y detecta varios productos en una misma foto.
             </p>
           </div>
-          <div style="display:flex;align-items:center;gap:10px">
+          <div class="import-config-actions" style="display:flex;align-items:center;gap:10px">
             <button class="btn btn--primary" id="imp-analyze">Analizar imágenes</button>
             <span id="imp-status" style="font-size:.78rem;color:var(--text-muted)"></span>
           </div>
@@ -102,9 +112,52 @@ function renderForm(container, providers) {
     </div>
   `;
 
+  const appShell = document.getElementById('app-shell');
+  const importPage = container.querySelector('.import-page');
+  const topbarActions = document.querySelector('.topbar-actions');
+  const storeLink = topbarActions?.querySelector('a[title="Ver tienda"]');
+  const focusToggle = document.createElement('button');
+  focusToggle.id = 'imp-focus-toggle';
+  focusToggle.type = 'button';
+  focusToggle.className = 'btn btn--sm btn--ghost import-focus-toggle';
+  focusToggle.setAttribute('aria-pressed', 'false');
+  focusToggle.title = 'Maximizar el área de trabajo';
+  focusToggle.setAttribute('aria-label', 'Maximizar el área de trabajo');
+  focusToggle.innerHTML = '<span class="import-focus-icon" aria-hidden="true"></span>';
+  if (storeLink) storeLink.insertAdjacentElement('afterend', focusToggle);
+  else topbarActions?.append(focusToggle);
+  const focusIcon = focusToggle.querySelector('.import-focus-icon');
+  function setImportFocusMode(focused) {
+    appShell?.classList.toggle('import-focus', focused);
+    importPage.classList.toggle('import-page--focused', focused);
+    focusToggle.setAttribute('aria-pressed', String(focused));
+    focusToggle.title = focused ? 'Restaurar vista normal' : 'Maximizar el área de trabajo';
+    focusToggle.setAttribute('aria-label', focused ? 'Minimizar área de trabajo' : 'Maximizar área de trabajo');
+    focusIcon.innerHTML = focused
+      ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>'
+      : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
+    appShell?.querySelectorAll('.sidebar-link').forEach(link => {
+      const label = link.querySelector('.sidebar-link-label')?.textContent.trim()
+        || [...link.childNodes].filter(node => node.nodeType === Node.TEXT_NODE).map(node => node.textContent.trim()).join(' ');
+      if (focused) {
+        link.title = label;
+        link.setAttribute('aria-label', label);
+      } else {
+        link.removeAttribute('title');
+        link.removeAttribute('aria-label');
+      }
+    });
+  }
+  setImportFocusMode(false);
+  focusToggle.addEventListener('click', () => {
+    setImportFocusMode(focusToggle.getAttribute('aria-pressed') !== 'true');
+  });
+
   document.getElementById('imp-provider').addEventListener('change', (e) => {
     providerId = e.target.value;
     localStorage.setItem(PROVIDER_KEY, providerId);
+    document.getElementById('imp-results').innerHTML = '';
+    importPage.classList.remove('import-page--active');
     const prov = providers.find(p => p.id === providerId);
     if (prov) {
       const folderInput = document.getElementById('imp-folder');
@@ -129,9 +182,26 @@ function renderForm(container, providers) {
       : 'Analizando imágenes (OCR)... puede tardar un poco';
     try {
       const data = await api.importAnalyze({ folder: folderVal, provider_id: providerId, engine: engineVal });
+      const [categoriesResult, productsResult] = await Promise.allSettled([
+        api.getCategories(),
+        api.getProducts(),
+      ]);
+      const categories = categoriesResult.status === 'fulfilled' && Array.isArray(categoriesResult.value)
+        ? categoriesResult.value
+        : [];
+      const projectProducts = productsResult.status === 'fulfilled' && Array.isArray(productsResult.value)
+        ? productsResult.value
+        : [];
+      const auxiliaryErrors = [categoriesResult, productsResult]
+        .filter(result => result.status === 'rejected')
+        .map(result => result.reason?.message)
+        .filter(Boolean);
       analyzeResult = data;
       status.textContent = '';
-      renderResults(container, data);
+      renderResults(container, data, categories, projectProducts);
+      if (auxiliaryErrors.length) {
+        showToast(`El análisis terminó, pero no se pudieron actualizar todos los filtros: ${auxiliaryErrors.join('; ')}`, 'warning');
+      }
     } catch (err) {
       status.textContent = '';
       showToast(err.message, 'error');
@@ -140,9 +210,13 @@ function renderForm(container, providers) {
       btn.disabled = false;
     }
   });
+  return () => {
+    setImportFocusMode(false);
+    focusToggle.remove();
+  };
 }
 
-function renderResults(container, data) {
+function renderResults(container, data, registeredCategories = [], projectProducts = []) {
   const results = document.getElementById('imp-results');
   if (!results) return;
   if (data.message) {
@@ -150,31 +224,55 @@ function renderResults(container, data) {
     return;
   }
 
-  const categories = [...new Set(data.products.map(p => p.category).filter(Boolean))].sort();
+  let categories = [...new Set([
+    ...registeredCategories.map(category => typeof category === 'string' ? category : category.name),
+    ...projectProducts.map(product => product.category),
+    ...data.products.map(product => product.category),
+  ].filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+
+  const rawImages = [...new Map(data.items
+    .filter(i => i.filename && i.url)
+    .map(i => [i.filename, { filename: i.filename, url: i.url }])).values()];
 
   // Estado de selección de imagen activa en el carrusel
   let activeImgIndex = 0;
 
-  // ---------- CARRUSEL INFERIOR (imágenes crudas) ----------
-  const validItems = data.items.filter(i => i.filename && !i.error);
+  // ---------- CARRUSEL INFERIOR (imágenes originales pendientes) ----------
+  const validItems = data.items.filter(i => i.filename);
   const carouselHtml = `
     <div class="import-carousel">
-      <button type="button" class="carousel-arrow carousel-prev" aria-label="Imagen anterior">&#9664;</button>
-      <div class="carousel-track" id="carousel-track">
-        ${validItems.map((it, idx) => `
-          <div class="carousel-item${idx === activeImgIndex ? ' active' : ''}" data-idx="${idx}">
-            <img src="${escHtml(it.url)}" alt="${escHtml(it.filename)}" loading="lazy" />
-            <div class="carousel-caption">${escHtml(it.filename)}</div>
-          </div>
-        `).join('')}
+      <div class="carousel-viewport">
+        <button type="button" class="carousel-arrow carousel-prev" aria-label="Imagen anterior" ${rawImages.length < 2 ? 'disabled' : ''}>&#9664;</button>
+        <div class="carousel-track" id="carousel-track" tabindex="0" aria-label="Imágenes originales pendientes">
+          ${rawImages.length ? rawImages.map((image, idx) => `
+            <div class="carousel-item${idx === activeImgIndex ? ' active' : ''}" data-idx="${idx}">
+              <img src="${escHtml(image.url)}" alt="${escHtml(image.filename)}" loading="lazy" />
+              <div class="carousel-caption">${escHtml(image.filename)}</div>
+              <button type="button" class="carousel-remove" data-idx="${idx}" title="Eliminar imagen tratada" aria-label="Eliminar ${escAttr(image.filename)} del disco">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              </button>
+            </div>
+          `).join('') : '<div class="carousel-empty">No quedan imágenes pendientes en la carpeta.</div>'}
+        </div>
+        <button type="button" class="carousel-arrow carousel-next" aria-label="Imagen siguiente" ${rawImages.length < 2 ? 'disabled' : ''}>&#9654;</button>
       </div>
-      <button type="button" class="carousel-arrow carousel-next" aria-label="Imagen siguiente">&#9654;</button>
-      <div class="carousel-counter" id="carousel-counter">${activeImgIndex + 1} / ${validItems.length}</div>
+      <div class="carousel-counter" id="carousel-counter">${rawImages.length ? activeImgIndex + 1 : 0} / ${rawImages.length}</div>
     </div>
   `;
 
   // ---------- LISTA IZQUIERDA (procesados, resumida) ----------
   const itemsHtml = validItems.map((it, i) => {
+    if (it.error) {
+      return `
+        <div class="import-card-left import-card-error" data-idx="${i}" data-error="1">
+          ${it.url ? `<img class="import-result-thumb" src="${escAttr(it.url)}" alt="" loading="lazy" />` : ''}
+          <div class="import-card-details">
+            <div style="font-size:.78rem;color:var(--text-secondary);word-break:break-all">${escHtml(it.filename)}</div>
+            <div style="font-size:.78rem;color:var(--error);margin-top:4px">No se pudo analizar esta imagen: ${escHtml(it.error)}</div>
+          </div>
+        </div>
+      `;
+    }
     const matchProduct = it.product ? data.products.find(p => p.id === it.product.id) : null;
     const defaultCat = matchProduct?.category || '';
     const initialPool = defaultCat ? data.products.filter(p => p.category === defaultCat) : data.products;
@@ -188,7 +286,9 @@ function renderResults(container, data) {
     const priceVal = it.detected_price ? it.detected_price.value : (it.product ? it.product.current_price : '');
     const checked = it.product ? 'checked' : '';
     return `
-      <div class="import-card-left" data-idx="${i}" data-visible="${it.product && !it.product.visible ? '0' : '1'}" data-img-idx="${i}">
+      <div class="import-card-left" data-idx="${i}" data-visible="${it.product && !it.product.visible ? '0' : '1'}">
+        <img class="import-result-thumb" src="${escHtml(it.url || '')}" alt="" loading="lazy" />
+        <div class="import-card-details">
         <div style="display:flex;align-items:center;gap:6px;font-size:.8rem;flex-wrap:wrap">
           <label style="display:flex;align-items:center;gap:5px;font-size:.78rem;cursor:pointer">
             <input type="checkbox" class="imp-apply" ${checked} /> Aplicar
@@ -221,38 +321,68 @@ function renderResults(container, data) {
           <summary style="cursor:pointer">${it.origen === 'vision' ? 'Respuesta IA' : 'Texto OCR'}</summary>
           <pre style="white-space:pre-wrap;font-family:inherit;margin:4px 0 0;max-height:80px;overflow:auto">${escHtml(it.text || '—')}</pre>
         </details>
+        </div>
       </div>
     `;
   }).join('');
 
   // ---------- LISTA DERECHA (catálogo del proveedor) ----------
   const providerProducts = data.products;
-  const rightListHtml = providerProducts.map(p => {
+  function renderProviderProductCard(p) {
     const visible = p.catalog_visible !== 0;
+    const image = p.images?.[0];
     return `
       <div class="import-card-right" data-pid="${p.id}" data-cat="${escAttr(p.category || '')}" data-visible="${visible ? '1' : '0'}">
+        ${image
+          ? `<img class="import-product-thumb" src="${escAttr(image)}" alt="" loading="lazy" />`
+          : '<div class="import-product-thumb import-product-thumb--empty" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg></div>'}
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
           <div style="flex:1;min-width:0">
             <div style="font-size:.8rem;font-weight:600">${escHtml(p.name)}</div>
             <div style="font-size:.72rem;color:var(--text-muted)">$${Number(p.price).toLocaleString('es-CO')} · ${p.category || 'sin categoría'} · stock ${p.stock}</div>
           </div>
-          <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+          <div class="import-product-actions">
             <button type="button" class="btn btn--sm btn--ghost imp-eye-right" title="${visible ? 'Ocultar del catálogo' : 'Mostrar en catálogo'}" style="padding:3px 6px;"></button>
-            <span style="font-size:.7rem;padding:2px 6px;border-radius:10px;background:${visible ? 'rgba(37,211,102,.15)' : 'rgba(184,134,11,.15)'};color:${visible ? '#1da851' : '#b8860b'}">${visible ? 'Visible' : 'Oculto'}</span>
+            <button type="button" class="btn btn--sm btn--ghost imp-product-action" data-action="edit" title="Editar producto" aria-label="Editar producto">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+            <button type="button" class="btn btn--sm btn--ghost imp-product-action" data-action="duplicate" title="Duplicar producto" aria-label="Duplicar producto">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+            <button type="button" class="btn btn--sm btn--ghost imp-product-action" data-action="delete" title="Eliminar producto" aria-label="Eliminar producto" style="color:var(--error)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            </button>
           </div>
         </div>
       </div>
     `;
-  }).join('');
-
+  }
   results.innerHTML = `
+    <div class="import-actions-bar">
+      <div class="import-bulk-actions">
+        <label style="display:flex;align-items:center;gap:5px;font-size:.82rem;cursor:pointer">
+          <input type="checkbox" id="imp-toggle-all" checked /> Marcar / desmarcar todos
+        </label>
+        <div class="import-summary" style="font-size:.85rem;color:var(--text-secondary)">
+          Proveedor: <b>${escHtml(data.provider)}</b> · ${rawImages.length} imagen(es) · ${data.items.filter(i => !i.error).length} producto(s) detectado(s)
+        </div>
+        <label style="display:flex;align-items:center;gap:6px;font-size:.82rem;cursor:pointer">
+          <input type="checkbox" id="imp-hide-absent" /> Ocultar productos del proveedor que no aparecen
+        </label>
+      </div>
+      <div class="import-apply-actions">
+        <button class="btn btn--primary" id="imp-apply">Aplicar seleccionados</button>
+        <span id="imp-apply-status" style="font-size:.8rem;color:var(--text-muted)"></span>
+      </div>
+      <div id="imp-apply-summary" class="import-apply-summary"></div>
+    </div>
     <div class="import-layout">
       <!-- Área superior: dos columnas iguales (2/3 del alto) -->
       <div class="import-top">
         <div class="import-panel import-left">
           <div class="import-panel-header">
             <span style="font-weight:600">Productos analizados</span>
-            <span style="font-size:.72rem;color:var(--text-muted);margin-left:auto">${validItems.length} imagen(es)</span>
+            <span style="font-size:.72rem;color:var(--text-muted);margin-left:auto">${rawImages.length} imagen(es)</span>
           </div>
           <div class="import-list-left" id="import-list-left">
             ${itemsHtml}
@@ -275,7 +405,6 @@ function renderResults(container, data) {
             <input type="text" class="import-filter-search form-control form-control--small" style="max-width:160px" placeholder="Buscar producto..." title="Buscar por nombre" />
           </div>
           <div class="import-list-right" id="import-list-right">
-            ${rightListHtml}
           </div>
         </div>
       </div>
@@ -284,25 +413,8 @@ function renderResults(container, data) {
       ${carouselHtml}
     </div>
 
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;flex-wrap:wrap;gap:8px">
-      <div style="display:flex;align-items:center;gap:14px">
-        <label style="display:flex;align-items:center;gap:5px;font-size:.82rem;cursor:pointer">
-          <input type="checkbox" id="imp-toggle-all" checked /> Marcar / desmarcar todos
-        </label>
-        <div style="font-size:.85rem;color:var(--text-secondary)">
-          Proveedor: <b>${escHtml(data.provider)}</b> · ${validItems.length} imagen(es) · ${data.items.filter(i => !i.error).length} producto(s) detectado(s)
-        </div>
-      </div>
-      <label style="display:flex;align-items:center;gap:6px;font-size:.82rem;cursor:pointer">
-        <input type="checkbox" id="imp-hide-absent" /> Ocultar productos del proveedor que no aparecen
-      </label>
-    </div>
-    <div style="display:flex;gap:10px;margin-top:12px">
-      <button class="btn btn--primary" id="imp-apply">Aplicar seleccionados</button>
-      <span id="imp-apply-status" style="font-size:.8rem;color:var(--text-muted)"></span>
-    </div>
-    <div id="imp-apply-summary" style="margin-top:12px"></div>
   `;
+  document.querySelector('.import-page')?.classList.add('import-page--active');
 
   // ---------- CARRUSEL: navegación ----------
   const track = document.getElementById('carousel-track');
@@ -311,53 +423,90 @@ function renderResults(container, data) {
   const btnNext = results.querySelector('.carousel-next');
 
   function renderCarousel() {
-    track.innerHTML = validItems.map((it, idx) => `
+    track.innerHTML = rawImages.length ? rawImages.map((image, idx) => `
       <div class="carousel-item${idx === activeImgIndex ? ' active' : ''}" data-idx="${idx}">
-        <img src="${escHtml(it.url)}" alt="${escHtml(it.filename)}" loading="lazy" />
-        <div class="carousel-caption">${escHtml(it.filename)}</div>
+        <img src="${escHtml(image.url)}" alt="${escHtml(image.filename)}" loading="lazy" />
+        <div class="carousel-caption">${escHtml(image.filename)}</div>
+        <button type="button" class="carousel-remove" data-idx="${idx}" title="Eliminar imagen tratada" aria-label="Eliminar ${escAttr(image.filename)} del disco">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        </button>
       </div>
-    `).join('');
-    counter.textContent = `${activeImgIndex + 1} / ${validItems.length}`;
-    // Resaltar item correspondiente en lista izquierda
-    results.querySelectorAll('.import-card-left').forEach(card => {
-      const imgIdx = Number(card.dataset.imgIdx);
-      card.classList.toggle('linked-active', imgIdx === activeImgIndex);
-    });
+    `).join('') : '<div class="carousel-empty">No quedan imágenes pendientes en la carpeta.</div>';
+    counter.textContent = `${rawImages.length ? activeImgIndex + 1 : 0} / ${rawImages.length}`;
+    btnPrev.disabled = btnNext.disabled = rawImages.length < 2;
   }
-
-  btnPrev.addEventListener('click', () => {
-    activeImgIndex = (activeImgIndex - 1 + validItems.length) % validItems.length;
-    renderCarousel();
-    scrollCarouselToActive();
-  });
-
-  btnNext.addEventListener('click', () => {
-    activeImgIndex = (activeImgIndex + 1) % validItems.length;
-    renderCarousel();
-    scrollCarouselToActive();
-  });
 
   function scrollCarouselToActive() {
     const activeEl = track.querySelector('.carousel-item.active');
-    if (activeEl) activeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    if (activeEl) {
+      track.scrollTo({
+        left: activeEl.offsetLeft - (track.clientWidth - activeEl.offsetWidth) / 2,
+        behavior: 'smooth',
+      });
+    }
   }
 
-  // Teclado: flechas izquierda/derecha
-  results.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowLeft') { e.preventDefault(); activeImgIndex = (activeImgIndex - 1 + validItems.length) % validItems.length; renderCarousel(); scrollCarouselToActive(); }
-    if (e.key === 'ArrowRight') { e.preventDefault(); activeImgIndex = (activeImgIndex + 1) % validItems.length; renderCarousel(); scrollCarouselToActive(); }
-  });
-  results.setAttribute('tabindex', '0');
+  function selectImage(index) {
+    if (!rawImages.length) return;
+    activeImgIndex = (index + rawImages.length) % rawImages.length;
+    renderCarousel();
+    scrollCarouselToActive();
+  }
 
-  // Clic en imagen del carrusel: abre vista previa y marca como activa
+  async function discardCarouselImage(index, button) {
+    const image = rawImages[index];
+    if (!image) return;
+    const ok = await confirmDialog(`¿Eliminar "${escHtml(image.filename)}" de la carpeta de imágenes?`);
+    if (!ok) return;
+    button.disabled = true;
+    try {
+      await api.importDiscardImage({
+        folder: document.getElementById('imp-folder').value.trim(),
+        filename: image.filename,
+      });
+      results.querySelectorAll('.import-card-left').forEach(card => {
+        if (validItems[Number(card.dataset.idx)]?.filename === image.filename) card.remove();
+      });
+      rawImages.splice(index, 1);
+      if (activeImgIndex > index) activeImgIndex--;
+      else if (activeImgIndex >= rawImages.length) activeImgIndex = Math.max(0, rawImages.length - 1);
+      renderCarousel();
+      scrollCarouselToActive();
+      showToast('Imagen eliminada de la carpeta', 'success');
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  btnPrev.addEventListener('click', () => {
+    selectImage(activeImgIndex - 1);
+  });
+
+  btnNext.addEventListener('click', () => {
+    selectImage(activeImgIndex + 1);
+  });
+
+  track.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft') { e.preventDefault(); selectImage(activeImgIndex - 1); }
+    if (e.key === 'ArrowRight') { e.preventDefault(); selectImage(activeImgIndex + 1); }
+  });
+
+  // La navegación del carrusel es independiente de las listas de productos.
   track.addEventListener('click', (e) => {
+    const removeButton = e.target.closest('.carousel-remove');
+    if (removeButton) {
+      e.stopPropagation();
+      discardCarouselImage(Number(removeButton.dataset.idx), removeButton);
+      return;
+    }
     const item = e.target.closest('.carousel-item');
     if (!item) return;
     const idx = Number(item.dataset.idx);
-    const it = validItems[idx];
-    activeImgIndex = idx;
-    renderCarousel();
-    scrollCarouselToActive();
+    const image = rawImages[idx];
+    if (!image) return;
+    selectImage(idx);
     // Vista previa ampliada
     const mc = document.querySelector('.modal-content');
     if (mc) { mc.style.maxWidth = '90vw'; mc.style.maxHeight = '90vh'; }
@@ -369,7 +518,7 @@ function renderResults(container, data) {
         </button>
       </div>
       <div style="display:flex;justify-content:center;padding:8px 0 0">
-        <img src="${escHtml(it.url)}" alt="" style="max-width:100%;max-height:80vh;border-radius:8px;object-fit:contain" />
+        <img src="${escHtml(image.url)}" alt="" style="max-width:100%;max-height:80vh;border-radius:8px;object-fit:contain" />
       </div>
     `);
   });
@@ -386,30 +535,57 @@ function renderResults(container, data) {
       : 'actual: —';
   }
 
+  function renderCardOptions(card) {
+    const catSel = card.querySelector('.imp-filter-cat');
+    const select = card.querySelector('.imp-product');
+    if (!catSel || !select) return;
+    const currentVal = select.value;
+    const pool = data.products.filter(p => !catSel.value || p.category === catSel.value);
+    let html = '<option value="">— Sin producto —</option>';
+    for (const p of pool) {
+      html += `<option value="${p.id}" ${p.id === currentVal ? 'selected' : ''}>${escHtml(p.name)}</option>`;
+    }
+    if (currentVal) {
+      const kept = data.products.find(p => p.id === currentVal);
+      if (kept && !pool.some(p => p.id === currentVal)) {
+        html += `<option value="${currentVal}" selected>${escHtml(kept.name)}</option>`;
+      }
+    }
+    select.innerHTML = html;
+  }
+
+  async function refreshCategories() {
+    const [registered, allProducts] = await Promise.all([api.getCategories(), api.getProducts()]);
+    categories = [...new Set([
+      ...registered.map(category => typeof category === 'string' ? category : category.name),
+      ...allProducts.map(product => product.category),
+      ...data.products.map(product => product.category),
+    ].filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+
+    const rightValue = filterCatRight.value;
+    filterCatRight.innerHTML = `<option value="">Todas las categorías</option>${categories.map(category =>
+      `<option value="${escAttr(category)}">${escHtml(category)}</option>`
+    ).join('')}`;
+    if (categories.includes(rightValue)) filterCatRight.value = rightValue;
+
+    results.querySelectorAll('.import-card-left').forEach(card => {
+      const catSelect = card.querySelector('.imp-filter-cat');
+      const currentCategory = catSelect.value;
+      catSelect.innerHTML = `<option value="">Todas</option>${categories.map(category =>
+        `<option value="${escAttr(category)}">${escHtml(category)}</option>`
+      ).join('')}`;
+      if (categories.includes(currentCategory)) catSelect.value = currentCategory;
+      renderCardOptions(card);
+      updateCurrentPrice(card);
+    });
+    renderRightList();
+  }
+
   results.querySelectorAll('.import-card-left').forEach(card => {
+    if (card.dataset.error === '1') return;
     const catSel = card.querySelector('.imp-filter-cat');
     if (!catSel) return;
-    function renderCardOptions() {
-      const cat = catSel.value;
-      const select = card.querySelector('.imp-product');
-      const currentVal = select.value;
-      const pool = data.products.filter(p => {
-        if (cat && p.category !== cat) return false;
-        return true;
-      });
-      let html = '<option value="">— Sin producto —</option>';
-      for (const p of pool) {
-        html += `<option value="${p.id}" ${p.id === currentVal ? 'selected' : ''}>${escHtml(p.name)}</option>`;
-      }
-      if (currentVal) {
-        const kept = data.products.find(p => p.id === currentVal);
-        if (kept && !pool.some(p => p.id === currentVal)) {
-          html += `<option value="${currentVal}" selected>${escHtml(kept.name)}</option>`;
-        }
-      }
-      select.innerHTML = html;
-    }
-    catSel.addEventListener('change', renderCardOptions);
+    catSel.addEventListener('change', () => renderCardOptions(card));
     const prodSel = card.querySelector('.imp-product');
     prodSel.addEventListener('change', () => updateCurrentPrice(card));
     updateCurrentPrice(card);
@@ -451,6 +627,7 @@ function renderResults(container, data) {
             updateCurrentPrice(card);
             const apply = card.querySelector('.imp-apply');
             if (apply && !apply.checked) apply.checked = true;
+            await refreshCategories();
           },
         });
       } catch (err) {
@@ -474,35 +651,78 @@ function renderResults(container, data) {
       if (vis && String(p.catalog_visible) !== vis) return false;
       if (search && !p.name.toLowerCase().includes(search)) return false;
       return true;
-    }).map(p => {
-      const visible = p.catalog_visible !== 0;
-      return `
-        <div class="import-card-right" data-pid="${p.id}" data-cat="${escAttr(p.category || '')}" data-visible="${visible ? '1' : '0'}">
-          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-            <div style="flex:1;min-width:0">
-              <div style="font-size:.8rem;font-weight:600">${escHtml(p.name)}</div>
-              <div style="font-size:.72rem;color:var(--text-muted)">$${Number(p.price).toLocaleString('es-CO')} · ${p.category || 'sin categoría'} · stock ${p.stock}</div>
-            </div>
-            <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
-              <button type="button" class="btn btn--sm btn--ghost imp-eye-right" title="${visible ? 'Ocultar del catálogo' : 'Mostrar en catálogo'}" style="padding:3px 6px;"></button>
-              <span style="font-size:.7rem;padding:2px 6px;border-radius:10px;background:${visible ? 'rgba(37,211,102,.15)' : 'rgba(184,134,11,.15)'};color:${visible ? '#1da851' : '#b8860b'}">${visible ? 'Visible' : 'Oculto'}</span>
-            </div>
-          </div>
-        </div>
-      `;
-    }).join('');
+    }).map(renderProviderProductCard).join('');
     listRight.innerHTML = html;
     listRight.querySelectorAll('.imp-eye-right').forEach(btn => {
       const card = btn.closest('.import-card-right');
       const visible = card.dataset.visible !== '0';
       updateEyeIcon(btn, visible);
-      btn.addEventListener('click', () => {
-        card.dataset.visible = card.dataset.visible === '0' ? '1' : '0';
-        const newVisible = card.dataset.visible !== '0';
-        updateEyeIcon(btn, newVisible);
-        // Actualizar en data.products también
-        const p = providerProducts.find(pr => pr.id === card.dataset.pid);
-        if (p) p.catalog_visible = newVisible ? 1 : 0;
+      btn.addEventListener('click', async () => {
+        const product = providerProducts.find(item => item.id === card.dataset.pid);
+        if (!product) return;
+        btn.disabled = true;
+        try {
+          const response = await api.toggleVisibility(product.id);
+          product.catalog_visible = response.catalog_visible;
+          if (!product.catalog_visible) product.stock = 0;
+          await invalidateProductsCache();
+          refreshSidebarCounts();
+          renderRightList();
+          showToast('Visibilidad actualizada', 'success');
+        } catch (err) {
+          showToast(err.message, 'error');
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+    listRight.querySelectorAll('.imp-product-action').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const card = btn.closest('.import-card-right');
+        const productId = card.dataset.pid;
+        const action = btn.dataset.action;
+        try {
+          if (action === 'delete') {
+            const ok = await confirmDialog('¿Eliminar este producto? Esta acción no se puede deshacer.');
+            if (!ok) return;
+            const response = await api.deleteProduct(productId);
+            const index = providerProducts.findIndex(product => product.id === productId);
+            if (index >= 0) providerProducts.splice(index, 1);
+            await invalidateProductsCache();
+            refreshSidebarCounts();
+            await refreshCategories();
+            showToast(response.message, 'success');
+            return;
+          }
+
+          const product = await api.getProduct(productId);
+          const saveOptions = {
+            onSaved: async (savedId) => {
+              const saved = await api.getProduct(savedId);
+              const index = providerProducts.findIndex(item => item.id === savedId);
+              if (saved.provider_id === document.getElementById('imp-provider').value) {
+                if (index >= 0) providerProducts[index] = saved;
+                else providerProducts.push(saved);
+              } else if (index >= 0) {
+                providerProducts.splice(index, 1);
+              }
+              await refreshCategories();
+            },
+            onCreated: async (createdId) => {
+              const created = await api.getProduct(createdId);
+              if (created.provider_id === document.getElementById('imp-provider').value
+                && !providerProducts.some(item => item.id === created.id)) {
+                providerProducts.push(created);
+                await refreshCategories();
+              }
+            },
+          };
+          await openProductForm(product, action === 'duplicate'
+            ? { ...saveOptions, isDuplicate: true }
+            : saveOptions);
+        } catch (err) {
+          showToast(err.message, 'error');
+        }
       });
     });
   }
@@ -510,6 +730,7 @@ function renderResults(container, data) {
   filterCatRight.addEventListener('change', renderRightList);
   filterVisRight.addEventListener('change', renderRightList);
   filterSearchRight.addEventListener('input', renderRightList);
+  renderRightList();
 
   // ---------- Toggle all ----------
   document.getElementById('imp-toggle-all').addEventListener('change', (e) => {
@@ -527,7 +748,7 @@ function renderResults(container, data) {
     const appliedCards = [];
     cards.forEach(card => {
       const apply = card.querySelector('.imp-apply');
-      if (!apply.checked) return;
+      if (!apply?.checked) return;
       const productId = card.querySelector('.imp-product').value;
       const price = card.querySelector('.imp-price').value;
       if (!productId) return;
@@ -554,14 +775,33 @@ function renderResults(container, data) {
       status.textContent = '';
       appliedCards.forEach(card => card.remove());
       renderSummary(document.getElementById('imp-apply-summary'), res);
+      for (const applied of res.applied) {
+        const product = providerProducts.find(item => item.id === applied.product_id);
+        if (product) {
+          product.price = applied.price;
+          product.catalog_visible = applied.visible ? 1 : 0;
+        }
+      }
+      for (const hidden of res.hidden || []) {
+        const product = providerProducts.find(item => item.id === hidden.id);
+        if (product) product.catalog_visible = 0;
+      }
+      await invalidateProductsCache();
+      refreshSidebarCounts();
+      renderRightList();
       const deletedNote = (res.deleted || []).length
         ? ` · ${res.deleted.length} imagen(es) eliminada(s) de la carpeta`
         : '';
       showToast(`${res.applied.length} producto(s) actualizado(s)${deletedNote}`, 'success');
-      // Refrescar carrusel si se eliminaron imágenes aplicadas
       if (res.deleted && res.deleted.length) {
-        // Volver a renderizar resultados para sincronizar carrusel con carpetas restantes
-        // (se asume que el servidor ya eliminó los archivos)
+        const activeFilename = rawImages[activeImgIndex]?.filename;
+        const deleted = new Set(res.deleted);
+        const remainingImages = rawImages.filter(image => !deleted.has(image.filename));
+        rawImages.splice(0, rawImages.length, ...remainingImages);
+        const newActiveIndex = rawImages.findIndex(image => image.filename === activeFilename);
+        activeImgIndex = newActiveIndex >= 0 ? newActiveIndex : Math.min(activeImgIndex, rawImages.length - 1);
+        if (activeImgIndex < 0) activeImgIndex = 0;
+        renderCarousel();
       }
     } catch (err) {
       status.textContent = '';

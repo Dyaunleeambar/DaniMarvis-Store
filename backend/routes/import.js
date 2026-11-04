@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { v4 as uuid } from 'uuid';
-import { existsSync, readdirSync, statSync, mkdirSync, copyFileSync, unlinkSync } from 'fs';
+import { existsSync, readdirSync, statSync, lstatSync, mkdirSync, copyFileSync, unlinkSync } from 'fs';
 import { join, dirname, extname, basename, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { getDB } from '../db/database.js';
@@ -118,8 +118,12 @@ router.post('/analyze', async (req, res) => {
   }
 
   const products = db.prepare(
-    'SELECT id, name, price, category, catalog_visible FROM products WHERE provider_id = ? ORDER BY name'
+    'SELECT id, name, price, category, catalog_visible, stock, images, image_url FROM products WHERE provider_id = ? ORDER BY name'
   ).all(provider_id);
+  for (const product of products) {
+    try { product.images = JSON.parse(product.images || '[]'); } catch { product.images = []; }
+    if (!product.images.length && product.image_url) product.images = [product.image_url];
+  }
 
   const outDir = join(__dirname, '..', 'uploads', 'import');
   if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
@@ -130,12 +134,13 @@ router.post('/analyze', async (req, res) => {
   }
 
   const procesar = async (f) => {
+    let url = '';
     try {
       const src = join(dir, f);
       if (!statSync(src).isFile()) return [];
       const newName = uuid() + extname(f).toLowerCase();
       copyFileSync(src, join(outDir, newName));
-      const url = `/uploads/import/${newName}`;
+      url = `/uploads/import/${newName}`;
       if (usarVision) {
         const { productos, crudo } = await extraerConVision(src, cfgVision);
         return itemsVision(productos, crudo, f, url, products);
@@ -143,7 +148,7 @@ router.post('/analyze', async (req, res) => {
       return [itemOCR(await ocrDocument(src), f, url, products)];
     } catch (err) {
       console.error('[Import] Error procesando', f, err);
-      return [{ filename: f, error: err.message }];
+      return [{ filename: f, ...(url ? { url } : {}), error: err.message }];
     }
   };
 
@@ -156,6 +161,29 @@ router.post('/analyze', async (req, res) => {
   }
 
   res.json({ provider: provider.name, products, items, engine: usarVision ? 'vision' : 'local' });
+});
+
+router.post('/discard-image', (req, res) => {
+  const { folder, filename } = req.body || {};
+  if (!folder || typeof folder !== 'string' || !filename || typeof filename !== 'string') {
+    return res.status(400).json({ error: 'Indicá la carpeta y el nombre de la imagen' });
+  }
+  if (basename(filename) !== filename || !IMAGE_EXT.has(extname(filename).toLowerCase())) {
+    return res.status(400).json({ error: 'Nombre de imagen inválido' });
+  }
+
+  const dir = resolve(folder);
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) {
+    return res.status(400).json({ error: `La carpeta no existe: ${folder}` });
+  }
+  const target = join(dir, filename);
+  if (!existsSync(target)) return res.status(404).json({ error: 'La imagen ya no existe en la carpeta' });
+  if (!lstatSync(target).isFile()) {
+    return res.status(400).json({ error: 'El archivo indicado no es una imagen válida' });
+  }
+
+  unlinkSync(target);
+  res.json({ deleted: filename });
 });
 
 router.post('/apply', (req, res) => {

@@ -181,6 +181,7 @@ export const api = {
 
   // Sincronización desde imágenes (proveedor)
   importAnalyze: (data) => request('POST', '/import/analyze', data),
+  importDiscardImage: (data) => request('POST', '/import/discard-image', data),
   importApply: (data) => request('POST', '/import/apply', data),
 
   // Destinos de una publicación. La cola dejó de ser una pantalla: es el

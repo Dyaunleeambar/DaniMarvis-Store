@@ -219,6 +219,7 @@ export async function openProductForm(product, options = {}) {
   const presetImages = Array.isArray(options.images) ? [...options.images] : [];
   const previewImage = options.previewImage || '';
   const onCreated = options.onCreated;
+  const onSaved = options.onSaved;
   const initialImages = product?.images ? [...product.images] : presetImages;
   const wideModal = !!previewImage;
   const modalClass = wideModal ? 'modal-content modal-content--wide' : 'modal-content';
@@ -621,7 +622,9 @@ export async function openProductForm(product, options = {}) {
       await invalidateProductsCache();
       closeModal(true);
       refreshSidebarCounts();
-      if (onCreated) {
+      if (product && !isDuplicate && onSaved) {
+        await onSaved(product.id, data);
+      } else if (onCreated) {
         await onCreated(createdProduct?.id || data.id, data.name);
       } else {
         render(currentContainer);
