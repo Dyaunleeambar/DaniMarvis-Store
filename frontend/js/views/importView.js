@@ -27,6 +27,25 @@ function updateEyeIcon(btn, visible) {
   btn.style.color = visible ? 'var(--success)' : 'var(--text-muted)';
 }
 
+function openImportImagePreview(url, name = '') {
+  openModal(`
+    <div class="modal-header">
+      <h2>Vista previa${name ? `: ${escHtml(name)}` : ''}</h2>
+      <button class="modal-close" onclick="closeModal()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div style="display:flex;justify-content:center;padding:8px 0 0">
+      <img src="${escAttr(url)}" alt="${escAttr(name || 'Vista previa')}" style="max-width:100%;max-height:80vh;border-radius:8px;object-fit:contain" />
+    </div>
+  `);
+  const modalContent = document.querySelector('.modal-content');
+  if (modalContent) {
+    modalContent.style.maxWidth = '90vw';
+    modalContent.style.maxHeight = '90vh';
+  }
+}
+
 const FOLDER_KEY = 'danimarvis_import_folder';
 const PROVIDER_KEY = 'danimarvis_import_provider';
 const ENGINE_KEY = 'danimarvis_import_engine';
@@ -210,7 +229,19 @@ function renderForm(container, providers) {
       btn.disabled = false;
     }
   });
+  function handleImportCarouselKeydown(e) {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    if (e.target.closest?.('input, textarea, select, [contenteditable="true"]')) return;
+    const modalOverlay = document.getElementById('modal-overlay');
+    if (modalOverlay && !modalOverlay.classList.contains('hidden')) return;
+    const track = container.querySelector('#carousel-track');
+    if (!track?.querySelector('.carousel-item')) return;
+    e.preventDefault();
+    container.querySelector(e.key === 'ArrowLeft' ? '.carousel-prev' : '.carousel-next')?.click();
+  }
+  document.addEventListener('keydown', handleImportCarouselKeydown);
   return () => {
+    document.removeEventListener('keydown', handleImportCarouselKeydown);
     setImportFocusMode(false);
     focusToggle.remove();
   };
@@ -265,7 +296,7 @@ function renderResults(container, data, registeredCategories = [], projectProduc
     if (it.error) {
       return `
         <div class="import-card-left import-card-error" data-idx="${i}" data-error="1">
-          ${it.url ? `<img class="import-result-thumb" src="${escAttr(it.url)}" alt="" loading="lazy" />` : ''}
+          ${it.url ? `<img class="import-result-thumb import-preview-image" src="${escAttr(it.url)}" alt="" loading="lazy" role="button" tabindex="0" title="Clic para ampliar" aria-label="Ampliar ${escAttr(it.filename)}" />` : ''}
           <div class="import-card-details">
             <div style="font-size:.78rem;color:var(--text-secondary);word-break:break-all">${escHtml(it.filename)}</div>
             <div style="font-size:.78rem;color:var(--error);margin-top:4px">No se pudo analizar esta imagen: ${escHtml(it.error)}</div>
@@ -287,7 +318,7 @@ function renderResults(container, data, registeredCategories = [], projectProduc
     const checked = it.product ? 'checked' : '';
     return `
       <div class="import-card-left" data-idx="${i}" data-visible="${it.product && !it.product.visible ? '0' : '1'}">
-        <img class="import-result-thumb" src="${escHtml(it.url || '')}" alt="" loading="lazy" />
+        <img class="import-result-thumb import-preview-image" src="${escAttr(it.url || '')}" alt="" loading="lazy" role="button" tabindex="0" title="Clic para ampliar" aria-label="Ampliar ${escAttr(it.filename)}" />
         <div class="import-card-details">
         <div style="display:flex;align-items:center;gap:6px;font-size:.8rem;flex-wrap:wrap">
           <label style="display:flex;align-items:center;gap:5px;font-size:.78rem;cursor:pointer">
@@ -334,7 +365,7 @@ function renderResults(container, data, registeredCategories = [], projectProduc
     return `
       <div class="import-card-right" data-pid="${p.id}" data-cat="${escAttr(p.category || '')}" data-visible="${visible ? '1' : '0'}">
         ${image
-          ? `<img class="import-product-thumb" src="${escAttr(image)}" alt="" loading="lazy" />`
+          ? `<img class="import-product-thumb import-preview-image" src="${escAttr(image)}" alt="" loading="lazy" role="button" tabindex="0" title="Clic para ampliar" aria-label="Ampliar imagen de ${escAttr(p.name)}" />`
           : '<div class="import-product-thumb import-product-thumb--empty" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg></div>'}
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
           <div style="flex:1;min-width:0">
@@ -422,6 +453,19 @@ function renderResults(container, data, registeredCategories = [], projectProduc
   const btnPrev = results.querySelector('.carousel-prev');
   const btnNext = results.querySelector('.carousel-next');
 
+  results.addEventListener('click', (e) => {
+    const image = e.target.closest('.import-preview-image');
+    if (!image) return;
+    openImportImagePreview(image.src, image.getAttribute('aria-label')?.replace(/^Ampliar (imagen de )?/, '') || '');
+  });
+
+  results.addEventListener('keydown', (e) => {
+    const image = e.target.closest('.import-preview-image');
+    if (!image || (e.key !== 'Enter' && e.key !== ' ')) return;
+    e.preventDefault();
+    openImportImagePreview(image.src, image.getAttribute('aria-label')?.replace(/^Ampliar (imagen de )?/, '') || '');
+  });
+
   function renderCarousel() {
     track.innerHTML = rawImages.length ? rawImages.map((image, idx) => `
       <div class="carousel-item${idx === activeImgIndex ? ' active' : ''}" data-idx="${idx}">
@@ -488,11 +532,6 @@ function renderResults(container, data, registeredCategories = [], projectProduc
     selectImage(activeImgIndex + 1);
   });
 
-  track.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowLeft') { e.preventDefault(); selectImage(activeImgIndex - 1); }
-    if (e.key === 'ArrowRight') { e.preventDefault(); selectImage(activeImgIndex + 1); }
-  });
-
   // La navegación del carrusel es independiente de las listas de productos.
   track.addEventListener('click', (e) => {
     const removeButton = e.target.closest('.carousel-remove');
@@ -507,20 +546,7 @@ function renderResults(container, data, registeredCategories = [], projectProduc
     const image = rawImages[idx];
     if (!image) return;
     selectImage(idx);
-    // Vista previa ampliada
-    const mc = document.querySelector('.modal-content');
-    if (mc) { mc.style.maxWidth = '90vw'; mc.style.maxHeight = '90vh'; }
-    openModal(`
-      <div class="modal-header">
-        <h2>Vista previa</h2>
-        <button class="modal-close" onclick="closeModal()">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        </button>
-      </div>
-      <div style="display:flex;justify-content:center;padding:8px 0 0">
-        <img src="${escHtml(image.url)}" alt="" style="max-width:100%;max-height:80vh;border-radius:8px;object-fit:contain" />
-      </div>
-    `);
+    openImportImagePreview(image.url, image.filename);
   });
 
   // ---------- LISTA IZQUIERDA: eventos ----------

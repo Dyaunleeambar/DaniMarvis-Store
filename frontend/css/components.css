@@ -986,6 +986,15 @@ tr:hover td { background: rgba(201,132,122,.03); }
   background: var(--bg-card);
 }
 
+.import-preview-image {
+  cursor: zoom-in;
+}
+
+.import-preview-image:focus-visible {
+  outline: 2px solid var(--rose);
+  outline-offset: 2px;
+}
+
 .import-product-thumb {
   width: 48px;
   height: 48px;

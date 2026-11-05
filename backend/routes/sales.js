@@ -7,7 +7,7 @@ const router = Router();
 
 router.get('/', (req, res) => {
   const db = getDB();
-  const { delivery_status, provider_id, start_date, end_date } = req.query;
+  const { delivery_status, provider_id, category, start_date, end_date } = req.query;
   let sql = `SELECT s.*, p.name as product_name, p.warranty as product_warranty, pr.name as provider_name
              FROM sales s
              LEFT JOIN products p ON p.id = s.product_id
@@ -17,6 +17,7 @@ router.get('/', (req, res) => {
 
   if (delivery_status) { conditions.push('s.delivery_status = ?'); params.push(delivery_status); }
   if (provider_id) { conditions.push('s.provider_id = ?'); params.push(provider_id); }
+  if (category) { conditions.push('p.category = ?'); params.push(category); }
   if (start_date) { conditions.push('s.sale_date >= ?'); params.push(start_date); }
   if (end_date) { conditions.push('s.sale_date <= ?'); params.push(end_date); }
 
@@ -106,11 +107,22 @@ router.put('/:id', (req, res) => {
     total_amount, commission_amount, commission_paid, delivery_method,
     delivery_status, notes, sale_date } = req.body;
 
+  const productId = req.body.product_id || existing.product_id;
+  const productChanged = productId !== existing.product_id;
+  const product = db.prepare('SELECT * FROM products WHERE id = ?').get(productId);
+  if (!product) return res.status(404).json({ error: 'Producto no encontrado' });
+  const providerId = req.body.provider_id !== undefined
+    ? (req.body.provider_id || product.provider_id || null)
+    : (productChanged ? (product.provider_id || null) : existing.provider_id);
   quantity = parseInt(quantity) || existing.quantity;
-  unit_price = parseFloat(unit_price) || existing.unit_price;
+  const submittedPrice = req.body.unit_price === undefined || req.body.unit_price === ''
+    ? NaN
+    : parseFloat(req.body.unit_price);
+  unit_price = Number.isFinite(submittedPrice)
+    ? submittedPrice
+    : (productChanged ? product.price : existing.unit_price);
   total_amount = Math.round(quantity * unit_price * 100) / 100;
 
-  const product = db.prepare('SELECT * FROM products WHERE id = ?').get(existing.product_id);
   commission_amount = calcCommission(product || existing, quantity);
 
   // Vencimiento de garantía. Prioridades:
@@ -124,6 +136,8 @@ router.put('/:id', (req, res) => {
     warrantyEnd = String(req.body.warranty_end || '').trim();
   } else if (req.body.sale_date !== undefined && req.body.sale_date !== existing.sale_date) {
     warrantyEnd = computeWarrantyEndDate(effSaleDate, product?.warranty) || '';
+  } else if (productChanged) {
+    warrantyEnd = computeWarrantyEndDate(effSaleDate, product?.warranty) || '';
   } else if (!existing.warranty_end) {
     warrantyEnd = computeWarrantyEndDate(effSaleDate, product?.warranty) || '';
   } else {
@@ -131,6 +145,7 @@ router.put('/:id', (req, res) => {
   }
 
   db.prepare(`UPDATE sales SET
+    product_id = ?, provider_id = ?,
     client_name = COALESCE(?, client_name), client_phone = COALESCE(?, client_phone),
     client_address = COALESCE(?, client_address),
     quantity = ?, unit_price = ?,
@@ -144,6 +159,7 @@ router.put('/:id', (req, res) => {
     warranty_end = ?,
     updated_at = datetime('now')
     WHERE id = ?`).run(
+    productId, providerId,
     client_name, client_phone, client_address,
     quantity, unit_price, total_amount, commission_amount,
     product ? product.commission_currency : null,

@@ -7,6 +7,7 @@ let currentContainer = null;
 let currentSales = [];
 let currentProducts = [];
 let currentProviders = [];
+let currentCategories = [];
 
 function escHtml(str) {
   return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -69,21 +70,26 @@ export async function render(container) {
   container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-secondary)">Cargando ventas...</div>';
 
   try {
-    const [sales, products, providers] = await Promise.all([
+    const [sales, products, providers, categories] = await Promise.all([
       api.getSales(),
-      api.getProducts({ status: 'active' }),
+      api.getProducts(),
       api.getProviders(),
+      api.getCategories(),
     ]);
     currentSales = sales;
     currentProducts = products;
     currentProviders = providers;
+    currentCategories = [...new Set([
+      ...categories.map(category => category.name),
+      ...products.map(product => product.category),
+    ].filter(Boolean))].sort((a, b) => a.localeCompare(b));
     renderTable(container, sales);
   } catch (err) {
     container.innerHTML = `<div class="empty-state"><h3>Error</h3><p>${err.message}</p></div>`;
   }
 }
 
-function renderTable(container, sales) {
+function renderTable(container, sales, activeFilters = {}) {
   // Ingresos = comisiones YA COBRADAS (USD y MN por separado), sin ventas canceladas.
   // El valor de los productos vendidos no es ingreso.
   const ingresosTxt = textoComisiones(ingresosDeVentas(sales));
@@ -146,18 +152,22 @@ function renderTable(container, sales) {
       <div class="filter-bar">
         <select id="filter-status" class="form-control form-control--small">
           <option value="">Todos los estados</option>
-          <option value="pending">Pendiente</option>
-          <option value="shipped">Enviado</option>
-          <option value="delivered">Entregado</option>
-          <option value="cancelled">Cancelado</option>
+          <option value="pending" ${activeFilters.delivery_status === 'pending' ? 'selected' : ''}>Pendiente</option>
+          <option value="shipped" ${activeFilters.delivery_status === 'shipped' ? 'selected' : ''}>Enviado</option>
+          <option value="delivered" ${activeFilters.delivery_status === 'delivered' ? 'selected' : ''}>Entregado</option>
+          <option value="cancelled" ${activeFilters.delivery_status === 'cancelled' ? 'selected' : ''}>Cancelado</option>
         </select>
         <select id="filter-provider" class="form-control form-control--small">
           <option value="">Todos los proveedores</option>
-          ${currentProviders.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}
+          ${currentProviders.map(p => `<option value="${escHtml(p.id)}" ${activeFilters.provider_id === p.id ? 'selected' : ''}>${escHtml(p.name)}</option>`).join('')}
         </select>
-        <input type="date" id="filter-start" class="form-control form-control--small" style="min-width:140px" />
+        <select id="filter-category" class="form-control form-control--small">
+          <option value="">Todas las categorías</option>
+          ${currentCategories.map(category => `<option value="${escHtml(category)}" ${activeFilters.category === category ? 'selected' : ''}>${escHtml(category)}</option>`).join('')}
+        </select>
+        <input type="date" id="filter-start" class="form-control form-control--small" value="${escHtml(activeFilters.start_date || '')}" style="min-width:140px" />
         <span style="color:var(--text-muted)">a</span>
-        <input type="date" id="filter-end" class="form-control form-control--small" style="min-width:140px" />
+        <input type="date" id="filter-end" class="form-control form-control--small" value="${escHtml(activeFilters.end_date || '')}" style="min-width:140px" />
       </div>
 
       <div class="card" style="padding:0">
@@ -217,6 +227,7 @@ function renderTable(container, sales) {
   // Filters
   const statusFilter = document.getElementById('filter-status');
   const providerFilter = document.getElementById('filter-provider');
+  const categoryFilter = document.getElementById('filter-category');
   const startFilter = document.getElementById('filter-start');
   const endFilter = document.getElementById('filter-end');
 
@@ -224,18 +235,30 @@ function renderTable(container, sales) {
     const params = {};
     if (statusFilter.value) params.delivery_status = statusFilter.value;
     if (providerFilter.value) params.provider_id = providerFilter.value;
+    if (categoryFilter.value) params.category = categoryFilter.value;
     if (startFilter.value) params.start_date = startFilter.value;
     if (endFilter.value) params.end_date = endFilter.value;
+    const filters = {
+      delivery_status: statusFilter.value,
+      provider_id: providerFilter.value,
+      category: categoryFilter.value,
+      start_date: startFilter.value,
+      end_date: endFilter.value,
+    };
 
     container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-secondary)">Filtrando...</div>';
     api.getSales(params).then(filtered => {
       currentSales = filtered;
-      renderTable(container, filtered);
-    }).catch(() => {});
+      renderTable(container, filtered, filters);
+    }).catch(err => {
+      showToast(err.message, 'error');
+      renderTable(container, currentSales, filters);
+    });
   }
 
   statusFilter.addEventListener('change', applyFilters);
   providerFilter.addEventListener('change', applyFilters);
+  categoryFilter.addEventListener('change', applyFilters);
   startFilter.addEventListener('change', applyFilters);
   endFilter.addEventListener('change', applyFilters);
 }
@@ -253,15 +276,6 @@ window._openSaleForm = function(sale) {
       <input type="hidden" name="id" value="${sale?.id || ''}" />
       <div class="form-row">
         <div class="form-group">
-          <label>Producto *</label>
-          <select name="product_id" class="form-control" id="sale-product" required>
-            <option value="">Seleccionar producto</option>
-            ${currentProducts.map(p =>
-              `<option value="${escHtml(p.id)}" data-price="${p.price}" data-commission="${p.commission_value}" data-currency="${p.commission_currency || 'USD'}" data-provider="${p.provider_id || ''}" data-warranty="${escHtml(p.warranty || '')}" ${sale?.product_id === p.id ? 'selected' : ''}>${escHtml(p.name)} — ${formatUSD(p.price)}</option>`
-            ).join('')}
-          </select>
-        </div>
-        <div class="form-group">
           <label>Proveedor</label>
           <select name="provider_id" class="form-control" id="sale-provider">
             <option value="">Automático</option>
@@ -270,6 +284,22 @@ window._openSaleForm = function(sale) {
             ).join('')}
           </select>
         </div>
+        <div class="form-group">
+          <label>Filtrar productos por categoría</label>
+          <select class="form-control" id="sale-product-category-filter">
+            <option value="">Todas las categorías</option>
+            ${currentCategories.map(category => `<option value="${escHtml(category)}">${escHtml(category)}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Producto *</label>
+        <select name="product_id" class="form-control" id="sale-product" required>
+          <option value="">Seleccionar producto</option>
+          ${currentProducts.map(p =>
+            `<option value="${escHtml(p.id)}" data-price="${p.price}" data-commission="${p.commission_value}" data-currency="${p.commission_currency || 'USD'}" data-provider="${escHtml(p.provider_id || '')}" data-category="${escHtml(p.category || '')}" data-warranty="${escHtml(p.warranty || '')}" ${sale?.product_id === p.id ? 'selected' : ''}>${escHtml(p.name)} — ${formatUSD(p.price)}</option>`
+          ).join('')}
+        </select>
       </div>
       <div class="form-row">
         <div class="form-group">
@@ -353,6 +383,7 @@ window._openSaleForm = function(sale) {
 
   // Auto-calculate total and commission
   const productSelect = document.getElementById('sale-product');
+  const productCategoryFilter = document.getElementById('sale-product-category-filter');
   const providerSelect = document.getElementById('sale-provider');
   const qtyInput = document.getElementById('sale-qty');
   const priceInput = document.getElementById('sale-price');
@@ -360,6 +391,25 @@ window._openSaleForm = function(sale) {
   const commissionInput = document.getElementById('sale-commission');
   const saleDateInput = document.getElementById('sale-date');
   const warrantyEndInput = document.getElementById('sale-warranty-end');
+
+  function filterProducts() {
+    const selectedProductId = productSelect.value;
+    const providerId = providerSelect.value;
+    const category = productCategoryFilter.value;
+    const matchingProducts = currentProducts.filter(product =>
+      (!providerId || product.provider_id === providerId) &&
+      (!category || product.category === category)
+    );
+    productSelect.innerHTML = '<option value="">Seleccionar producto</option>' + matchingProducts.map(product =>
+      `<option value="${escHtml(product.id)}" data-price="${product.price}" data-commission="${product.commission_value}" data-currency="${product.commission_currency || 'USD'}" data-provider="${escHtml(product.provider_id || '')}" data-category="${escHtml(product.category || '')}" data-warranty="${escHtml(product.warranty || '')}">${escHtml(product.name)} — ${formatUSD(product.price)}</option>`
+    ).join('');
+    if (matchingProducts.some(product => product.id === selectedProductId)) {
+      productSelect.value = selectedProductId;
+    }
+  }
+
+  providerSelect.addEventListener('change', filterProducts);
+  productCategoryFilter.addEventListener('change', filterProducts);
 
   function calcTotals() {
     const qty = parseInt(qtyInput.value) || 1;
@@ -401,6 +451,7 @@ window._openSaleForm = function(sale) {
     const selected = productSelect.options[productSelect.selectedIndex];
     if (selected && selected.value) {
       priceInput.value = selected.dataset.price;
+      providerSelect.value = selected.dataset.provider || '';
     }
     calcTotals();
     // Al cambiar de producto la base de la garantía es otra: recalcula siempre.
