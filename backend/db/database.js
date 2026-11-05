@@ -114,6 +114,7 @@ export async function initDB() {
   migrateRankingSnapshots();
   migrateRankingHistory();
   migratePageRoutines();
+  migratePageRoutinesExtended();
   migrateAuthSecret();
   migrateIndexes();
   migrateCollapseQueueToSingleDestination();
@@ -790,6 +791,23 @@ function migratePageRoutines() {
       updated_at TEXT DEFAULT (datetime('now'))
     );
   `);
+}
+
+function migratePageRoutinesExtended() {
+  // Nuevas columnas para reintentos automáticos, formato de imagen y sincronización con Meta
+  try { db.exec("ALTER TABLE page_schedule_log ADD COLUMN format TEXT DEFAULT '4:5'"); } catch (_) {}
+  try { db.exec("ALTER TABLE page_schedule_log ADD COLUMN retry_count INTEGER DEFAULT 0"); } catch (_) {}
+  try { db.exec("ALTER TABLE page_schedule_log ADD COLUMN next_retry_at TEXT"); } catch (_) {}
+  try { db.exec("ALTER TABLE page_schedule_log ADD COLUMN meta_status TEXT DEFAULT ''"); } catch (_) {}
+  try { db.exec("ALTER TABLE page_schedule_log ADD COLUMN synced_at TEXT"); } catch (_) {}
+
+  // Índice para consultas de reintentos automáticos
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_page_schedule_log_retry ON page_schedule_log(status, next_retry_at);
+  `);
+
+  // Backfill: marcar logs existentes sin meta_status como 'scheduled' si aún lo están
+  db.prepare("UPDATE page_schedule_log SET meta_status = status WHERE status = 'scheduled' AND meta_status = ''").run();
 }
 
 function migrateWarrantyRules() {

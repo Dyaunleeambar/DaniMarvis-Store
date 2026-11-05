@@ -11,6 +11,12 @@ import {
   parseTimes,
   getPageConfig,
   isRoutineConfigured,
+  getPageRoutineWorkerStatus,
+  setPageRoutineWorkerActive,
+  startPageRoutineWorker,
+  stopPageRoutineWorker,
+  syncPageRoutinesWithMeta,
+  retryPageRoutineLog,
 } from '../lib/pageRoutineWorker.js';
 
 const router = Router();
@@ -108,22 +114,26 @@ router.delete('/:id', (req, res) => {
 
 router.get('/logs', (req, res) => {
   const db = getDB();
-  const { routine_id, status, limit } = req.query;
+  const { routine_id, status, limit, offset } = req.query;
   const clauses = [];
   const params = [];
   if (routine_id) { clauses.push('routine_id = ?'); params.push(routine_id); }
   if (status) { clauses.push('status = ?'); params.push(status); }
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   const lim = Math.min(Number(limit) || 500, 2000);
+  const off = Math.max(Number(offset) || 0, 0);
   const rows = db.prepare(`
     SELECT l.*, r.name as routine_name
     FROM page_schedule_log l
     LEFT JOIN page_routines r ON r.id = l.routine_id
     ${where}
     ORDER BY l.scheduled_for DESC
-    LIMIT ${lim}
-  `).all(...params);
-  res.json(rows);
+    LIMIT ? OFFSET ?
+  `).all(...params, lim, off);
+  const total = db.prepare(`
+    SELECT COUNT(*) as c FROM page_schedule_log l ${where}
+  `).all(...params)[0].c;
+  res.json({ rows, total, limit: lim, offset: off });
 });
 
 router.get('/test', async (req, res) => {
@@ -195,6 +205,40 @@ router.delete('/logs/:logId', async (req, res) => {
 
   db.prepare("UPDATE page_schedule_log SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?").run(req.params.logId);
   res.json({ id: req.params.logId, status: 'cancelled' });
+});
+
+router.post('/logs/:logId/retry', async (req, res) => {
+  const result = await retryPageRoutineLog(req.params.logId);
+  if (result.error) return res.status(400).json({ error: result.error });
+  if (!result.ok) return res.status(500).json({ error: result.error });
+  res.json({ ok: true, ...result });
+});
+
+/* ─── Worker automático ─────────────────────────────────────── */
+
+router.get('/worker-status', (req, res) => {
+  res.json(getPageRoutineWorkerStatus());
+});
+
+router.post('/worker/start', (req, res) => {
+  const r = startPageRoutineWorker();
+  if (!r.started) return res.status(400).json(r);
+  res.json(r);
+});
+
+router.post('/worker/stop', (req, res) => {
+  res.json(stopPageRoutineWorker());
+});
+
+router.post('/worker/active', (req, res) => {
+  const active = req.body.active !== false;
+  const r = setPageRoutineWorkerActive(active);
+  res.json(r);
+});
+
+router.post('/sync-meta', async (req, res) => {
+  const result = await syncPageRoutinesWithMeta();
+  res.json(result);
 });
 
 export default router;

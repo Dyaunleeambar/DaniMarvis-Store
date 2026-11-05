@@ -249,6 +249,14 @@ export const api = {
   testPageRoutine: (routineId) => request('GET', `/page-routines/test${routineId ? '?routine_id=' + routineId : ''}`),
   runPageRoutineNow: () => request('POST', '/page-routines/run-now'),
   cancelPageRoutineLog: (logId) => request('DELETE', `/page-routines/logs/${logId}`),
+  retryPageRoutineLog: (logId) => request('POST', `/page-routines/logs/${logId}/retry`),
+
+  // Worker automático de Page Routines
+  getPageRoutineWorkerStatus: () => request('GET', '/page-routines/worker-status'),
+  startPageRoutineWorker: () => request('POST', '/page-routines/worker/start'),
+  stopPageRoutineWorker: () => request('POST', '/page-routines/worker/stop'),
+  setPageRoutineWorkerActive: (active) => request('POST', '/page-routines/worker/active', { active }),
+  syncPageRoutinesMeta: () => request('POST', '/page-routines/sync-meta'),
 
   // Auth
   login: (username, password) => request('POST', '/login', { username, password }),

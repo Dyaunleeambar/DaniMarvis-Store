@@ -14,6 +14,8 @@ let currentContainer = null;
 let currentTab = 'rutinas';
 let productsCache = [];
 let routinesCache = null;
+let workerStatusCache = null;
+let refreshInterval = null;
 
 export async function render(container) {
   currentContainer = container;
@@ -33,6 +35,10 @@ export async function render(container) {
 
 function cleanup() {
   currentContainer = null;
+  if (refreshInterval) {
+    clearInterval(refreshInterval);
+    refreshInterval = null;
+  }
 }
 
 export async function refresh() {
@@ -40,12 +46,14 @@ export async function refresh() {
 }
 
 async function loadData() {
-  const [routinesRes, products] = await Promise.all([
+  const [routinesRes, products, worker] = await Promise.all([
     api.getPageRoutines(),
     api.getProducts().catch(() => []),
+    api.getPageRoutineWorkerStatus().catch(() => null),
   ]);
   routinesCache = routinesRes;
   productsCache = Array.isArray(products) ? products : [];
+  workerStatusCache = worker;
   return routinesRes;
 }
 
@@ -59,7 +67,16 @@ async function renderPage(container, silent = false) {
   }
 
   const { routines, configured } = data;
+  const worker = workerStatusCache || {};
   const fb = (await api.getSettings().catch(() => null))?.publish_config?.facebook || {};
+
+  // Arrancar auto-refresh solo en la pestaña de rutinas y si no hay modal abierto
+  if (currentTab === 'rutinas' && !refreshInterval) {
+    refreshInterval = setInterval(() => {
+      if (document.hidden) return;
+      renderPage(currentContainer, true).catch(() => {});
+    }, 30000);
+  }
 
   container.innerHTML = `
     <div class="page">
@@ -68,16 +85,43 @@ async function renderPage(container, silent = false) {
           <h1>Rutinas de Página</h1>
           <p>Publicación automática en tu Página de Facebook vía API oficial de Meta</p>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           <button class="btn btn--sm btn--secondary" id="rtn-run-now">Agendar ahora</button>
           <button class="btn btn--sm btn--secondary" id="rtn-test">Probar configuración</button>
+          <button class="btn btn--sm btn--secondary" id="rtn-sync-meta">Sincronizar con Meta</button>
           <button class="btn btn--sm btn--primary" id="rtn-new">Nueva rutina</button>
         </div>
       </div>
 
-      <div class="filter-bar" style="gap:4px">
-        <button class="btn btn--sm ${currentTab === 'rutinas' ? 'btn--primary' : 'btn--secondary'}" id="tab-rutinas">Rutinas</button>
-        <button class="btn btn--sm ${currentTab === 'logs' ? 'btn--primary' : 'btn--secondary'}" id="tab-logs">Historial de agendado</button>
+      <div class="card" style="margin-top:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          ${!configured ? `
+            <span class="badge" style="background:var(--error)">Sin conectar</span>
+            <span style="font-size:.82rem;color:var(--text-muted)">Página no configurada</span>
+          ` : `
+            <span class="badge badge--active">Conectada</span>
+            <span style="font-size:.82rem;color:var(--text-muted)"> Página ${escHtml(fb.page_id || '')}</span>
+          `}
+          ${worker.active ? `
+            <span class="badge ${worker.running ? 'badge--active' : ''}" title="${worker.running ? 'Ejecutando ciclo...' : 'Inactivo'}">
+              ${worker.running ? '▶ Worker activo' : '⏸ Worker detenido'}
+            </span>
+          ` : `
+            <span class="badge" style="background:var(--text-muted)">Worker deshabilitado</span>
+          `}
+          ${worker.lastRun ? `
+            <span style="font-size:.78rem;color:var(--text-muted)">
+              Última ejecución: ${new Date(worker.lastRun).toLocaleString('es-ES', { hour12: false })}
+            </span>
+          ` : `
+            <span style="font-size:.78rem;color:var(--text-muted)">Sin ejecuciones todavía</span>
+          `}
+        </div>
+        <div style="display:flex;gap:6px">
+          ${worker.active
+            ? `<button class="btn btn--sm btn--ghost" id="rtn-worker-stop" title="Detener worker automático">Detener worker</button>`
+            : `<button class="btn btn--sm btn--ghost" id="rtn-worker-start" title="Iniciar worker automático">Iniciar worker</button>`}
+        </div>
       </div>
 
       ${!configured ? `
@@ -94,19 +138,12 @@ async function renderPage(container, silent = false) {
             </div>
           </div>
         </div>
-      ` : `
-        <div class="card" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
-          <div style="font-size:.82rem">
-            <span class="badge badge--active">Conectada</span>
-            <span style="color:var(--text-secondary)"> Página ${escHtml(fb.page_id || '')}</span>
-          </div>
-          <div style="font-size:.78rem;color:var(--text-muted)">
-            ${fb.token_expires_at
-              ? `El token vence el ${escHtml(formatDateLite(fb.token_expires_at))}. Renová el acceso antes de esa fecha en Facebook Developers.`
-              : 'Agendá la expiración de tu token en Ajustes para recibir aviso en el panel.'}
-          </div>
-        </div>
-      `}
+      ` : ''}
+
+      <div class="filter-bar" style="gap:4px;margin-top:12px">
+        <button class="btn btn--sm ${currentTab === 'rutinas' ? 'btn--primary' : 'btn--secondary'}" id="tab-rutinas">Rutinas</button>
+        <button class="btn btn--sm ${currentTab === 'logs' ? 'btn--primary' : 'btn--secondary'}" id="tab-logs">Historial de agendado</button>
+      </div>
 
       ${currentTab === 'logs' ? renderLogs() : renderRoutines(routines)}
     </div>
@@ -141,22 +178,33 @@ function renderRoutines(routines) {
             </span>
             <h3 style="margin:0">${escHtml(r.name)}</h3>
             <span style="font-size:.78rem;color:var(--text-muted)">
-              ${(r.products || []).length} producto(s) · ${String(r.times || '').split(',').filter(Boolean).length} horarios
+              ${(r.products || []).length} producto(s) · ${String(r.times || '').split(',').filter(Boolean).length} horarios · formato ${escHtml(r.format || '4:5')}
             </span>
             <span style="margin-left:auto;display:flex;gap:6px">
               <button class="btn btn--sm btn--ghost" data-edit="${r.id}">Editar</button>
               <button class="btn btn--sm btn--ghost" data-delete="${r.id}" style="color:var(--error)">Eliminar</button>
             </span>
           </div>
-          <div style="margin-top:12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;font-size:.8rem">
+          <div style="margin-top:12px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;font-size:.8rem">
             <div><div style="color:var(--text-muted)">Horarios</div><div>${escHtml(r.times || '')}</div></div>
             <div><div style="color:var(--text-muted)">Antelación</div><div>${r.lead_minutes} min</div></div>
-            <div><div style="color:var(--text-muted)">Productos</div><div>${(r.products || []).length === 0 ? 'Todos los activos' : (r.products || []).length}</div></div>
-            <div><div style="color:var(--text-muted)">Último agendado</div><div>${r.last_scheduled ? `${escHtml(r.last_scheduled.product_name)} · ${escHtml(r.last_scheduled.scheduled_for)}` : '—'}</div></div>
+            <div><div style="color:var(--text-muted)">Productos</div><div>${(r.products || []).length === 0 ? 'Todos los activos (rotación)' : (r.products || []).length}</div></div>
+            <div><div style="color:var(--text-muted)">Último agendado</div><div>${r.last_scheduled ? `${escHtml(r.last_scheduled.product_name)} · ${escHtml(formatDateLite(r.last_scheduled.scheduled_for))} · <span class="badge ${r.last_scheduled.status === 'scheduled' ? 'badge--active' : ''}">${escHtml(r.last_scheduled.status)}</span>` : '—'}</div></div>
           </div>
         </div>
       `).join('')}
     </div>`;
+}
+
+function statusBadge(status) {
+  const map = {
+    scheduled: '<span class="badge badge--active">Programado</span>',
+    published: '<span class="badge" style="background:var(--success);color:#fff">Publicado</span>',
+    error: '<span class="badge" style="background:var(--error);color:#fff">Error</span>',
+    cancelled: '<span class="badge" style="background:var(--text-muted)">Cancelado</span>',
+    replaced: '<span class="badge" style="background:var(--text-muted)">Reemplazado</span>',
+  };
+  return map[status] || `<span class="badge">${escHtml(status)}</span>`;
 }
 
 function renderLogs() {
@@ -167,8 +215,9 @@ function renderLogs() {
           <h3 style="margin:0">Historial de agendado</h3>
           <p style="margin:4px 0 0;font-size:.78rem;color:var(--text-muted)">Posts reservados en el agendado nativo de Meta (los publica Meta solo a la hora indicada)</p>
         </div>
-        <div>
+        <div style="display:flex;gap:6px">
           <button class="btn btn--sm btn--secondary" id="logs-refresh">Actualizar</button>
+          <button class="btn btn--sm btn--secondary" id="logs-sync-meta">Sincronizar Meta</button>
           <button class="btn btn--sm btn--primary" id="logs-run-now">Agendar ahora</button>
         </div>
       </div>
@@ -178,15 +227,25 @@ function renderLogs() {
     </div>`;
 }
 
+let logsPage = 0;
+const logsPageSize = 50;
+
 async function loadLogs() {
   const bodyEl = document.getElementById('logs-body');
   if (!bodyEl) return;
   try {
-    const logs = await api.getPageRoutineLogs({ limit: 500 });
+    const data = await api.getPageRoutineLogs({ limit: logsPageSize, offset: logsPage * logsPageSize });
+    const logs = data.rows || [];
+    const total = data.total || 0;
+
     if (!logs.length) {
-      bodyEl.innerHTML = '<div class="empty-state"><p>Aún no hay agendados. Los próximos slots se reservan automáticamente.</p></div>';
+      if (logsPage === 0) {
+        bodyEl.innerHTML = '<div class="empty-state"><p>Aún no hay agendados. Los próximos slots se reservan automáticamente.</p></div>';
+      }
+      renderLogsPagination(bodyEl, total, logsPage);
       return;
     }
+
     bodyEl.innerHTML = `
       <div class="table-wrap">
         <table>
@@ -197,7 +256,9 @@ async function loadLogs() {
               <th>Programado para</th>
               <th>Estado</th>
               <th>Imágenes</th>
+              <th>Formato</th>
               <th>Meta</th>
+              <th>Reintentos</th>
               <th></th>
             </tr>
           </thead>
@@ -209,18 +270,25 @@ async function loadLogs() {
                 <td>${escHtml(formatDateTime(l.scheduled_for))}</td>
                 <td>${statusBadge(l.status)}</td>
                 <td>${l.images_count ?? 0}</td>
+                <td style="font-size:.72rem;color:var(--text-muted)">${escHtml(l.format || '4:5')}</td>
                 <td style="font-size:.72rem;color:var(--text-muted)">${l.meta_post_id ? escHtml(l.meta_post_id) : '—'}</td>
+                <td style="font-size:.72rem">${l.retry_count ?? 0}</td>
                 <td>
                   ${l.status === 'scheduled'
                     ? `<button class="btn btn--sm btn--ghost" data-cancel="${l.id}" style="color:var(--error)" title="Cancelar en Meta">Cancelar</button>`
-                    : ''}
+                    : l.status === 'error'
+                      ? `<button class="btn btn--sm btn--ghost" data-retry="${l.id}" title="Reintentar ahora">Reintentar</button>`
+                      : ''}
                 </td>
               </tr>
-              ${l.error ? `<tr><td colspan="7" style="color:var(--error);font-size:.75rem">⚠ ${escHtml(l.error)}</td></tr>` : ''}
+              ${l.error ? `<tr><td colspan="9" style="color:var(--error);font-size:.75rem;padding:4px 8px">⚠ ${escHtml(l.error)}</td></tr>` : ''}
+              ${l.meta_status && l.meta_status !== l.status ? `<tr><td colspan="9" style="color:var(--text-muted);font-size:.72rem;padding:4px 8px">Meta reporta: ${escHtml(l.meta_status)} ${l.synced_at ? `· sincronizado ${escHtml(l.synced_at)}` : ''}</td></tr>` : ''}
             `).join('')}
           </tbody>
         </table>
-      </div>`;
+      </div>
+    `;
+
     bodyEl.querySelectorAll('[data-cancel]').forEach(btn => {
       btn.addEventListener('click', async () => {
         const ok = await confirmDialog('¿Cancelar este post agendado en Meta?');
@@ -234,18 +302,49 @@ async function loadLogs() {
         }
       });
     });
+
+    bodyEl.querySelectorAll('[data-retry]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const ok = await confirmDialog('¿Reintentar este post ahora?');
+        if (!ok) return;
+        try {
+          const result = await api.retryPageRoutineLog(btn.dataset.retry);
+          showToast(`Reintento ${result.ok ? 'enviado' : 'fallado'}: ${result.product || ''}`, result.ok ? 'success' : 'error');
+          loadLogs();
+        } catch (err) {
+          showToast(err.message, 'error');
+        }
+      });
+    });
+
+    renderLogsPagination(bodyEl, total, logsPage);
   } catch (err) {
     bodyEl.innerHTML = `<div class="empty-state"><p>${escHtml(err.message)}</p></div>`;
   }
 }
 
-function statusBadge(status) {
-  const map = {
-    scheduled: '<span class="badge badge--active">Programado</span>',
-    error: '<span class="badge" style="background:var(--error);color:#fff">Error</span>',
-    cancelled: '<span class="badge">Cancelado</span>',
-  };
-  return map[status] || `<span class="badge">${escHtml(status)}</span>`;
+function renderLogsPagination(container, total, page) {
+  const totalPages = Math.ceil(total / logsPageSize) || 1;
+  const pagination = document.createElement('div');
+  pagination.style.cssText = 'margin-top:10px;display:flex;justify-content:center;align-items:center;gap:8px;flex-wrap:wrap';
+  pagination.innerHTML = `
+    <span style="font-size:.78rem;color:var(--text-muted)">Página ${page + 1} de ${totalPages} (${total} registros)</span>
+    <button class="btn btn--sm btn--ghost" ${page === 0 ? 'disabled' : ''} data-logspage="${page - 1}">← Anterior</button>
+    <button class="btn btn--sm btn--ghost" ${page >= totalPages - 1 ? 'disabled' : ''} data-logspage="${page + 1}">Siguiente →</button>
+  `;
+  // Remover paginación previa si existe
+  const old = container.parentElement?.querySelector('.logs-pagination');
+  if (old) old.remove();
+  pagination.className = 'logs-pagination';
+  container.parentElement?.appendChild(pagination);
+
+  pagination.querySelectorAll('[data-logspage]').forEach(btn => {
+    if (btn.disabled) return;
+    btn.addEventListener('click', () => {
+      logsPage = Number(btn.dataset.logspage);
+      loadLogs();
+    });
+  });
 }
 
 function bindPageEvents() {
@@ -254,15 +353,20 @@ function bindPageEvents() {
   document.getElementById('rtn-run-now')?.addEventListener('click', onRunNow);
   document.getElementById('logs-run-now')?.addEventListener('click', onRunNow);
   document.getElementById('rtn-test')?.addEventListener('click', onTest);
+  document.getElementById('rtn-sync-meta')?.addEventListener('click', onSyncMeta);
+  document.getElementById('logs-sync-meta')?.addEventListener('click', onSyncMeta);
   document.getElementById('tab-rutinas')?.addEventListener('click', () => {
     currentTab = 'rutinas';
     navigateTo('#/page-routines');
   });
   document.getElementById('tab-logs')?.addEventListener('click', () => {
     currentTab = 'logs';
+    logsPage = 0;
     navigateTo('#/page-routines?tab=logs');
   });
   document.getElementById('logs-refresh')?.addEventListener('click', loadLogs);
+  document.getElementById('rtn-worker-start')?.addEventListener('click', onWorkerStart);
+  document.getElementById('rtn-worker-stop')?.addEventListener('click', onWorkerStop);
 
   document.querySelectorAll('[data-toggle]').forEach(el => {
     el.addEventListener('click', async () => {
@@ -315,7 +419,37 @@ async function onRunNow() {
       showToast(summary.error, 'error');
       return;
     }
-    showToast(`Agendados: ${summary.planned} · próximos ${summary.totalPosts}`, 'success');
+    showToast(`Agendados: ${summary.planned} · productos: ${summary.totalPosts} · sincronizados: ${summary.synced} · reintentos: ${summary.retried}`, 'success');
+    render(currentContainer);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function onSyncMeta() {
+  try {
+    const result = await api.syncPageRoutinesMeta();
+    showToast(`Sincronizados: ${result.synced} · errores: ${result.errors}`, result.errors === 0 ? 'success' : 'warning');
+    render(currentContainer);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function onWorkerStart() {
+  try {
+    const result = await api.startPageRoutineWorker();
+    showToast(result.started ? 'Worker iniciado' : result.reason, result.started ? 'success' : 'warning');
+    render(currentContainer);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function onWorkerStop() {
+  try {
+    const result = await api.stopPageRoutineWorker();
+    showToast('Worker detenido', 'success');
     render(currentContainer);
   } catch (err) {
     showToast(err.message, 'error');
@@ -378,7 +512,7 @@ function openRoutineModal(routine) {
       <div class="form-group">
         <label>Horarios (HH:MM, separados por coma)</label>
         <input type="text" id="rtn-times" class="form-control" value="${escAttr(routine?.times || '09:00,13:30,18:00')}" />
-        <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">Se repiten a diario. Meta agenda y publica solo a cada hora.</small>
+        <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">Se repiten a diario. Horarios duplicados se ignoran automáticamente.</small>
       </div>
       <div class="form-row">
         <div class="form-group">
@@ -390,6 +524,7 @@ function openRoutineModal(routine) {
           <select id="rtn-format" class="form-control">
             ${['4:5', '1:1', '9:16'].map(f => `<option value="${f}" ${(routine?.format || '4:5') === f ? 'selected' : ''}>${f}</option>`).join('')}
           </select>
+          <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">Formato usado al agendar el post en Meta.</small>
         </div>
       </div>
       <div class="form-group">
