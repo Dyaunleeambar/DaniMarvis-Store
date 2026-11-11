@@ -230,20 +230,35 @@ function copiarUploadsLocal(destDir) {
   console.log(`[Backup] Imágenes copiadas: ${fs.readdirSync(path.join(destDir, 'uploads')).length}`);
 }
 
+export function getNextBackupAt(now = new Date()) {
+  const next = new Date(now);
+  next.setHours(0, 30, 0, 0);
+  if (next <= now) next.setDate(next.getDate() + 1);
+  return next;
+}
+
 /**
- * Respaldo periódico.
- *
- * Antes solo se respaldaba al arrancar el server: si el usuario lo dejaba
- * encendido muchas semanas, no se generaba ninguno. El intervalo es el que
- * marca la cadencia, así que acá va con force=true y la guarda de 24h no lo
- * saltea por un minuto de diferencia.
+ * Ejecuta un respaldo cada día a las 00:30, según la hora local del servidor.
+ * Recalcula la próxima hora al terminar para evitar deriva y ejecuciones solapadas.
  */
 export function scheduleBackups() {
-  const horas = Math.max(1, Number(process.env.BACKUP_INTERVAL_HOURS || 24));
-  console.log(`[Backup] Respaldo cada ${horas}h (local KEEP=${KEEP}, Drive ${DRIVE_REMOTE}:${DRIVE_DIR} KEEP=${DRIVE_KEEP})`);
-  return setInterval(() => {
-    createBackup({ force: true }).catch((e) => console.error('[Backup] Error periódico:', e.message));
-  }, horas * 3600 * 1000);
+  let timer;
+  const scheduleNext = () => {
+    const next = getNextBackupAt();
+    const delay = Math.max(0, next.getTime() - Date.now());
+    console.log(`[Backup] Próximo respaldo: ${next.toLocaleString()} (local KEEP=${KEEP}, Drive ${DRIVE_REMOTE}:${DRIVE_DIR} KEEP=${DRIVE_KEEP})`);
+    timer = setTimeout(async () => {
+      try {
+        await createBackup({ force: true });
+      } catch (e) {
+        console.error('[Backup] Error periódico:', e.message);
+      } finally {
+        scheduleNext();
+      }
+    }, delay);
+  };
+  scheduleNext();
+  return () => clearTimeout(timer);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

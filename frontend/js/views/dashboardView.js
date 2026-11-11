@@ -25,12 +25,16 @@ export async function render(container) {
   container.innerHTML = '<div class="loading-screen" style="position:static;padding:40px"><div class="loading-spinner"></div></div>';
 
   try {
-    const [data, logs] = await Promise.all([
+    const [data, logsResult] = await Promise.all([
       api.getDashboard(),
-      api.getPageRoutineLogs({ status: 'scheduled', limit: 3 }).catch(() => []),
+      api.getPageRoutineLogs({ status: 'scheduled', limit: 3 }).catch(() => ({ rows: [] })),
     ]);
     await completarIngresos(data);
-    renderDashboard(container, data, logs);
+    const scheduledLogs = Array.isArray(logsResult)
+      ? logsResult
+      : Array.isArray(logsResult?.rows) ? logsResult.rows : [];
+    renderDashboard(container, data, scheduledLogs);
+    bindWarrantyDismiss(container, data, scheduledLogs);
   } catch (err) {
     container.innerHTML = `<div class="empty-state"><h3>Error al cargar</h3><p>${escHtml(err.message)}</p></div>`;
     showToast('Error al cargar dashboard', 'error');
@@ -44,6 +48,30 @@ function countdown(target) {
   const m = Math.floor((ms % 3600000) / 60000);
   if (h > 0) return `${h}h ${m}m`;
   return `${m} min`;
+}
+
+function bindWarrantyDismiss(container, data, scheduledLogs) {
+  container.querySelectorAll('.dashboard-warranty-dismiss').forEach(button => {
+    button.addEventListener('click', async () => {
+      const { saleId, warrantyEnd } = button.dataset;
+      button.disabled = true;
+      try {
+        await api.dismissWarrantyReminder(saleId, warrantyEnd);
+        const reminders = data.warrantyReminders;
+        reminders.expiringNow = reminders.expiringNow.filter(item =>
+          item.sale_id !== saleId || item.warranty_end !== warrantyEnd);
+        reminders.recentlyExpired = reminders.recentlyExpired.filter(item =>
+          item.sale_id !== saleId || item.warranty_end !== warrantyEnd);
+        reminders.count = reminders.expiringNow.length;
+        renderDashboard(container, data, scheduledLogs);
+        bindWarrantyDismiss(container, data, scheduledLogs);
+        showToast('Alerta de garantía marcada como vista', 'success');
+      } catch (err) {
+        button.disabled = false;
+        showToast(err.message, 'error');
+      }
+    });
+  });
 }
 
 function renderDashboard(container, data, scheduledLogs = []) {
@@ -87,6 +115,7 @@ function renderDashboard(container, data, scheduledLogs = []) {
                 ${r.client_phone ? `<a href="tel:${escHtml(r.client_phone)}" class="btn btn--sm btn--primary">${escHtml(r.client_phone)}</a>` : ''}
                 <span class="badge ${r.days_until === 0 ? 'badge--unpaid' : 'badge--pending'}">Vence ${r.expires_label}</span>
                 <span style="font-size:.78rem;color:var(--text-muted);white-space:nowrap">${formatDate(r.warranty_end)}</span>
+                <button type="button" class="btn btn--sm btn--ghost dashboard-warranty-dismiss" data-sale-id="${escHtml(r.sale_id)}" data-warranty-end="${escHtml(r.warranty_end)}">Visto</button>
               </div>
             </div>
           `).join('')}
@@ -105,6 +134,7 @@ function renderDashboard(container, data, scheduledLogs = []) {
                 ${r.client_phone ? `<a href="tel:${escHtml(r.client_phone)}" class="btn btn--sm btn--ghost">${escHtml(r.client_phone)}</a>` : ''}
                 <span class="badge badge--archived">Vencida</span>
                 <span style="color:var(--text-muted);white-space:nowrap">${formatDate(r.warranty_end)}</span>
+                <button type="button" class="btn btn--sm btn--ghost dashboard-warranty-dismiss" data-sale-id="${escHtml(r.sale_id)}" data-warranty-end="${escHtml(r.warranty_end)}">Visto</button>
               </div>
             </div>
           `).join('')}

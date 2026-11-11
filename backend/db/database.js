@@ -89,6 +89,7 @@ export async function initDB() {
   createSchema();
   seedIfEmpty();
   migrateImages();
+  migrateProductReferenceImage();
   migratePublishText();
   migrateProviderInfo();
   migrateCatalogVisible();
@@ -230,6 +231,7 @@ function createSchema() {
       warranty TEXT,
       provider_id TEXT,
       image_url TEXT,
+      reference_image TEXT DEFAULT '',
       publish_text TEXT DEFAULT '',
       stock INTEGER DEFAULT 0,
       status TEXT DEFAULT 'active',
@@ -259,6 +261,22 @@ function createSchema() {
       updated_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (product_id) REFERENCES products(id),
       FOREIGN KEY (provider_id) REFERENCES providers(id)
+    );
+    CREATE TABLE IF NOT EXISTS warranty_reminder_dismissals (
+      sale_id TEXT NOT NULL,
+      warranty_end TEXT NOT NULL,
+      dismissed_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (sale_id, warranty_end)
+    );
+    CREATE TABLE IF NOT EXISTS availability_update_batches (
+      id TEXT PRIMARY KEY,
+      provider_id TEXT NOT NULL,
+      folder TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'preview',
+      preview_json TEXT NOT NULL DEFAULT '{}',
+      changes_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
@@ -368,6 +386,12 @@ function migrateImages() {
   for (const row of toMigrate) {
     db.prepare("UPDATE products SET images = ? WHERE id = ?").run(JSON.stringify([row.image_url]), row.id);
   }
+}
+
+function migrateProductReferenceImage() {
+  try {
+    db.exec("ALTER TABLE products ADD COLUMN reference_image TEXT DEFAULT ''");
+  } catch (_) {}
 }
 
 function migratePublishText() {

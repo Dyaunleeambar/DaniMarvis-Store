@@ -78,9 +78,12 @@ export function getWarrantyReminders(db, { now = new Date() } = {}) {
            p.name as product_name, p.warranty as product_warranty
     FROM sales s
     LEFT JOIN products p ON p.id = s.product_id
+    LEFT JOIN warranty_reminder_dismissals d
+      ON d.sale_id = s.id AND d.warranty_end = s.warranty_end
     WHERE s.delivery_status <> 'cancelled'
       AND s.warranty_end IS NOT NULL
       AND s.warranty_end <> ''
+      AND d.sale_id IS NULL
     ORDER BY s.warranty_end ASC
   `).all();
 

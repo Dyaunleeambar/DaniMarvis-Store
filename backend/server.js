@@ -33,6 +33,7 @@ import pubQueueRouter from './routes/pubQueue.js';
 import promptEngineRouter from './routes/promptEngine.js';
 import providerStylesRouter from './routes/providerStyles.js';
 import pageRoutinesRouter from './routes/pageRoutines.js';
+import availabilityUpdateRouter from './routes/availabilityUpdate.js';
 import {
   startPageRoutineWorker,
   stopPageRoutineWorker,
@@ -42,7 +43,7 @@ import {
 import { getWarrantyReminders } from './lib/warranty.js';
 import warrantyRulesRouter from './routes/warrantyRules.js';
 import { getUploadsDir, getAccountConfig, getCuentasConfig, ACCOUNT_IDS } from './lib/accountConfig.js';
-import { createBackup, scheduleBackups } from './scripts/backup.js';
+import { scheduleBackups } from './scripts/backup.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -135,6 +136,7 @@ app.use('/api/prompt-engine', promptEngineRouter);
 app.use('/api/provider-styles', providerStylesRouter);
 app.use('/api/warranty-rules', warrantyRulesRouter);
 app.use('/api/page-routines', pageRoutinesRouter);
+app.use('/api/availability-update', availabilityUpdateRouter);
 
 app.post('/api/upload', (req, res) => {
   upload.single('image')(req, res, async (err) => {
@@ -439,6 +441,27 @@ app.get('/api/dashboard', (req, res) => {
   res.json({ stats, monthlySales, topProducts, recentSales, exchange_rate: settings.exchange_rate, warrantyReminders });
 });
 
+app.post('/api/warranty-reminders/:saleId/dismiss', (req, res) => {
+  const saleId = String(req.params.saleId || '');
+  const warrantyEnd = String(req.body?.warranty_end || '');
+  if (!saleId || !/^\d{4}-\d{2}-\d{2}$/.test(warrantyEnd)) {
+    return res.status(400).json({ error: 'Venta o fecha de vencimiento inválida' });
+  }
+
+  const db = getDB();
+  const sale = db.prepare('SELECT id, warranty_end FROM sales WHERE id = ?').get(saleId);
+  if (!sale) return res.status(404).json({ error: 'Venta no encontrada' });
+  if (sale.warranty_end !== warrantyEnd) {
+    return res.status(409).json({ error: 'La fecha de garantía cambió. Actualizá el Dashboard e intentá de nuevo.' });
+  }
+
+  db.prepare(`
+    INSERT OR REPLACE INTO warranty_reminder_dismissals (sale_id, warranty_end, dismissed_at)
+    VALUES (?, ?, datetime('now'))
+  `).run(saleId, warrantyEnd);
+  res.json({ sale_id: saleId, warranty_end: warrantyEnd, dismissed: true });
+});
+
 app.post('/api/login', loginLimiter, (req, res) => {
   const db = getDB();
   const { username, password } = req.body;
@@ -478,10 +501,6 @@ app.post('/api/generate-catalog', async (req, res) => {
       WHERE p.status = 'active' AND p.catalog_visible = 1
       ORDER BY p.category, p.name
     `).all();
-
-    if (!products.length) {
-      return res.status(400).json({ error: 'No hay productos activos para generar el catálogo' });
-    }
 
     const catalogDir = join(__dirname, '..', 'public-catalog');
     await generateCatalogFile(products, catalogDir, uploadsDir);
@@ -537,13 +556,7 @@ async function start() {
     process.exit(1);
   }
 
-  createBackup().catch((e) => {
-    console.error('[Backup] Error automático al iniciar:', e.message);
-  });
-
-  // Y de acá en adelante cada BACKUP_INTERVAL_HOURS (24 por defecto). Antes solo
-  // se respaldaba en este punto, así que un server que se dejaba encendido
-  // semanas no generaba ni un respaldo nuevo.
+  // Respaldar diariamente a una hora fija local, independientemente del arranque.
   scheduleBackups();
 
   // Chequeo de secretos al arrancar. Una API key enmascarada en la base no

@@ -14,6 +14,7 @@ export const ROUTE_TITLES = {
   '#/publications': 'Publicaciones',
   '#/exports': 'Exportaciones',
   '#/import': 'Importar / Sincronizar',
+  '#/availability-update': 'Actualización',
   '#/page-routines': 'Rutinas de Página',
   '#/rankings': 'Ranking de grupos',
 };

@@ -60,6 +60,8 @@ export const api = {
 
   // Dashboard
   getDashboard: () => request('GET', '/dashboard'),
+  dismissWarrantyReminder: (saleId, warrantyEnd) =>
+    request('POST', `/warranty-reminders/${encodeURIComponent(saleId)}/dismiss`, { warranty_end: warrantyEnd }),
   getCounts: () => request('GET', '/counts'),
 
   // Categories
@@ -180,9 +182,20 @@ export const api = {
   importImages: (data) => request('POST', '/images/import', data),
 
   // Sincronización desde imágenes (proveedor)
+  importPrepareCategories: (data) => request('POST', '/import/prepare-categories', data),
+  importAssignImage: (data) => request('POST', '/import/assign-image', data),
+  importBrowse: (data) => request('POST', '/import/browse', data),
   importAnalyze: (data) => request('POST', '/import/analyze', data),
   importDiscardImage: (data) => request('POST', '/import/discard-image', data),
   importApply: (data) => request('POST', '/import/apply', data),
+
+  // Actualización de disponibilidad por comparación visual
+  getAvailabilityUpdateHistory: () => request('GET', '/availability-update/history'),
+  analyzeAvailabilityUpdate: (data) => request('POST', '/availability-update/analyze', data),
+  applyAvailabilityUpdate: (batchId, data) =>
+    request('POST', `/availability-update/${encodeURIComponent(batchId)}/apply`, data),
+  undoAvailabilityUpdate: (batchId) =>
+    request('POST', `/availability-update/${encodeURIComponent(batchId)}/undo`, {}),
 
   // Destinos de una publicación. La cola dejó de ser una pantalla: es el
   // registro interno que el Planificador escribe (fan-out a N grupos) y que la
