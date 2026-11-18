@@ -3,10 +3,12 @@ import { existsSync, readdirSync, statSync, lstatSync, mkdirSync, copyFileSync, 
 import { join, dirname, extname, basename, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { createHash } from 'crypto';
+import sharp from 'sharp';
 import { getDB } from '../db/database.js';
 import { ocrDocument, textoConfiable, bestMatch, extractPrice } from '../lib/ocr.js';
 import { extraerConVision } from '../lib/vision.js';
 import { pareceSecretoValido } from '../lib/settingsMerge.js';
+import { resolveLocalUpload } from '../lib/imageUtils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -381,6 +383,197 @@ router.post('/apply', (req, res) => {
   }
 
   res.json({ applied, hidden, errors, deleted });
+});
+
+// ---------- Comparación visual con imágenes de referencia ----------
+async function computeImageHash(imagePath, size = 32) {
+  // dHash: redimensionar a (size+1) x size, escala de grises, comparar píxeles adyacentes horizontalmente
+  const { data, info } = await sharp(imagePath)
+    .resize(size + 1, size, { fit: 'cover', position: 'center' })
+    .grayscale()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const { width } = info;
+  const chunks = []; // array de números de 31 bits para evitar overflow en JS
+  let chunk = 0;
+  let bitCount = 0;
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const idx = (y * width + x);
+      const idxRight = (y * width + (x + 1));
+      const pxLeft = data[idx];
+      const pxRight = data[idxRight];
+      const bit = pxLeft > pxRight ? 1 : 0;
+      chunk = (chunk << 1) | bit;
+      bitCount++;
+      if (bitCount === 31) {
+        chunks.push(chunk);
+        chunk = 0;
+        bitCount = 0;
+      }
+    }
+  }
+  if (bitCount > 0) {
+    chunk = chunk << (31 - bitCount);
+    chunks.push(chunk);
+  }
+  return chunks;
+}
+
+function hashSimilarity(chunksA, chunksB) {
+  if (!chunksA || !chunksB || chunksA.length !== chunksB.length) return 0;
+  let totalBits = 0;
+  let diffBits = 0;
+  for (let i = 0; i < chunksA.length; i++) {
+    let xor = chunksA[i] ^ chunksB[i];
+    for (let b = 0; b < 31; b++) {
+      totalBits++;
+      if (xor & 1) diffBits++;
+      xor >>>= 1;
+    }
+  }
+  return 1 - diffBits / totalBits;
+}
+
+router.post('/sync-reference-images', async (req, res) => {
+  const { folder } = req.body || {};
+  if (!folder || typeof folder !== 'string') {
+    return res.status(400).json({ error: 'Indicá la carpeta donde están las imágenes' });
+  }
+  const validated = validateImportFolder(folder);
+  if (validated.error) return res.status(400).json({ error: validated.error });
+
+  const db = getDB();
+  const products = db.prepare(
+    'SELECT id, name, category, reference_image FROM products WHERE reference_image IS NOT NULL AND reference_image <> ""'
+  ).all();
+
+  const refProducts = [];
+  for (const p of products) {
+    const refPath = resolveLocalUpload(p.reference_image);
+    if (refPath && p.category) {
+      refProducts.push({ ...p, refPath });
+    }
+  }
+
+  if (refProducts.length === 0) {
+    return res.json({ matches: [], noMatch: [], total: 0, message: 'No hay productos con imagen de referencia y categoría' });
+  }
+
+  const files = readdirSync(validated.dir)
+    .filter(f => IMAGE_EXT.has(extname(f).toLowerCase()))
+    .sort();
+
+  const matches = [];
+  const noMatch = [];
+
+  for (const filename of files) {
+    const sourcePath = join(validated.dir, filename);
+    if (!lstatSync(sourcePath).isFile()) continue;
+
+    let bestMatch = null;
+    let bestScore = 0;
+
+    try {
+      const sourceHash = await computeImageHash(sourcePath);
+
+      for (const p of refProducts) {
+        try {
+          const refHash = await computeImageHash(p.refPath);
+          const score = hashSimilarity(sourceHash, refHash);
+          if (score > bestScore && score >= 0.72) {
+            bestScore = score;
+            bestMatch = {
+              product: { id: p.id, name: p.name, category: p.category },
+              score: Math.round(score * 100)
+            };
+          }
+        } catch (err) {
+          console.error('[Import] Error hashing reference', p.reference_image, err.message);
+        }
+      }
+    } catch (err) {
+      console.error('[Import] Error hashing source', filename, err.message);
+    }
+
+    if (bestMatch) {
+      matches.push({ filename, ...bestMatch });
+      console.log('[Import Sync] Coincidencia', filename, '->', bestMatch.product.name, '(', bestMatch.score, '%)', 'cat:', bestMatch.product.category);
+    } else {
+      noMatch.push(filename);
+      console.log('[Import Sync] Sin coincidencia', filename);
+    }
+  }
+
+  res.json({ matches, noMatch, total: files.length });
+});
+
+// ---------- Comparación individual: una sola imagen contra referencias ----------
+async function compareSingleImage(folder, filename) {
+  const validated = validateImportFolder(folder);
+  if (validated.error) return { error: validated.error };
+
+  const db = getDB();
+  const products = db.prepare(
+    'SELECT id, name, category, reference_image FROM products WHERE reference_image IS NOT NULL AND reference_image <> ""'
+  ).all();
+
+  const refProducts = [];
+  for (const p of products) {
+    const refPath = resolveLocalUpload(p.reference_image);
+    if (refPath && p.category) {
+      refProducts.push({ ...p, refPath });
+    }
+  }
+
+  if (refProducts.length === 0) {
+    return { match: null, noReference: true };
+  }
+
+  const sourcePath = join(validated.dir, filename);
+  if (!lstatSync(sourcePath).isFile()) {
+    return { match: null, error: 'Archivo no encontrado' };
+  }
+
+  let bestMatch = null;
+  let bestScore = 0;
+
+  try {
+    const sourceHash = await computeImageHash(sourcePath);
+
+    for (const p of refProducts) {
+      try {
+        const refHash = await computeImageHash(p.refPath);
+        const score = hashSimilarity(sourceHash, refHash);
+        if (score > bestScore && score >= 0.72) {
+          bestScore = score;
+          bestMatch = {
+            product: { id: p.id, name: p.name, category: p.category },
+            score: Math.round(score * 100)
+          };
+        }
+      } catch (err) {
+        console.error('[Import] Error hashing reference', p.reference_image, err.message);
+      }
+    }
+  } catch (err) {
+    console.error('[Import] Error hashing source', filename, err.message);
+    return { match: null, error: err.message };
+  }
+
+  return { match: bestMatch, noReference: false };
+}
+
+router.post('/compare-single-image', async (req, res) => {
+  const { folder, filename } = req.body || {};
+  if (!folder || typeof folder !== 'string' || !filename || typeof filename !== 'string') {
+    return res.status(400).json({ error: 'Indicá la carpeta y el nombre de la imagen' });
+  }
+  const result = await compareSingleImage(folder, filename);
+  if (result.error) return res.status(500).json({ error: result.error });
+  res.json({ filename, match: result.match, noReference: result.noReference });
 });
 
 export default router;

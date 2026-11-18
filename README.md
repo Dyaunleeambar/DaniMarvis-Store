@@ -502,6 +502,8 @@ Es el **seguro del publicador**: publica solo lo que ya venció, con límites de
 |--------|------|-------------|
 | `POST` | `/api/import/analyze` | Analizar imágenes de una carpeta con OCR (requiere `folder` y `provider_id`) |
 | `POST` | `/api/import/apply` | Aplicar precios detectados a productos (actualiza precio y visibilidad) |
+| `POST` | `/api/import/sync-reference-images` | Comparar imágenes en carpeta raíz con imágenes de referencia de productos (hash perceptual dHash) |
+| `POST` | `/api/import/compare-single-image` | Comparar una sola imagen contra todas las referencias (usado para progreso "X de Y") |
 
 ### Anuncios generados con IA
 
@@ -561,6 +563,8 @@ Es el **seguro del publicador**: publica solo lo que ya venció, con límites de
 |--------|------|-------------|
 | `GET` | `/api/backup` | Exportar todos los datos como archivo JSON |
 | `POST` | `/api/backup/restore` | Restaurar todos los datos desde un archivo JSON (elimina datos existentes) |
+| `GET` | `/api/backup/tables` | Listar todas las tablas disponibles para exportación selectiva |
+| `POST` | `/api/backup/selective` | Exportar solo tablas seleccionadas, con filtros opcionales por tabla (ej. `provider_id`, `catalog_visible` en `products`) |
 
 ### Ranking de grupos (Biblioteca de Contenido)
 
@@ -779,32 +783,42 @@ Permite generar reportes PDF de productos con personalización completa.
 
 ## Importación / Sincronización OCR
 
-Funcionalidad para actualizar precios y disponibilidad de productos a partir de las imágenes que publica el proveedor (listas de precios en foto).
+Funcionalidad para actualizar precios y disponibilidad de productos a partir de las imágenes que publica el proveedor (listas de precios en foto), y para clasificar imágenes pendientes en sus carpetas de categoría.
 
-### Flujo
+### Flujo estándar (OCR)
 
 1. **Configurar** — Elegir proveedor y carpeta donde se guardaron las imágenes (una por producto).
 2. **Analizar** — El sistema lee cada imagen con OCR (tesseract.js), detecta el texto y busca coincidencia con los productos existentes. También detecta precios en USD.
 3. **Revisar** — Para cada imagen se muestra: producto detectado (con % de coincidencia), precio detectado, precio actual y texto OCR. Se puede corregir manualmente.
 4. **Aplicar** — Actualiza precios, define visibilidad en catálogo y elimina de la carpeta las imágenes ya procesadas. Opcionalmente oculta productos del proveedor que no aparecen en la lista.
 
+### Flujo por Vista por Categoría (clasificación de imágenes)
+
+1. **Maximizar** — Hacer clic en el botón de maximizar área de trabajo.
+2. **Vista por categoría** — Activar el toggle para ver las imágenes pendientes de clasificar y las carpetas de categoría.
+3. **Analizar todo** — Compara cada imagen en la raíz con las imágenes de referencia (`reference_image`) de los productos usando hash perceptual (dHash). Muestra progreso en tiempo real (`Comparando X de Y`).
+4. **Sincronizar** — Mueve las imágenes que coincidieron con una categoría a su carpeta correspondiente. Las que no tienen coincidencia quedan en la raíz para revisión manual.
+5. **Arrastre manual** — Alternativamente, se pueden arrastrar imágenes individuales o seleccionadas a la carpeta de categoría deseada.
+
 ### Características
 
 - **OCR en español e inglés** con tesseract.js v7
 - **Coincidencia fuzzy** — Algoritmo de matching que tolera errores de escritura y variaciones en nombres
 - **Detección de precios** — Reconoce montos en USD con contexto (distingue precios de especificaciones técnicas)
+- **Comparación visual con imágenes de referencia** — dHash (difference hash 32×32) para comparar imágenes contra `reference_image` de los productos sin usar IA de visión (ahorra límites diarios de API)
 - **Creación de productos** — Botón `+` para crear un producto nuevo directamente desde la imagen
 - **Toggle de visibilidad** — Controlar si cada producto queda visible en el catálogo
 - **Eliminación de imágenes procesadas** — Limpieza automática de la carpeta tras aplicar
 - **Regenerar catálogo** — Botón para regenerar el catálogo público tras la sincronización
+- **Progreso en tiempo real** — Contador `X de Y` durante el análisis masivo de imágenes
 
 ### Cómo usarlo
 
 1. Ve a **Importar / Sincronizar** en el panel.
 2. Selecciona el proveedor y la carpeta con las imágenes.
-3. Haz clic en **Analizar imágenes**.
+3. Haz clic en **Analizar imágenes** (OCR) o activa **Vista por categoría** (clasificación).
 4. Revisa cada resultado, corrige si hace falta.
-5. Marca los productos a actualizar y haz clic en **Aplicar seleccionados**.
+5. Marca los productos a actualizar y haz clic en **Aplicar seleccionados** (OCR) o **Sincronizar** (clasificación).
 
 ---
 
@@ -1230,13 +1244,25 @@ La vista `#/rankings` mide qué grupos de Facebook devuelven **más** (y **menos
 
 ## Sistema de Respaldos
 
-Permite exportar e importar todos los datos del sistema.
+Permite exportar e importar todos los datos del sistema, con opción de exportación selectiva por tabla.
 
-### Exportar
+### Exportar respaldo total
 
 1. Ve a **Respaldos** en el panel.
-2. Haz clic en **"Exportar datos"**.
-3. Se descarga un archivo JSON con todos los productos, proveedores, ventas, categorías, configuración, publicaciones y exportaciones.
+2. Haz clic en **"Exportar todo"**.
+3. Se descarga un archivo JSON con todos los productos, proveedores, ventas, categorías, configuración, publicaciones, exportaciones y usuarios.
+
+### Exportar selección configurable
+
+1. Ve a **Respaldos** en el panel.
+2. En el card **"Exportar selección configurable"**, marca las tablas que querés incluir.
+3. Si seleccionás `products`, aparecen filtros opcionales:
+   - **Proveedor**: exportar solo productos de un proveedor específico.
+   - **Estado**: exportar solo productos visibles, solo ocultos, o todos.
+4. Las categorías y demás tablas se exportan **íntegras** (no se filtran por proveedor).
+5. Haz clic en **"Exportar selección"**. Se descarga un JSON con solo las tablas y filtros elegidos.
+
+Ideal para preparar datos para la actualización asistida por IA o para enviar solo el catálogo de un proveedor.
 
 ### Importar
 
@@ -1247,8 +1273,20 @@ Permite exportar e importar todos los datos del sistema.
 ### Desde la API
 
 ```bash
-# Exportar
+# Exportar todo
 GET /api/backup → archivo JSON
+
+# Listar tablas disponibles
+GET /api/backup/tables
+
+# Exportar selectivo (ej: solo products de un proveedor, y categories completas)
+POST /api/backup/selective
+Body: {
+  "tables": ["products", "categories"],
+  "filters": {
+    "products": { "provider_id": "uuid-del-proveedor", "catalog_visible": "1" }
+  }
+}
 
 # Restaurar
 POST /api/backup/restore
@@ -1424,6 +1462,9 @@ En **Configuración** del panel puedes definir una plantilla de texto con placeh
 - [x] Corridas del publicador asíncronas (202 + `runId`) con progreso en vivo por polling, en vez de request bloqueante
 - [x] Diagnóstico de fallas del publicador: distingue sesión de Facebook vencida de Chrome no disponible
 - [x] Marca de publicaciones que quedan `pending_approval` cuando el grupo pide aprobación del administrador
+- [x] Vista por Categoría en Importar/Sincronizar con botones "Analizar todo" (comparación con imágenes de referencia) y "Sincronizar" (mover imágenes a carpetas de categoría)
+- [x] Comparación visual dHash (32×32) contra `reference_image` de productos, sin consumir límites de IA de visión
+- [x] Exportación selectiva de respaldos por tabla con filtros de proveedor y estado de productos
 
 ### Por implementar
 

@@ -288,3 +288,17 @@ export function esFalloTransitorio(message) {
   if (!m || classifyFailure(m)) return false;
   return /timeout|timed out|detached frame|target closed|session closed|protocol error|execution context was destroyed|navigation failed|net::err|econnreset|enotfound|socket hang up|network error|request failed/i.test(m);
 }
+
+export function shouldAutoRetry({ mode, cancelled, status, message, enabled, retriesUsed, maxRetries }) {
+  const used = Number(retriesUsed);
+  const max = Number(maxRetries);
+  return mode === 'publish'
+    && !cancelled
+    && status !== 'revisar'
+    && enabled === true
+    && esFalloTransitorio(message)
+    && Number.isFinite(used)
+    && Number.isFinite(max)
+    && max > 0
+    && used < max;
+}

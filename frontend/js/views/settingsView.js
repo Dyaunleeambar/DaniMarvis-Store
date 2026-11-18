@@ -636,19 +636,19 @@ function renderPage(container, settings, categories, providerStyles, status) {
               <div class="form-group">
                 <label style="display:flex;align-items:center;gap:6px">
                   <input type="checkbox" name="ag_autoretry" ${ag.auto_retry !== false ? 'checked' : ''} />
-                  Reintentar solos los fallos de red
+                  Reintentar automáticamente fallos transitorios
                 </label>
                 <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">
-                  Solo timeouts y cortes de conexión. Los errores de ritmo, grupo cerrado
-                  o sin permiso NO se reintentan solos (ahí reintentar empeora).
+                  Solo timeouts, cortes de conexión y errores transitorios del navegador.
+                  Los errores de ritmo, grupo cerrado, sesión o permisos NO se reintentan.
                 </small>
               </div>
               <div class="form-group">
-                <label>Máx. reintentos automáticos</label>
+                <label>Máx. reintentos automáticos adicionales</label>
                 <input type="number" name="ag_retry_max" class="form-control" min="0" max="10" value="${ag.retry_max ?? AG.retry_max}" />
                 <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">
-                  0 desactiva el reintento aunque el interruptor esté prendido. Al agotarse
-                  queda en error para que lo mires vos.
+                  Son intentos adicionales al primero. 0 desactiva el reintento aunque el
+                  interruptor esté prendido. Al agotarse queda en error para que lo mires vos.
                 </small>
               </div>
               <div class="form-group">

@@ -960,6 +960,41 @@ tr:hover td { background: rgba(201,132,122,.03); }
   font-size: .82rem;
 }
 
+.availability-section-filters {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(180px, 1.5fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.availability-section-filters .form-control {
+  min-width: 0;
+}
+
+.availability-filter-count {
+  color: var(--text-muted);
+  font-size: .75rem;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.availability-filter-empty {
+  padding: 8px 0;
+}
+
+.availability-section-filters .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .availability-update-errors {
   margin-top: 10px;
   padding: 10px;
@@ -1058,8 +1093,28 @@ tr:hover td { background: rgba(201,132,122,.03); }
 }
 
 .availability-image-grid figure {
+  position: relative;
   min-width: 0;
   margin: 0;
+}
+
+.availability-image-actions {
+  position: absolute;
+  z-index: 1;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  gap: 4px;
+}
+
+.availability-image-actions .btn {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  padding: 5px;
+  place-items: center;
+  background: var(--bg-card);
+  box-shadow: 0 1px 5px rgb(0 0 0 / 18%);
 }
 
 .availability-image-grid img {
@@ -1083,6 +1138,12 @@ tr:hover td { background: rgba(201,132,122,.03); }
   }
   .availability-update-actions {
     margin-left: auto;
+  }
+  .availability-section-filters {
+    grid-template-columns: 1fr;
+  }
+  .availability-filter-count {
+    text-align: left;
   }
 }
 

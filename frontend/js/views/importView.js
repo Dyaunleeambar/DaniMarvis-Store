@@ -587,13 +587,25 @@ function renderResults(container, data, registeredCategories = [], projectProduc
     </div>
     <div class="import-category-workspace">
       <section class="import-panel import-category-images-panel">
-        <div class="import-panel-header">
-          <label class="import-classification-select-all">
-            <input type="checkbox" id="import-category-select-all" />
-            <span>Imágenes pendientes de clasificar</span>
-          </label>
-          <span id="import-category-selection-count" style="font-size:.72rem;color:var(--text-muted)">0 seleccionadas</span>
-          <span id="import-category-image-count" style="font-size:.72rem;color:var(--text-muted)">${rawImages.length}</span>
+        <div class="import-panel-header" style="display:flex;align-items:center;gap:10px;justify-content:space-between">
+          <div style="display:flex;align-items:center;gap:8px">
+            <button type="button" class="btn btn--primary btn--sm" id="imp-analyze-all" title="Comparar imágenes pendientes con imágenes de referencia de productos" aria-label="Comparar imágenes pendientes con imágenes de referencia de productos">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M22 2 11 13"/><path d="M9 2L15 2l1.5 7L20 2"/><path d="M1 15l3.5 2L8 15L11 15l2 6L7 18z"/></svg>
+              Analizar todo
+            </button>
+            <button type="button" class="btn btn--primary btn--sm" id="imp-sync-pending" title="Sincronizar imágenes pendientes a sus carpetas de categoría" aria-label="Sincronizar imágenes pendientes a sus categorías">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M21 12a9 9 0 0 1 9 9 9.75 9.75 0 0 1 6.74-2.74L21 16"/><path d="M21 21v-5h-5"/></svg>
+              Sincronizar
+            </button>
+            <label class="import-classification-select-all">
+              <input type="checkbox" id="import-category-select-all" />
+              <span>Imágenes pendientes de clasificar</span>
+            </label>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;font-size:.72rem;color:var(--text-muted)">
+            <span id="import-category-selection-count">0 seleccionadas</span>
+            <span id="import-category-image-count">${rawImages.length}</span>
+          </div>
         </div>
         <div class="import-category-images" id="import-category-images"></div>
       </section>
@@ -706,6 +718,182 @@ function renderResults(container, data, registeredCategories = [], projectProduc
   }
 
   renderClassificationView();
+  updateSyncButtonState();
+
+  // ---------- Sincronizar imágenes pendientes a categorías ----------
+  async function syncPendingToCategories() {
+    console.log('[Import Sync] Botón Sincronizar clickeado');
+    if (!folderState) {
+      console.log('[Import Sync] No hay folderState');
+      showToast('Primero cargá las imágenes para poder sincronizar.', 'error');
+      return;
+    }
+    const rootImages = [...(folderState.rootImages || [])];
+    console.log('[Import Sync] Imágenes en raíz:', rootImages.length);
+    const analyzed = folderState.analyzedByFolder['__root__'] || {};
+    const moved = [];
+    const errors = [];
+    const skipped = [];
+
+    for (const image of rootImages) {
+      const items = analyzed[image.filename];
+      let targetCategory = null;
+
+      if (items && items.length) {
+        for (const it of items) {
+          if (it.product && it.product.id) {
+            const product = data.products.find(p => p.id === it.product.id);
+            if (product && product.category) {
+              targetCategory = product.category;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!targetCategory) {
+        skipped.push(image.filename);
+        continue;
+      }
+
+      try {
+        await api.importAssignImage({ folder: sourceFolder, filename: image.filename, category: targetCategory });
+        moved.push({ filename: image.filename, category: targetCategory });
+        folderState.rootImages = folderState.rootImages.filter(img => img.filename !== image.filename);
+        selectedFilenames.delete(image.filename);
+      } catch (err) {
+        errors.push(`${image.filename}: ${err.message}`);
+      }
+    }
+
+    folderState.selectedRootFilenames = [...selectedFilenames];
+    renderClassificationView();
+    renderCarousel();
+    updateSyncButtonState();
+
+    if (errors.length) {
+      showToast(`${moved.length} imagen(es) sincronizada(s). No se pudieron mover: ${errors.join('; ')}`, moved.length ? 'warning' : 'error');
+    } else if (moved.length) {
+      showToast(`${moved.length} imagen(es) movida(s) a su carpeta de categoría. Quedan ${skipped.length} sin categoría detectada.`, 'success');
+    } else {
+      showToast('No hay imágenes con categoría detectada para mover. Usá "Analizar todo" primero.', 'info');
+    }
+  }
+
+  document.getElementById('imp-sync-pending')?.addEventListener('click', syncPendingToCategories);
+
+  // ---------- Analizar todas las imágenes pendientes (comparación con imágenes de referencia) ----------
+  async function analyzeAllPending() {
+    if (!folderState) return;
+    const rootImages = [...(folderState.rootImages || [])];
+    const analyzed = folderState.analyzedByFolder['__root__'] || {};
+    const toAnalyze = rootImages.filter(image => !analyzed[image.filename]);
+    if (!toAnalyze.length) {
+      showToast('Todas las imágenes pendientes ya fueron comparadas con imágenes de referencia.', 'info');
+      updateSyncButtonState();
+      return;
+    }
+    const btn = document.getElementById('imp-analyze-all');
+    btn.disabled = true;
+    let done = 0;
+    let matched = 0;
+    let unmatched = 0;
+    let errors = 0;
+    folderState.analyzedByFolder['__root__'] ||= Object.create(null);
+
+    try {
+      for (const image of toAnalyze) {
+        done++;
+        btn.textContent = `Comparando ${done} de ${toAnalyze.length}…`;
+        try {
+          const res = await api.importCompareSingleImage({ folder: sourceFolder, filename: image.filename });
+          if (res.noReference) {
+            folderState.analyzedByFolder['__root__'][image.filename] = [
+              { ...image, error: 'Sin productos con imagen de referencia' }
+            ];
+            unmatched++;
+          } else if (res.match) {
+            folderState.analyzedByFolder['__root__'][image.filename] = [
+              { product: res.match.product, score: res.match.score }
+            ];
+            matched++;
+          } else {
+            folderState.analyzedByFolder['__root__'][image.filename] = [
+              { ...image, error: 'Sin coincidencia con imagen de referencia' }
+            ];
+            unmatched++;
+          }
+        } catch (err) {
+          errors++;
+          console.error('[Import] Error comparando', image.filename, err);
+          folderState.analyzedByFolder['__root__'][image.filename] = [
+            { ...image, error: err.message || 'Error al comparar' }
+          ];
+          unmatched++;
+        }
+      }
+
+      renderClassificationView();
+      renderCarousel();
+      updateSyncButtonState();
+
+      if (matched > 0 && unmatched > 0) {
+        showToast(`${matched} imagen(es) coincidieron con imagen de referencia. ${unmatched} sin coincidencia.`, 'success');
+      } else if (matched > 0) {
+        showToast(`${matched} imagen(es) coincidieron con imagen de referencia.`, 'success');
+      } else if (unmatched > 0) {
+        showToast(`No se encontraron coincidencias con imágenes de referencia (${unmatched} imagen(es)).`, 'warning');
+      } else {
+        showToast('No hay imágenes pendientes para comparar.', 'info');
+      }
+    } catch (err) {
+      console.error('[Import] Error comparando con imágenes de referencia', err);
+      showToast(err.message || 'Error al comparar imágenes de referencia', 'error');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Analizar todo';
+      }
+    }
+  }
+
+  document.getElementById('imp-analyze-all')?.addEventListener('click', analyzeAllPending);
+
+  // ---------- Estado del botón Sincronizar ----------
+  function updateSyncButtonState() {
+    const btn = document.getElementById('imp-sync-pending');
+    if (!btn) return;
+    if (!folderState) {
+      btn.title = 'Sincronizar imágenes pendientes a sus carpetas de categoría';
+      btn.setAttribute('aria-label', 'Sincronizar imágenes pendientes a sus categorías');
+      return;
+    }
+    const rootImages = folderState.rootImages || [];
+    const analyzed = folderState.analyzedByFolder['__root__'] || {};
+    let hasCategorized = 0;
+    for (const image of rootImages) {
+      const items = analyzed[image.filename];
+      if (items && items.length) {
+        for (const it of items) {
+          if (it.product && it.product.id) {
+            const product = data.products.find(p => p.id === it.product.id);
+            if (product && product.category) {
+              hasCategorized++;
+              break;
+            }
+          }
+        }
+      }
+    }
+    console.log('[Import Sync] rootImages:', rootImages.length, 'con categoría detectada:', hasCategorized);
+    if (hasCategorized > 0) {
+      btn.title = `Sincronizar ${hasCategorized} imagen(es) con categoría detectada`;
+      btn.setAttribute('aria-label', `Sincronizar ${hasCategorized} imagen(es) a sus categorías`);
+    } else {
+      btn.title = 'Sincronizar imágenes pendientes (no hay imágenes con categoría detectada)';
+      btn.setAttribute('aria-label', 'Sincronizar imágenes pendientes a sus categorías');
+    }
+  }
 
   classificationImages.addEventListener('change', (e) => {
     const checkbox = e.target.closest('.import-classification-checkbox');

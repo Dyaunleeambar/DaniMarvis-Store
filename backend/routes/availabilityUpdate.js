@@ -1,10 +1,11 @@
 import { Router } from 'express';
-import { existsSync, lstatSync, readdirSync, readFileSync } from 'fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from 'fs';
 import { createHash, randomUUID } from 'crypto';
-import { dirname, extname, join, relative, resolve, sep } from 'path';
+import { basename, dirname, extname, join, relative, resolve, sep } from 'path';
 import { fileURLToPath } from 'url';
 import sharp from 'sharp';
 import { getDB, transaccion } from '../db/database.js';
+import { getUploadsDir } from '../lib/accountConfig.js';
 import { resolveLocalUpload } from '../lib/imageUtils.js';
 
 const router = Router();
@@ -46,6 +47,23 @@ function listInventoryImages(folder) {
     addDirectory(dir);
   }
   return { root, images };
+}
+
+function findInventoryImage(folder, relativePath) {
+  if (typeof relativePath !== 'string' || relativePath.includes('\\')) {
+    throw new Error('Nombre de imagen inválido');
+  }
+  const segments = relativePath.split('/');
+  if (segments.length > 2 || segments.some(segment => !segment || segment === '.' || segment === '..')) {
+    throw new Error('Nombre de imagen inválido');
+  }
+  if (!IMAGE_EXT.has(extname(basename(relativePath)).toLowerCase())) {
+    throw new Error('El archivo indicado no es una imagen válida');
+  }
+  const inventory = listInventoryImages(folder);
+  const image = inventory.images.find(item => item.relativePath === relativePath);
+  if (!image) throw new Error('La imagen ya no existe en la carpeta analizada');
+  return image;
 }
 
 async function imageHash(path) {
@@ -172,6 +190,7 @@ async function analyzeInventory(providerId, folder) {
         candidates: ranked.slice(0, 3).map(item => ({
           productId: item.product.id,
           productName: item.product.name,
+          category: item.product.category || '',
           referenceThumbnail: item.product.thumbnail,
           distance: item.distance,
         })),
@@ -235,11 +254,43 @@ router.post('/analyze', async (req, res) => {
       analyzedImages: preview.analyzedImages,
       imageErrors: preview.imageErrors,
       productErrors: preview.productErrors,
+      unmatchedImages: preview.unmatchedImages.map(({ filename }) => ({ filename })),
       products: preview.products.map(({ referenceThumbnail, ...product }) => product),
       changes: preview.changes,
     };
     dbInsertBatch(batchId, providerId, preview.folder, persistedPreview);
     res.json({ ...preview, batch_id: batchId });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/discard-image', (req, res) => {
+  const { batch_id: batchId, folder, filename } = req.body || {};
+  if (typeof batchId !== 'string' || !batchId || typeof folder !== 'string' || !folder.trim() || typeof filename !== 'string') {
+    return res.status(400).json({ error: 'Indicá la carpeta y la imagen que quieres eliminar' });
+  }
+  try {
+    const image = findUnmatchedBatchImage(batchId, folder.trim(), filename);
+    unlinkSync(image.path);
+    res.json({ deleted: image.relativePath });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/copy-image', (req, res) => {
+  const { batch_id: batchId, folder, filename } = req.body || {};
+  if (typeof batchId !== 'string' || !batchId || typeof folder !== 'string' || !folder.trim() || typeof filename !== 'string') {
+    return res.status(400).json({ error: 'Indicá la carpeta y la imagen que quieres usar' });
+  }
+  try {
+    const image = findUnmatchedBatchImage(batchId, folder.trim(), filename);
+    const uploadsDir = getUploadsDir();
+    mkdirSync(uploadsDir, { recursive: true });
+    const copiedFilename = `${randomUUID()}${extname(image.filename).toLowerCase()}`;
+    copyFileSync(image.path, join(uploadsDir, copiedFilename));
+    res.json({ url: `/uploads/${copiedFilename}` });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -263,6 +314,20 @@ function dbInsertBatch(id, providerId, folder, preview) {
     INSERT INTO availability_update_batches (id, provider_id, folder, status, preview_json)
     VALUES (?, ?, ?, 'preview', ?)
   `).run(id, providerId, folder, JSON.stringify(preview));
+}
+
+function findUnmatchedBatchImage(batchId, folder, filename) {
+  const batch = getDB().prepare(`
+    SELECT folder, status, preview_json FROM availability_update_batches WHERE id = ?
+  `).get(batchId);
+  if (!batch || batch.status !== 'preview' || resolve(batch.folder) !== resolve(folder)) {
+    throw new Error('El análisis ya no está disponible; vuelve a analizar la carpeta');
+  }
+  const preview = JSON.parse(batch.preview_json);
+  if (!(preview.unmatchedImages || []).some(image => image.filename === filename)) {
+    throw new Error('La imagen no pertenece a la lista de imágenes sin producto asociado');
+  }
+  return findInventoryImage(batch.folder, filename);
 }
 
 router.post('/:batchId/apply', async (req, res) => {

@@ -72,6 +72,8 @@ export const api = {
 
   // Backup
   exportBackup: () => request('GET', '/backup'),
+  exportSelectiveBackup: (tables, filters = {}) => request('POST', '/backup/selective', { tables, filters }),
+  listBackupTables: () => request('GET', '/backup/tables'),
   restoreBackup: (data) => request('POST', '/backup/restore', data),
 
   // Settings
@@ -186,12 +188,16 @@ export const api = {
   importAssignImage: (data) => request('POST', '/import/assign-image', data),
   importBrowse: (data) => request('POST', '/import/browse', data),
   importAnalyze: (data) => request('POST', '/import/analyze', data),
+  importSyncReferenceImages: (data) => request('POST', '/import/sync-reference-images', data),
+  importCompareSingleImage: (data) => request('POST', '/import/compare-single-image', data),
   importDiscardImage: (data) => request('POST', '/import/discard-image', data),
   importApply: (data) => request('POST', '/import/apply', data),
 
   // Actualización de disponibilidad por comparación visual
   getAvailabilityUpdateHistory: () => request('GET', '/availability-update/history'),
   analyzeAvailabilityUpdate: (data) => request('POST', '/availability-update/analyze', data),
+  discardAvailabilityUpdateImage: (data) => request('POST', '/availability-update/discard-image', data),
+  copyAvailabilityUpdateImage: (data) => request('POST', '/availability-update/copy-image', data),
   applyAvailabilityUpdate: (batchId, data) =>
     request('POST', `/availability-update/${encodeURIComponent(batchId)}/apply`, data),
   undoAvailabilityUpdate: (batchId) =>

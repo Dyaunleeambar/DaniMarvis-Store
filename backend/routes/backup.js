@@ -74,4 +74,54 @@ router.post('/restore', (req, res) => {
   }
 });
 
+// ---------- Listar tablas disponibles ----------
+router.get('/tables', (req, res) => {
+  res.json({ tables: listTables() });
+});
+
+function getValidColumns(table) {
+  const db = getDB();
+  const rows = db.prepare(`SELECT name FROM pragma_table_info(?)`).all(table);
+  return new Set(rows.map(r => r.name));
+}
+
+// ---------- Exportación selectiva de tablas (con filtros opcionales por tabla) ----------
+router.post('/selective', (req, res) => {
+  const { tables, filters = {} } = req.body || {};
+  if (!tables || !Array.isArray(tables) || tables.length === 0) {
+    return res.status(400).json({ error: 'Indicá al menos una tabla para exportar' });
+  }
+
+  const db = getDB();
+  const availableTables = new Set(listTables());
+  const data = {
+    version: 2,
+    exported_at: new Date().toISOString(),
+    selective: true,
+    tables,
+    filters,
+  };
+
+  for (const t of tables) {
+    if (!availableTables.has(t)) continue;
+    const validCols = getValidColumns(t);
+    const tableFilters = filters[t] || {};
+    const conditions = [];
+    const params = [];
+    for (const [col, val] of Object.entries(tableFilters)) {
+      if (val === '' || val === null || val === undefined) continue;
+      if (!validCols.has(col)) continue;
+      conditions.push(`${col} = ?`);
+      params.push(val);
+    }
+    let sql = `SELECT * FROM ${t}`;
+    if (conditions.length) {
+      sql += ` WHERE ${conditions.join(' AND ')}`;
+    }
+    data[t] = db.prepare(sql).all(...params);
+  }
+
+  res.json(data);
+});
+
 export default router;

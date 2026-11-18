@@ -49,13 +49,11 @@ export const DEFAULT_AGENDA = {
   dedupe_hours: 6,     // no repetir el mismo texto en el mismo grupo antes de esto (0 = no)
   breaker_failures: 3, // fallos seguidos que pausan el disparador
   breaker_cooldown_min: 60,
-  // Reintento automático de cualquier fallo (salvo 'revisar' y cancelados).
-  // Se ejecutan en rondas de 2 intentos consecutivos sin gap entre ellos.
-  // Si se agotan los 2 de una ronda y aún queda cupo, se espera `retry_delay_min`
-  // minutos y se lanza otra ronda de 2, hasta llegar a `retry_max`.
+  // Solo se reintentan fallos transitorios reconocidos (red/timeout).
+  // Cada reintento es una ejecución separada, diferida por `retry_delay_min`.
   auto_retry: true,
-  retry_max: 2,        // máximo de intentos totales por destino (1 a 6)
-  retry_delay_min: 2,  // minutos de espera entre rondas de 2 intentos
+  retry_max: 2,        // máximo de reintentos automáticos adicionales (0 a 10)
+  retry_delay_min: 15, // minutos mínimos de espera antes de cada reintento
   // Reintento de lotes fallidos (sin-boton / sin-grupos) al final del día.
   // Solo aplica en modo A+B: crea una nueva fila en la cuenta alternativa
   // para recuperar la propagación a grupos adicionales. Default apagado.
@@ -175,10 +173,9 @@ export function getAgendaConfig() {
   cfg.auto_retry = cfg.auto_retry !== false;
   // `lote_retry` es booleano; default false (apagado). Solo se activa con true explícito.
   cfg.lote_retry = cfg.lote_retry === true;
-  // 0 desactiva los auto-reintentos sin apagar el interruptor; el `||` se
-  // comería el 0, así que va con Number.isFinite igual que dedupe_hours.
+  // 0 desactiva los auto-reintentos sin apagar el interruptor.
   const rm = Number(cfg.retry_max);
-  cfg.retry_max = Number.isFinite(rm) ? Math.max(1, Math.min(6, rm)) : DEFAULT_AGENDA.retry_max;
+  cfg.retry_max = Number.isFinite(rm) ? Math.max(0, Math.min(10, rm)) : DEFAULT_AGENDA.retry_max;
   const rd = Number(cfg.retry_delay_min);
   cfg.retry_delay_min = Number.isFinite(rd) ? Math.max(1, Math.min(1440, rd)) : DEFAULT_AGENDA.retry_delay_min;
   return cfg;

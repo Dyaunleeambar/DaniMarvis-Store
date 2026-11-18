@@ -32,7 +32,7 @@ export {
   sortearGapMs, gapEfectivoMs, describirGap, marcarIntentoAhora, minutosParaTope,
 } from './limites.js';
 
-export { parsePosterOutput, parsePosterDiag, notaLote, CAUSAS, classifyFailure, esFalloTransitorio } from './poster.js';
+export { parsePosterOutput, parsePosterDiag, notaLote, CAUSAS, classifyFailure, esFalloTransitorio, shouldAutoRetry } from './poster.js';
 
 export { logFinCorrida, startGroupPublish, retryLotesFallidosDelDia } from './cola.js';
 

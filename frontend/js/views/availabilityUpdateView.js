@@ -78,6 +78,32 @@ function renderView(container, providers, history) {
   const previewHost = container.querySelector('#update-preview');
   const historyHost = container.querySelector('#update-history');
 
+  previewHost.addEventListener('click', async event => {
+    const productButton = event.target.closest('.update-product-action');
+    if (productButton) {
+      await handleProductAction(productButton);
+      return;
+    }
+    const createButton = event.target.closest('.availability-image-create');
+    if (createButton) {
+      await createProductFromImage(createButton);
+      return;
+    }
+    const deleteButton = event.target.closest('.availability-image-delete');
+    if (deleteButton) {
+      await discardInventoryImage(deleteButton);
+      return;
+    }
+    const image = event.target.closest('.update-preview-image');
+    if (image) window._openLightbox([image.src]);
+  });
+  previewHost.addEventListener('keydown', event => {
+    const image = event.target.closest('.update-preview-image');
+    if (!image || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    window._openLightbox([image.src]);
+  });
+
   async function reportCatalogRefresh(message) {
     try {
       const catalog = await api.generateCatalog();
@@ -177,6 +203,111 @@ function renderView(container, providers, history) {
     `;
   }
 
+  const sectionFilterState = new Map();
+  const sectionFilterData = new Map();
+
+  function makeFilteredSection(title, key, items, renderItem, description = '') {
+    if (!items.length) return '';
+    sectionFilterData.set(key, { items, renderItem });
+    if (!sectionFilterState.has(key)) sectionFilterState.set(key, { category: '', query: '' });
+    const state = sectionFilterState.get(key);
+    const categories = [...new Set(items.flatMap(item => (
+      item.category ? [item.category] : (item.candidates || []).map(candidate => candidate.category).filter(Boolean)
+    )))].sort((a, b) => a.localeCompare(b, 'es'));
+    return `
+      <section class="card availability-update-section" data-filter-section="${key}">
+        <h3>${title} <span class="badge" data-filter-total>${items.length}</span></h3>
+        ${description}
+        <div class="availability-section-filters">
+          <label>
+            <span class="sr-only">Filtrar ${title} por categoría</span>
+            <select class="form-control" data-filter-category aria-label="Filtrar ${title} por categoría">
+              <option value="">Todas las categorías</option>
+              ${categories.map(category => `<option value="${esc(category)}" ${state.category === category ? 'selected' : ''}>${esc(category)}</option>`).join('')}
+            </select>
+          </label>
+          <label>
+            <span class="sr-only">Buscar en ${title}</span>
+            <input class="form-control" type="search" data-filter-search value="${esc(state.query)}" placeholder="Buscar producto o categoría…" aria-label="Buscar en ${title}" />
+          </label>
+          <small class="availability-filter-count" aria-live="polite"></small>
+        </div>
+        <div class="availability-product-list" data-filter-list></div>
+        <p class="availability-filter-empty" data-filter-empty hidden>No hay resultados para estos filtros.</p>
+      </section>
+    `;
+  }
+
+  function renderFilteredSection(section) {
+    const data = sectionFilterData.get(section.dataset.filterSection);
+    if (!data) return;
+    const state = sectionFilterState.get(section.dataset.filterSection);
+    const category = section.querySelector('[data-filter-category]').value;
+    const query = section.querySelector('[data-filter-search]').value.trim().toLocaleLowerCase('es');
+    state.category = category;
+    state.query = section.querySelector('[data-filter-search]').value;
+    const filtered = data.items.filter(item => {
+      const categories = item.category
+        ? [item.category]
+        : (item.candidates || []).map(candidate => candidate.category).filter(Boolean);
+      if (category && !categories.includes(category)) return false;
+      const searchable = [
+        item.name, item.category, item.filename,
+        ...(item.candidates || []).map(candidate => candidate.productName),
+      ].filter(Boolean).join(' ').toLocaleLowerCase('es');
+      return !query || searchable.includes(query);
+    });
+    section.querySelector('[data-filter-list]').innerHTML = filtered.map(data.renderItem).join('');
+    section.querySelector('[data-filter-empty]').hidden = filtered.length > 0;
+    section.querySelector('[data-filter-total]').textContent = filtered.length === data.items.length
+      ? String(data.items.length)
+      : `${filtered.length}/${data.items.length}`;
+  }
+
+  async function createProductFromImage(button) {
+    if (!batch) return;
+    const filename = button.dataset.imageFilename;
+    button.disabled = true;
+    try {
+      const copiedImage = await api.copyAvailabilityUpdateImage({
+        batch_id: batch.batch_id,
+        folder: batch.folder,
+        filename,
+      });
+      await openProductForm(null, {
+        providerId: batch.provider.id,
+        images: [copiedImage.url],
+        referenceImage: copiedImage.url,
+        catalogVisible: true,
+        onCreated: () => refreshAnalysis('Producto creado desde la imagen; el análisis se actualizó.'),
+      });
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      if (button.isConnected) button.disabled = false;
+    }
+  }
+
+  async function discardInventoryImage(button) {
+    if (!batch) return;
+    const filename = button.dataset.imageFilename;
+    const confirmed = await confirmDialog(`¿Eliminar la imagen "${filename}" de la carpeta analizada? Esta acción no se puede deshacer.`);
+    if (!confirmed) return;
+    button.disabled = true;
+    try {
+      await api.discardAvailabilityUpdateImage({
+        batch_id: batch.batch_id,
+        folder: batch.folder,
+        filename,
+      });
+      await refreshAnalysis('Imagen eliminada; el análisis se actualizó con el inventario restante.');
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      if (button.isConnected) button.disabled = false;
+    }
+  }
+
   async function handleProductAction(button) {
     const { action, productId } = button.dataset;
     const product = batch?.products.find(item => item.id === productId);
@@ -250,39 +381,20 @@ function renderView(container, providers, history) {
       || item.decision === 'unavailable' && !item.catalog_visible);
     const reviewProducts = (batch.products || []).filter(item => item.decision === 'review');
     const noReference = (batch.products || []).filter(item => item.decision === 'no_reference');
-    const unchangedProducts = (batch.products || []).filter(item =>
-      item.decision === 'available' && item.catalog_visible
-      || item.decision === 'unavailable' && !item.catalog_visible);
+    const reviewItems = [
+      ...reviewProducts.map(product => ({ ...product, kind: 'product' })),
+      ...(batch.ambiguousImages || []).map(image => ({ ...image, kind: 'image' })),
+    ];
     const productsById = new Map((batch.products || []).map(item => [item.id, item]));
     const hasErrors = batch.imageErrors?.length || batch.productErrors?.length;
-    const summaryRows = (items, title, nextLabel) => items.length ? `
-      <section class="card availability-update-section">
-        <h3>${title} <span class="badge">${items.length}</span></h3>
-        <div class="availability-product-list">
-          ${items.map(item => `
-            <div class="availability-product-row">
-              ${item.referenceThumbnail ? `<img class="update-preview-image" src="${item.referenceThumbnail}" alt="Ampliar referencia de ${esc(item.name)}" role="button" tabindex="0" title="Clic para ampliar" loading="lazy" />` : '<div class="availability-empty-thumb">Sin referencia</div>'}
-              <div class="availability-product-info"><b>${esc(item.name)}</b><small>${esc(item.category || 'Sin categoría')} · ${item.catalog_visible ? 'Visible' : 'Oculto'} → ${nextLabel}</small></div>
-              ${productActions(item)}
-            </div>
-          `).join('')}
-        </div>
-      </section>
-    ` : '';
-    const unchangedRows = unchangedProducts.length ? `
-      <section class="card availability-update-section">
-        <h3>Ya tienen el estado esperado <span class="badge">${unchangedProducts.length}</span></h3>
-        <div class="availability-product-list">
-          ${unchangedProducts.map(item => `
-            <div class="availability-product-row">
-              <img class="update-preview-image" src="${item.referenceThumbnail}" alt="Ampliar referencia de ${esc(item.name)}" role="button" tabindex="0" title="Clic para ampliar" loading="lazy" />
-              <div class="availability-product-info"><b>${esc(item.name)}</b><small>${esc(item.category || 'Sin categoría')} · ${item.catalog_visible ? 'Visible/disponible' : 'Oculto/no disponible'}</small></div>
-              ${productActions(item)}
-            </div>
-          `).join('')}
-        </div>
-      </section>
-    ` : '';
+    sectionFilterData.clear();
+    const productRow = (item, status) => `
+      <div class="availability-product-row">
+        ${item.referenceThumbnail ? `<img class="update-preview-image" src="${item.referenceThumbnail}" alt="Ampliar referencia de ${esc(item.name)}" role="button" tabindex="0" title="Clic para ampliar" loading="lazy" />` : '<div class="availability-empty-thumb">Sin referencia</div>'}
+        <div class="availability-product-info"><b>${esc(item.name)}</b><small>${esc(item.category || 'Sin categoría')} · ${status}</small></div>
+        ${productActions(item)}
+      </div>
+    `;
 
     previewHost.innerHTML = `
       <div class="card availability-update-summary">
@@ -294,28 +406,43 @@ function renderView(container, providers, history) {
           ${[...(batch.imageErrors || []), ...(batch.productErrors || [])].map(error => `<div>${esc(error)}</div>`).join('')}
         </div>` : ''}
       </div>
-      ${summaryRows(available, 'Pasarían a disponible', 'Disponible')}
-      ${summaryRows(unavailable, 'Pasarían a oculto (agotado)', 'Agotado')}
-      ${unchangedRows}
-      ${reviewProducts.length ? `<section class="card availability-update-section">
-        <h3>Productos por revisar <span class="badge">${reviewProducts.length}</span></h3>
-        <p>Hay una o más imágenes parecidas, pero no alcanzan un nivel de coincidencia seguro. No se cambiará su estado.</p>
-        ${reviewProducts.map(product => `<div class="availability-product-row"><img class="update-preview-image" src="${product.referenceThumbnail}" alt="Ampliar referencia de ${esc(product.name)}" role="button" tabindex="0" title="Clic para ampliar" /><div class="availability-product-info"><b>${esc(product.name)}</b><small>${esc(product.category || 'Sin categoría')} · estado sin cambios</small></div>${productActions(product)}</div>`).join('')}
-        ${batch.ambiguousImages.map(image => `
-          <div class="availability-match-row">
-            <img class="update-preview-image" src="${image.imageThumbnail}" alt="Ampliar imagen de actualización" role="button" tabindex="0" title="Clic para ampliar" loading="lazy" />
-            <div><b>${esc(image.filename)}</b><small>Candidatos: ${image.candidates.map(item => `${esc(item.productName)} (distancia ${item.distance})`).join(' · ')}</small></div>
-          </div>
-        `).join('')}
-      </section>` : ''}
-      ${noReference.length ? `<section class="card availability-update-section">
-        <h3>Sin imagen de referencia <span class="badge">${noReference.length}</span></h3>
-        <p>Se excluyen de los cambios automáticos hasta que se agregue su referencia.</p>
-        ${noReference.map(product => `<div class="availability-product-row"><div class="availability-empty-thumb">Sin referencia</div><div class="availability-product-info"><b>${esc(product.name)}</b><small>${esc(product.category || 'Sin categoría')} · estado sin cambios</small></div>${productActions(product)}</div>`).join('')}
-      </section>` : ''}
+      ${makeFilteredSection('Pasarían a disponible', 'available', available, item => productRow(item, `${item.catalog_visible ? 'Visible' : 'Oculto'} → Disponible`))}
+      ${makeFilteredSection('Pasarían a oculto (agotado)', 'unavailable', unavailable, item => productRow(item, `${item.catalog_visible ? 'Visible' : 'Oculto'} → Agotado`))}
+      ${makeFilteredSection('Ya tienen el estado esperado', 'unchanged', unchanged, item => productRow(item, item.catalog_visible ? 'Visible/disponible' : 'Oculto/no disponible'))}
+      ${makeFilteredSection(
+        'Productos por revisar',
+        'review',
+        reviewItems,
+        item => item.kind === 'product'
+          ? productRow(item, 'Estado sin cambios')
+          : `<div class="availability-match-row">
+              <img class="update-preview-image" src="${item.imageThumbnail}" alt="Ampliar imagen de actualización" role="button" tabindex="0" title="Clic para ampliar" loading="lazy" />
+              <div><b>${esc(item.filename)}</b><small>Candidatos: ${item.candidates.map(candidate => `${esc(candidate.productName)} (distancia ${candidate.distance})`).join(' · ')}</small></div>
+            </div>`,
+        '<p>Hay una o más imágenes parecidas, pero no alcanzan un nivel de coincidencia seguro. No se cambiará su estado.</p>',
+      )}
+      ${makeFilteredSection('Sin imagen de referencia', 'no-reference', noReference, item => `
+        <div class="availability-product-row">
+          <div class="availability-empty-thumb">Sin referencia</div>
+          <div class="availability-product-info"><b>${esc(item.name)}</b><small>${esc(item.category || 'Sin categoría')} · estado sin cambios</small></div>
+          ${productActions(item)}
+        </div>
+      `, '<p>Se excluyen de los cambios automáticos hasta que se agregue su referencia.</p>')}
       ${batch.unmatchedImages.length ? `<section class="card availability-update-section">
         <h3>Imágenes sin producto asociado · posibles productos nuevos <span class="badge">${batch.unmatchedImages.length}</span></h3>
-        <div class="availability-image-grid">${batch.unmatchedImages.map(image => `<figure><img class="update-preview-image" src="${image.thumbnail}" alt="Ampliar imagen sin asociar" role="button" tabindex="0" title="Clic para ampliar" loading="lazy" /><figcaption>${esc(image.filename)}</figcaption></figure>`).join('')}</div>
+        <div class="availability-image-grid">${batch.unmatchedImages.map(image => `
+          <figure>
+            <div class="availability-image-actions">
+              <button type="button" class="btn btn--sm btn--primary availability-image-create" data-image-filename="${esc(image.filename)}" title="Crear producto con esta imagen" aria-label="Crear producto con esta imagen">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
+              <button type="button" class="btn btn--sm btn--ghost availability-image-delete" data-image-filename="${esc(image.filename)}" title="Eliminar imagen" aria-label="Eliminar imagen" style="color:var(--error)">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7V6m3 0V4h4v2"/></svg>
+              </button>
+            </div>
+            <img class="update-preview-image" src="${image.thumbnail}" alt="Ampliar imagen sin asociar" role="button" tabindex="0" title="Clic para ampliar" loading="lazy" />
+            <figcaption>${esc(image.filename)}</figcaption>
+          </figure>`).join('')}</div>
       </section>` : ''}
       ${batch.matches.length ? `<section class="card availability-update-section">
         <details><summary><b>Coincidencias claras (${batch.matches.length})</b></summary>
@@ -343,20 +470,15 @@ function renderView(container, providers, history) {
       </div>
     `;
 
+    previewHost.querySelectorAll('[data-filter-section]').forEach(section => {
+      const update = () => renderFilteredSection(section);
+      section.querySelector('[data-filter-category]').addEventListener('change', update);
+      section.querySelector('[data-filter-search]').addEventListener('input', update);
+      update();
+    });
+
     const confirmCheckbox = previewHost.querySelector('#update-confirm-complete');
     const applyButton = previewHost.querySelector('#update-apply');
-    previewHost.querySelectorAll('.update-product-action').forEach(button => {
-      button.addEventListener('click', () => handleProductAction(button));
-    });
-    previewHost.querySelectorAll('.update-preview-image').forEach(image => {
-      const openImage = () => window._openLightbox([image.src]);
-      image.addEventListener('click', openImage);
-      image.addEventListener('keydown', event => {
-        if (event.key !== 'Enter' && event.key !== ' ') return;
-        event.preventDefault();
-        openImage();
-      });
-    });
     confirmCheckbox?.addEventListener('change', () => {
       applyButton.disabled = !confirmCheckbox.checked || !!hasErrors || changes.length === 0;
     });

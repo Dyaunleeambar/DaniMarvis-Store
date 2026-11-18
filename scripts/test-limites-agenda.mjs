@@ -20,7 +20,7 @@ import { readFileSync } from 'node:fs';
 import { abrirMemoria } from './helpers/sqljs.mjs';
 import {
   evaluarLimites, cuantosPorTick, claveDuplicado, marcarDuplicadosEn,
-  parsePosterDiag, classifyFailure, esFalloTransitorio, notaLote, logFinCorrida,
+  parsePosterDiag, classifyFailure, esFalloTransitorio, shouldAutoRetry, notaLote, logFinCorrida,
   elegirAnclaIntento, CAUSAS, DEFAULT_AGENDA, decisionActual,
 } from '../backend/lib/groupPublisher/index.js';
 import { deshacerDuplicacion } from '../backend/lib/duplicarDia.js';
@@ -361,6 +361,25 @@ console.log('\n6b. esFalloTransitorio: solo red/tiempo, nunca lo determinista ni
     !esFalloTransitorio('Sesión de Facebook requerida'));
   ok('un texto vacío no se reintenta', !esFalloTransitorio(''));
   ok('un texto desconocido no se reintenta', !esFalloTransitorio('algo raro'));
+  const retryDefaults = {
+    mode: 'publish', cancelled: false, status: 'error',
+    message: 'Timeout de la operación en el grupo.',
+    enabled: true, retriesUsed: 0, maxRetries: 2,
+  };
+  ok('un fallo transitorio puede reintentarse si está habilitado',
+    shouldAutoRetry(retryDefaults));
+  ok('el reintento no supera el máximo de reintentos adicionales',
+    !shouldAutoRetry({ ...retryDefaults, retriesUsed: 2 }));
+  ok('maxRetries 0 no reintenta',
+    !shouldAutoRetry({ ...retryDefaults, maxRetries: 0 }));
+  ok('fallo determinista no se reintenta aunque esté habilitado',
+    !shouldAutoRetry({ ...retryDefaults, message: 'Sesión de Facebook requerida' }));
+  ok('resultado revisar no se reintenta para evitar duplicados',
+    !shouldAutoRetry({ ...retryDefaults, status: 'revisar' }));
+  ok('destino cancelado no se reintenta',
+    !shouldAutoRetry({ ...retryDefaults, cancelled: true }));
+  ok('modo preparar no reintenta publicaciones',
+    !shouldAutoRetry({ ...retryDefaults, mode: 'prepare' }));
 }
 
 // ── 7. los valores por defecto ───────────────────────────────────────────────
@@ -379,7 +398,7 @@ console.log('\n7. los límites por defecto son los acordados');
     Math.min(60 / DEFAULT_AGENDA.min_gap_min, DEFAULT_AGENDA.max_per_hour) <= 12);
   ok('el reintento automático de red arranca prendido', DEFAULT_AGENDA.auto_retry === true);
   ok('máximo 2 reintentos automáticos', DEFAULT_AGENDA.retry_max === 2, String(DEFAULT_AGENDA.retry_max));
-  ok('espera de 15 min antes de reintentar', DEFAULT_AGENDA.retry_delay_min === 15, String(DEFAULT_AGENDA.retry_delay_min));
+  ok('espera de 15 min entre reintentos', DEFAULT_AGENDA.retry_delay_min === 15, String(DEFAULT_AGENDA.retry_delay_min));
 }
 
 // ── 8. el deshacer parcial ───────────────────────────────────────────────────

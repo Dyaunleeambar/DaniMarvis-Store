@@ -13,7 +13,7 @@ import { isoLocal, localNow, toIsoUtc } from './util.js';
 import { getAgendaConfig, getAutopublishConfig, getMasterConfig } from './config.js';
 import { countPublishedToday, lastAttemptInfo, withinHoursWindow } from './estado.js';
 import { limpiarFallos, marcarIntentoAhora, registrarFallo } from './limites.js';
-import { classifyFailure, esFalloTransitorio, notaLote, notaDiagnostico, spawnPoster } from './poster.js';
+import { classifyFailure, shouldAutoRetry, notaLote, notaDiagnostico, spawnPoster } from './poster.js';
 
 // Carpeta de uploads de esta instancia. A usa backend/uploads; B la suya, para
 // no mezclar imágenes ni dejar temporales en la de A.
@@ -273,18 +273,23 @@ function updateQueue(item, result, mode, intentosConsumidos = 1) {
     // Y si mientras tanto lo cancelaron, el cancelado gana: un fallo no puede
     // resucitar un destino que el usuario ya Sacó de la cola.
     const cfg = getAgendaConfig();
-    const intentosNuevos = intentosPrevios + intentosConsumidos;
-    const puedeReintentar = mode === 'publish'
-      && !fueCancelado
-      && result.status !== 'revisar'
-      && cfg.auto_retry
-      && intentosNuevos < cfg.retry_max;
+    const reintentosUsados = intentosPrevios;
+    const puedeReintentar = shouldAutoRetry({
+      mode,
+      cancelled: fueCancelado,
+      status: result.status,
+      message: result.message,
+      enabled: cfg.auto_retry,
+      retriesUsed: reintentosUsados,
+      maxRetries: cfg.retry_max,
+    });
     if (puedeReintentar) {
       const cuando = new Date(Date.now() + cfg.retry_delay_min * 60000);
-      const nota = `${notes} | auto-reintento ${intentosNuevos + 1}/${cfg.retry_max} programado en ${cfg.retry_delay_min} min`.slice(0, 500);
+      const reintentosNuevos = reintentosUsados + 1;
+      const nota = `${notes} | auto-reintento ${reintentosNuevos}/${cfg.retry_max} programado en ${cfg.retry_delay_min} min`.slice(0, 500);
       const n = db.prepare("UPDATE publication_queue SET status = 'pending', notes = ?, scheduled_at = ?, published_at = NULL, attempts = ?, updated_at = datetime('now') WHERE id = ? AND status = 'pending'")
         .run(nota, toIsoUtc(cuando), intentosNuevos, item.id);
-      if (n) return { aplicado: true, estadoPrevio, autoReintento: true, intentos: intentosNuevos };
+      if (n) return { aplicado: true, estadoPrevio, autoReintento: true, reintentos: reintentosNuevos };
     }
     db.prepare("UPDATE publication_queue SET status = 'error', notes = ?, published_at = NULL, updated_at = datetime('now') WHERE id = ? AND status = 'pending'")
       .run(notes, item.id);
@@ -432,10 +437,9 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
       // cuando termina.
       marcarIntentoAhora(agendaCfg);
 
-      // Reintentos en rondas de 2, sin gap entre intentos de la misma ronda.
-      const retryBatch = 2;
-      const retryMax = agendaCfg.retry_max;
-      let intentosConsumidos = 0;
+      // Una sola publicación por ejecución. Los reintentos automáticos se
+      // programan aparte, con espera y solo para fallos transitorios.
+      const intentosConsumidos = 1;
       let resultadoFinal = null;
 
       let intentosPrevios = 0;
@@ -450,34 +454,28 @@ async function runGroupPublish({ runId = null, auto = false, force = false, ids 
       const messageFile = writeMessageFile(item);
       temps.push(messageFile, ...imageFiles);
 
-      while (intentosConsumidos < retryBatch && (intentosPrevios + intentosConsumidos) < retryMax) {
-        if (!getMasterConfig().on) {
-          pausedByMaster = true;
-          break;
-        }
-        intentosConsumidos++;
-        // Heartbeat del turno: renueva el lease mientras dure la corrida.
-        try { await claimTurn(accountId); } catch { /* el próximo ítem reintenta */ }
-
-        const result = await spawnPoster({
-          groupUrl,
-          messageFile,
-          imageFiles,
-          mode: effectiveMode,
-          label: item.group_name,
-          debug,
-          loteN: agendaCfg.grupos_por_post,
-          loteDesde: await getLote(),
-          // Puerto del Chrome de ESTA cuenta: sin esto el poster siempre hablaría
-          // con el 9222 del perfil de A aunque la corrida sea de B.
-          debugPort: acc.debugPort,
-        });
-        resultadoFinal = result;
-
-        if (result.ok) break; // salió bien, no hay que reintentar
-        if (result.status === 'revisar') break; // no reintentar 'revisar' (evita duplicados)
-        // falló: si queda cupo en la ronda, seguir inmediatamente sin espera
+      if (!getMasterConfig().on) {
+        pausedByMaster = true;
+        currentRun.current_group = null;
+        continue;
       }
+
+      // Heartbeat del turno: renueva el lease mientras dure la corrida.
+      try { await claimTurn(accountId); } catch { /* el próximo ítem reintenta */ }
+
+      resultadoFinal = await spawnPoster({
+        groupUrl,
+        messageFile,
+        imageFiles,
+        mode: effectiveMode,
+        label: item.group_name,
+        debug,
+        loteN: agendaCfg.grupos_por_post,
+        loteDesde: await getLote(),
+        // Puerto del Chrome de ESTA cuenta: sin esto el poster siempre hablaría
+        // con el 9222 del perfil de A aunque la corrida sea de B.
+        debugPort: acc.debugPort,
+      });
 
       // El cursor avanza SOLO si el lote se tildó de verdad.
       if (resultadoFinal && Array.isArray(resultadoFinal.lote_grupos) && resultadoFinal.lote_grupos.length) {
