@@ -627,11 +627,40 @@ function renderResults(container, data, registeredCategories = [], projectProduc
   const btnNext = results.querySelector('.carousel-next');
 
   track.addEventListener('keydown', (event) => {
-    if (event.target !== track || (event.key !== 'Enter' && event.key !== ' ')) return;
-    const activeFolder = track.querySelector('.carousel-folder.active');
-    if (!activeFolder) return;
+    const focusedFolder = event.target.closest?.('.carousel-folder');
+    const carouselHasFocus = event.target === track || track.contains(event.target);
+    if (!carouselHasFocus) return;
+
+    if (event.key === 'Escape' && activeCategory) {
+      event.preventDefault();
+      results.querySelector('.carousel-back')?.click();
+      const activeFolder = results.querySelector('.carousel-folder.active');
+      (activeFolder || results.querySelector('#carousel-track'))?.focus({ preventScroll: true });
+      return;
+    }
+
+    if (event.key === 'Enter' || event.key === ' ') {
+      const folderToOpen = focusedFolder || track.querySelector('.carousel-folder.active');
+      if (!folderToOpen) return;
+      event.preventDefault();
+      folderToOpen.click();
+      return;
+    }
+
+    if (!carouselFolders.length || event.key.length !== 1 || event.ctrlKey || event.altKey || event.metaKey) return;
+    const letter = event.key.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es');
+    if (!/^[\p{L}\p{N}]$/u.test(letter)) return;
+    const currentIndex = folderState.activeFolderIndex || 0;
+    const nextIndex = Array.from({ length: carouselFolders.length }, (_, offset) => (
+      (currentIndex + offset + 1) % carouselFolders.length
+    )).find(index => carouselFolders[index].name
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es').startsWith(letter));
+    if (nextIndex === undefined) return;
+
     event.preventDefault();
-    activeFolder.click();
+    folderState.activeFolderIndex = nextIndex;
+    renderCarousel();
+    if (focusedFolder) track.querySelector(`.carousel-folder[data-idx="${nextIndex}"]`)?.focus({ preventScroll: true });
   });
 
   results.addEventListener('click', (e) => {

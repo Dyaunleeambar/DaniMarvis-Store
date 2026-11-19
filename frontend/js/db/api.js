@@ -29,6 +29,28 @@ async function request(method, path, body) {
   return data;
 }
 
+async function requestBlob(path) {
+  const headers = {};
+  const token = sessionStorage.getItem('dm_token');
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(`${API_BASE}${path}`, { headers });
+  if (res.status === 401) {
+    sessionStorage.removeItem('dm_user');
+    sessionStorage.removeItem('dm_token');
+    window.location.hash = '#/login';
+    throw new Error('Sesión expirada');
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    let message = `Error del servidor (${res.status})`;
+    try {
+      message = JSON.parse(text).error || message;
+    } catch {}
+    throw new Error(message);
+  }
+  return res.blob();
+}
+
 export const api = {
   // Products
   getProducts: (params = {}) => {
@@ -72,8 +94,11 @@ export const api = {
 
   // Backup
   exportBackup: () => request('GET', '/backup'),
-  exportSelectiveBackup: (tables, filters = {}) => request('POST', '/backup/selective', { tables, filters }),
-  listBackupTables: () => request('GET', '/backup/tables'),
+  createAiAnalysisPackage: (data) => request('POST', '/backup/ai-analysis-package', data),
+  getAiAnalysisAsset: (packageId, assetId) =>
+    requestBlob(`/backup/ai-analysis-package/${encodeURIComponent(packageId)}/assets/${encodeURIComponent(assetId)}`),
+  deleteAiAnalysisPackage: (packageId) =>
+    request('DELETE', `/backup/ai-analysis-package/${encodeURIComponent(packageId)}`),
   restoreBackup: (data) => request('POST', '/backup/restore', data),
 
   // Settings
