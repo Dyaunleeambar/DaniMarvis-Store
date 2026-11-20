@@ -134,6 +134,33 @@ Los importadores proporcionan productos y se encargan del envío directo al clie
 └──────────────────────────────────────────────┘
 ```
 
+### Esquema de la base de datos SQLite
+
+El modelo de datos vive en `backend/db/database.js`. Las tablas principales son:
+
+| Tabla | Campos clave | Notas |
+|---|---|---|
+| `providers` | `id`, `name`, `contact`, `phone`, `email`, `commission_rate`, `info`, `notes` | Proveedores de productos |
+| `products` | `id`, `name`, `description`, `category`, `price`, `commission_type`, `commission_value`, `commission_currency`, `warranty`, `provider_id`, `image_url`, `publish_text`, `stock`, `status`, `catalog_visible` | Catálogo de productos. FK → `providers.id` |
+| `sales` | `id`, `product_id`, `provider_id`, `client_name`, `client_phone`, `client_address`, `quantity`, `unit_price`, `total_amount`, `commission_amount`, `commission_paid`, `exchange_rate`, `delivery_method`, `delivery_status`, `warranty_end` | Ventas. FK → `products.id`, `providers.id` |
+| `users` | `id`, `username`, `name`, `password`, `role` | Autenticación (password en scrypt) |
+| `settings` | `id` (CHK=1), `exchange_rate`, `auth_secret`, `publish_config` (JSON) | Configuración global |
+| `categories` | `id`, `name` (UNIQUE NOCASE), `sort_order` | Categorías de productos |
+| `publications` | `id`, `product_id`, `product_name`, `publish_text`, `images`, `publication_date`, `sort_order` | Publicaciones. FK → `products.id` |
+| `exports` | `id`, `title`, `style`, `kind` (`pdf`/`images`), `fields`, `product_ids` | Historial de exportaciones |
+| `publication_plans` | `id`, `publication_id`, `fecha`, `origen` | Plazos de publicación |
+| `publication_queue` | `id`, `publication_id`, `group_name`, `group_url`, `status`, `scheduled_at`, `published_at`, `variant_index`, `variant_text`, `notes`, `pending_approval`, `attempts` | Cola de publicación en grupos. FK → `publications.id` |
+| `publication_clones` | `id`, `origen_id`, `clon_id`, `desde`, `hasta` | Clones de publicación. FK → `publications.id` |
+| `facebook_groups` | `id`, `name`, `url`, `fb_id`, `sort_order` | Grupos de Facebook (id numérico único) |
+| `rank_snapshots` | `id`, `grupo`, `vistas`, `impresiones`, `fecha` | Snapshots del Ranking |
+| `ranking_history` | `fecha`, `grupo`, `posts`, `vistas`, `impresiones`, `promedio` | Historial de rankings (PK: fecha+grupo) |
+| `page_routines` | `id`, `name`, `active`, `products`, `times`, `default_text`, `format`, `lead_minutes`, `last_product_index` | Rutinas recurrentes de Página FB |
+| `page_schedule_log` | `id`, `routine_id`, `product_id`, `product_name`, `scheduled_for`, `status`, `meta_post_id`, `message`, `images_count`, `error` | Logs de programación de rutinas |
+| `warranty_rules` | `id`, `provider_id`, `keyword`, `warranty_text` | Reglas de garantía. FK → `providers.id` |
+| `provider_styles` | `code`, `name`, `style_name`, `palette`, `background_rules`, `accent_rules`, `signature_rules`, `negative_rules`, `shipping_rule` | Estilos visuales de proveedor |
+
+> El esquema incluye **34 migraciones** en `database.js` que se aplican en orden en cada arranque (`initDB()`). Ver `migrateImages`, `migrateProviderInfo`, `migrateCatalogVisible`, `migratePublishConfig`, `migratePublicationDate`, `migrateExportsKind`, `migratePubQueue`, `migratePubAgenda`, `migratePromptEngine`, `migrateGeneratedImages`, `migrateCommissionCurrency`, `migrateProviderStyleCode`, `migrateProviderStyles`, `migrateFacebookGroups`, `migrateGroupFbId`, `migrateRankingSnapshots`, `migrateRankingHistory`, `migratePageRoutines`, `migrateWarrantyRules`, `migrateWarrantyEnd`, `migrateAuthSecret`, `migrateIndexes`, `migrateCollapseQueueToSingleDestination`.
+
 ---
 
 ## Instalación y Ejecución
@@ -169,12 +196,42 @@ El servidor arranca en `http://localhost:3456`. La base de datos SQLite se crea 
 
 ---
 
+## Variables de entorno
+
+El servidor lee variables de entorno opcionales. Si no están definidas, usan los valores por defecto:
+
+| Variable | Por defecto | Propósito |
+|----------|-------------|-----------|
+| `PORT` | `3456` | Puerto en el que escucha Express |
+| `DANIMARVIS_DB` | `backend/danimarvis.db` | Ruta al archivo SQLite (usado en tests) |
+| `DANIMARVIS_ENV_PATH` | `.env` | Ruta al archivo `.env` con secretos |
+| `DANIMARVIS_UPLOADS` | `backend/uploads` | Carpeta de uploads por instancia |
+| `COORD_URL` | (vacío) | URL del coordinador en modo A/B; si no está seteado, esta instancia es coordinadora |
+| `COORD_TOKEN` | (requerido) | Header `X-Coord-Token` para la API de coordinación (solo en la instancia coordinadora) |
+| `ACCOUNT_ID` | `A` | Cuenta de Facebook activa: `A` o `B` |
+| `FB_DEBUG_PORT` | (según cuenta) | Puerto CDP para la cuenta configurada |
+| `FB_DEBUG_PROFILE` | (según cuenta) | Ruta `--user-data-dir` para la sesión de Facebook |
+| `PROXY_SERVER` | (vacío) | Proxy opcional para la cuenta: `http://user:pass@host:port` |
+
+> **Seguridad:** `.env` está en `.gitignore`. Nunca lo commits.
+
+---
+
+---
+
 ## Estructura del Proyecto
 
 ```
+
 DaniMarvisStore/
 ├── package.json               # Deps y scripts npm (único node_modules del proyecto, en la raíz)
+├── precios-importacion/       # Listas de precios del proveedor en imágenes (uso OCR)
+├── generadas/                 # Imágenes generadas con IA (incluye uploads/generated)
+├── uploads-b/                 # Carpeta de uploads para la cuenta B del publicador
 ├── scripts/
+│   ├── helpers/
+│   │   ├── arranque.mjs
+│   │   └── sqljs.mjs          # utilidades de arranque y SQL.js
 │   ├── generate-catalog.js    # Script CLI para regenerar el catálogo público
 │   ├── check-imports.mjs      # Valida imports/exports en backend
 │   ├── check-carga.mjs        # Carga real de vistas del frontend (DOM mínimo)
@@ -256,11 +313,13 @@ DaniMarvisStore/
 │       └── restore-backup.mjs  # Restaurar backup JSON (CLI)
 │
 ├── frontend/
+│   ├── assets/                # Assets estáticos (fuentes, logos, favicons)
 │   ├── index.html             # Shell SPA: sidebar, modal, confirmación apilada, toast
 │   ├── css/
 │   │   ├── main.css           # Variables, reset, loading screen, login
 │   │   ├── layout.css         # Sidebar fijo, topbar, grid, responsive
-│   │   └── components.css     # Cards, tablas, formularios, badges, lightbox, publicaciones
+│   │   ├── components.css     # Cards, tablas, formularios, badges, lightbox, publicaciones
+│   │   └── responsive.css     # Diseño adaptable (mobile-first)
 │   └── js/
 │       ├── core/
 │       │   ├── app.js         # Bootstrap, rutas, toast, modal, confirmDialog
@@ -299,9 +358,6 @@ DaniMarvisStore/
 │
 └── README.md
 ```
-
----
-
 ## API REST
 
 Todas las rutas API están bajo el prefijo `/api/`.
@@ -1205,7 +1261,111 @@ Ranking y publicador comparten la **misma instancia** de Chrome (mismo puerto, m
 
 ---
 
-## Ranking de grupos (Biblioteca de Contenido)
+## Publicador automático de grupos — Notas de operación
+
+### Perfil de Chrome
+
+El publicador arranca Chrome con `--remote-debugging-port=9222` y un perfil de Chrome separado (con `--user-data-dir`). Este perfil guarda la sesión de Facebook y se configura en Ajustes → "Cuentas de Facebook (A y B)".
+
+- **Cuenta A:** puerto `9222`, perfil `C:/Users/Dani/fb-leave/fb-debug-perfil` (por defecto)
+- **Cuenta B:** puerto `9223`, perfil `C:/Users/Dani/fb-leave/fb-debug-perfil-b` (por defecto)
+
+Cada cuenta debe tener su propio perfil (dos Chrome no comparten perfil). El perfil es específico del usuario: en otra laptop o entorno, se debe reconfigurar en `backend/lib/accountConfig.js`.
+
+### Verificación de sesión
+
+Antes de cada corrida, el publicador verifica la sesión de Facebook:
+1. Se abre la pestaña de login de Facebook si no hay sesión.
+2. Se navega a `facebook.com/me` y se lee la URL.
+3. Se compara con el campo "Perfil de Facebook" configurado en Ajustes.
+4. Si no coincide o no hay sesión, se avisa en el log y en `/status` (`current.account_profile_check`), pero **no se aborta** la publicación.
+
+### Técnica para meter el texto
+
+El compositor de Facebook es un editor **Lexical** que no acepta `value`. Se usa una de estas técnicas (configurable en Ajustes → "Técnica de texto"):
+
+| Técnica | Cómo | Tiempo típico | Estructura que deja |
+|---------|------|--------------|---------------------|
+| `teclado` (default) | `Keyboard.type` char a char + Enter por línea | ~21 s / hasta 93 s | muchos `<p>` (uno por línea) |
+| `insertText` | `Input.insertText` con texto completo | ~1 s | un solo `<p>` con `
+` literales |
+| `ctrlv` | Escribe el portapapeles y pulsa Ctrl+V real | ~1 s | muchos `<p>` |
+| `pasteEvent` | Dispara un evento `paste` sintético con `DataTransfer` | ~1 s | muchos `<p>` (idéntico a Ctrl+V) |
+
+> **Recomendado para producción:** `pasteEvent`. No toca el portapapeles del sistema, es rápido y deja el mismo DOM que Ctrl+V.
+
+### Guarda anti-contaminación (ctrlv)
+
+Si se usa `ctrlv`, el poster:
+1. Escribe el texto en el portapapeles.
+2. Lo relee (`navigator.clipboard.readText`) normalizando `
+
+`.
+3. Si el texto leído **no coincide** con el original, aborta la publicación.
+
+### Detectando fallos
+
+El resultado de cada corrida incluye un flag que dice por qué falló:
+
+| Flag | Significado | Qué hacer |
+|------|-------------|-----------|
+| `sesion` | Sesión de Facebook vencida | Abrí el perfil y logueate de nuevo |
+| `noBrowser` | No hay Chrome en el 9222 | Se auto-arranca; si falla, revisar `chrome.exe` y el perfil |
+
+### Límites de la corrida automática
+
+| Clave | Default | Significado |
+|-------|---------|-------------|
+| `enabled` | `false` | Auto-publicado habilitado |
+| `mode` | `publish` | `publish` o `prepare` (deja el post en la pestaña) |
+| `daily_cap` | `6` | Máx. publicaciones reales por día |
+| `hours_from` / `hours_to` | `8` / `21` | Franja horaria local de actividad |
+| `min_gap_min` | `45` | Separación mínima entre publicaciones consecutivas |
+| `cooldown_min` | `240` | Espera mínima entre 2 posts del mismo grupo |
+| `worker_batch` | `3` | Cuántos dispara el worker por tick |
+
+> Los botones manuales de la UI mandan `force: true` e ignoran franja, cap y cooldowns.
+
+### Límites del disparador por fecha
+
+| Clave | Default | Significado |
+|-------|---------|-------------|
+| `auto` | `true` | Disparador armado |
+| `tick_min` | `1` | Cada cuánto mira los vencidos |
+| `catchup_hours` | `24` | Vencido hace más que esto, no se recupera solo |
+| `min_gap_min` | `5` | Separación mínima, medida de inicio a inicio |
+| `gap_modo` | `fijo` | `fijo` = siempre `min_gap_min`; `rango` = valor aleatorio entre min y max |
+| `max_per_hour` | `12` | Tope duro por hora |
+| `grupos_por_post` | `9` | Cuántos grupos se tildan por publicación (el "lote") |
+| `dedupe_hours` | `6` | No repetir el mismo texto en el mismo grupo antes de esto |
+| `breaker_failures` | `3` | Fallos consecutivos que pausan el disparador |
+| `breaker_cooldown_min` | `60` | Cuánto dura esa pausa |
+
+### La API key vive en dos lugares
+
+`publish_config.ai.api_key` es la fuente, y `.env` es la copia de seguridad. Al arrancar, `backend/lib/secrets.js` rellena la base desde el `.env` **solo si la base no trae key**.
+
+### Correr la base de verdad en pruebas
+
+`DANIMARVIS_DB` y `DANIMARVIS_ENV_PATH` apuntan la base y el `.env` a otro archivo, así que las pruebas pueden arrancar el `initDB()` completo (mismas migraciones que producción) sin tocar datos reales.
+
+```bash
+DANIMARVIS_DB=/tmp/prueba.db DANIMARVIS_ENV_PATH=/tmp/prueba.env   node -e "import('./backend/db/database.js').then(m => m.initDB())"
+```
+
+`npm run check` incluye `scripts/test-persistencia-config.mjs`, que verifica que la configuración sobreviva a un reinicio y que una base dañada recupere la key. Ese test también falla si toca el `.env` del proyecto.
+
+> **Dos trampas de `sql.js@1.14.1` que costaron tiempo:**
+> - El `db.prepare(...)` **crudo** no persiste y **no falla**. En la app no pasa porque `backend/db/database.js` envuelve las sentencias con un `Statement` propio.
+> - No editar `backend/danimarvis.db` con el servidor vivo: `initDB()` termina en `saveDB()` y reescribe el archivo entero desde memoria.
+
+**El interruptor maestro** (`publish_config.master.on`) es una llave aparte: mientras esté en `false` no arranca **ninguna** corrida — ni del worker, ni del disparador, ni manual.
+
+> ⚠️ **Los clics manuales ("Publicar ahora", "Correr vencidos", "Reintentar") no pasan por estos límites.** Solo obedecen el interruptor maestro.
+
+---
+
+### Ranking de grupos (Biblioteca de Contenido)
 
 La vista `#/rankings` mide qué grupos de Facebook devuelven **más** (y **menos**) visualizaciones por publicación, usando la **Biblioteca de Contenido** del Panel Profesional (no usa la Graph API).
 
@@ -1232,17 +1392,54 @@ La vista `#/rankings` mide qué grupos de Facebook devuelven **más** (y **menos
 
 Permite exportar e importar todos los datos del sistema.
 
-### Exportar
+### Exportar (panel)
 
 1. Ve a **Respaldos** en el panel.
 2. Haz clic en **"Exportar datos"**.
 3. Se descarga un archivo JSON con todos los productos, proveedores, ventas, categorías, configuración, publicaciones y exportaciones.
 
-### Importar
+### Importar (panel)
 
 1. Ve a **Respaldos** en el panel.
 2. Haz clic en **"Importar datos"** y selecciona un archivo JSON.
 3. **Advertencia:** Esto eliminará todos los datos existentes y los reemplazará con los del archivo.
+
+### Script CLI (respaldo manual)
+
+```bash
+npm run backup        # Exporta backup JSON a backend/backups/
+npm run restore       # Restaura backup JSON desde el prompt
+```
+
+Los backups también se generan **automáticamente** al arrancar el servidor y cada `${BACKUP_INTERVAL_HOURS}` (24 h por defecto) mediante `scripts/backup.js` → `createBackup()`.
+
+### Ubicación de los backups
+
+Los backups se guardan en `backend/backups/` como:
+
+- `danimarvis.db.backup-YYYYMMDD` (snapshots de la base SQLite)
+- `grupos-suscritos-YYYYMMDD.json` (suscripciones de grupos)
+- `pre-agenda-YYYYMMDD-HHMMSS.db` (respaldo antes de operaciones agenda)
+- `pre-fb_id-YYYYMMDD-HHMMSS.db` (respaldo de grupos)
+- `danimarvis.db.bak-YYYYMMDD-HHMMSS` / `danimarvis-prerevert-*.db` (respaldos de revertidos)
+
+Los backups están excluidos del repositorio (ver `.gitignore`).
+
+### Política de respaldo
+
+- Los backups antiguos se reemplazan automáticamente.
+- Si la base pierde la API key, `secrets.js` la reinyecta del `publish_config` o del `.env` en cada arranque.
+- El `auth_secret` se genera una vez y se persiste en `settings.auth_secret` (no se expone por `/api/settings`).
+
+### Restauración forzada
+
+Para restaurar un backup manual desde la terminal:
+
+```bash
+node backend/scripts/restore-backup.mjs --file backend/backups/danimarvis.db.backup-20260810
+```
+
+> ⚠️ La restauración elimina la base actual y reemplaza todo. Hacelo con la base respaldada y el servidor parado.
 
 ### Desde la API
 
@@ -1271,13 +1468,41 @@ Corre los chequeos **en cadena** y sale con código distinto de 0 si algo no cua
 - **Carga real** — `check-carga.mjs`: levanta el grafo real de las vistas del frontend con un DOM mínimo, que es lo que hace el navegador al importarlas.
 - **Comportamiento** — `test-*.mjs`: cada módulo con lógica no trivial tiene su test que importa **el módulo de verdad** (no una copia) y comprueba casos concretos: rotación de grupos, reparto del lote, límites del reloj, transacciones, duplicar el día, técnica de texto, catálogo, etc.
 
+### Cómo correr una prueba individual
+
+No ejecutes `npm run check` (corre todo). Para correr un solo test:
+
+```bash
+# Ejemplo: test de límites de agenda
+node scripts/test-limites-agenda.mjs
+
+# Ejemplo: test de persistencia de config
+node scripts/test-persistencia-config.mjs
+
+# Ejemplo: test de OCR estructura
+node scripts/test-ocr-estructura.mjs
+```
+
+La secuencia completa de tests está en el script `check` de `package.json`. Si añades un nuevo test, agrégalo ahí.
+
+### Agregar un nuevo test
+
+1. Crea `scripts/test-nuevo-cosa.mjs`.
+2. Importá el módulo que quieras probar: `import { funcion } from '../backend/lib/modulo.js'`.
+3. Escribi casos concretos con `assert` o `console.assert`.
+4. Ágregalo al script `check` de `package.json`.
+
+> Regla práctica: los tests **importan el módulo real**; cuando algo solo se puede comprobar por texto (por ejemplo, que el poster use tal selector o que una ruta cablee tal función), se acepta una verificación de string en la fuente, pero solo como último recurso.
+
 ### La trampa que ningún chequeo veía
 
 `node --check` solo parsea, y `check-imports.mjs` validaba que lo **importado** exista... pero ninguno miraba los identificadores que se **usan**. El 2026-10-17, al disparar *Generar catálogo*, saltó `generateCatalogFile is not defined`: la función existía y estaba exportada en `backend/lib/catalogGenerator.js`, pero `server.js` la llamaba sin importarla. Los dos chequeos quedaban verdes y el error solo aparecía al tocar la ruta en caliente. La misma revisión destapó tres hermanos más en `server.js`: `ensureWebp` (subida de imágenes) y `isLegacyPlaintext`/`hashPassword` (login legado).
 
 `check-imports.mjs` ahora tiene una **segunda pasada** (solo `backend`) que detecta funciones exportadas usadas sin importar. Se limita al backend a propósito: en el frontend hay nombres que llegan por HTML (`onclick="closeModal()"`), por `window` o por imports dinámicos, y daría falsos positivos. El escaneo usa un recorrido carácter a carácter para ignorar comentarios y strings, porque un `//` dentro de una URL o un apóstrofo dentro de un template partían las expresiones regulares y se comían código real.
 
-> Regla práctica: si agregás una función con lógica, agregale un `test-*.mjs` y registralo en el `check` de `package.json`. Los tests **importan el módulo real**; cuando algo solo se puede comprobar por texto (por ejemplo, que el poster use tal selector o que una ruta cablee tal función), se acepta una verificación de string en la fuente, pero solo como último recurso.
+> **Trampas conocidas en `sql.js@1.14.1`:**
+> - El `db.prepare(...)` **crudo** no persiste y **no falla**. En la app no pasa porque `backend/db/database.js` envuelve las sentencias con un `Statement` propio que hace bind + step. En scripts sueltos, usar `db.run(sql, [params])` y verificar con una lectura después de `db.export()`.
+> - No editar `backend/danimarvis.db` con el servidor vivo: `initDB()` termina en `saveDB()` y reescribe el archivo entero desde memoria.
 
 ---
 
@@ -1445,3 +1670,66 @@ En **Configuración** del panel puedes definir una plantilla de texto con placeh
 ## Licencia
 
 Proyecto privado — DaniMarvis Store.
+
+---
+
+## Privacidad y Legal
+
+- **Política de Privacidad**: [`privacidad.html`](./privacidad.html) — explica qué datos maneja el panel, dónde se guardan y quién puede verlos.
+- **Licencia**: Proyecto privado. No hay licencia de distribución.
+
+---
+
+## Notas de revisión
+
+Documentación generada el 2026-11-19 por revisión del repo. Las secciones de **Publicador automático de grupos** y **Publicaciones en Redes Sociales** contienen detalles internos de operación (referencias a archivos y líneas, comportamiento de la UI, trampas verificadas). El documento `docs/PUBLICADOR_GRUPOS.md` es la referencia técnica exhaustiva para ese módulo; el `docs/GUIA_PUBLICACION_AUTOMATICA_META.md` es la guía de usuario para Rutinas de Página; `docs/DaniMarvis_ChatGPT_Prompts_v1.0.md` es la biblioteca de prompts para ChatGPT.
+
+
+## Despliegue
+
+### Desde cero (servidor Express)
+
+```bash
+# Clonar o copiar el proyecto
+cd /d/Proyectos/DaniMarvisStore
+
+# Instalar dependencias
+npm install
+
+# Arrancar el servidor (producción)
+npm start
+# El servidor escucha en http://localhost:3456
+```
+
+### Variables de entorno para producción
+
+| Variable | ¿Qué hace |
+|----------|-----------|
+| `PORT` | Puerto del servidor (por defecto 3456) |
+| `DANIMARVIS_DB` | Ruta a la base SQLite (por defecto `backend/danimarvis.db`) |
+| `COORD_URL` | URL del coordinador; si no está seteado, esta instancia coordina |
+| `COORD_TOKEN` | Header `X-Coord-Token` de la API de coordinación (solo coordinador) |
+| `DANIMARVIS_UPLOADS` | Carpeta de uploads por instancia (por defecto `backend/uploads`) |
+
+### Variables de entorno en el servidor
+
+El servidor también lee desde `.env` (no commiteado, en `.gitignore`). Las variables que el servidor usa están listadas en la sección "Variables de entorno" de este README.
+
+### Notas de despliegue
+
+- **Entorno de producción:** usa `npm start` (sin `--watch`). El modo dev (`npm run dev`) reinicia el servidor en caliente y no es para producción.
+- **Base de datos:** es SQLite en un solo archivo (`backend/danimarvis.db`). No compartir este archivo entre servidores concurrentes sin coordinación.
+- **Subida de imágenes:** multer limita a 5 MB por archivo; `sharp` convierte a WebP. Las imágenes se sirven bajo `/uploads`.
+- **Servidor estático:** el frontend se sirve desde `frontend/` y `/catalogo` apunta a `public-catalog/`.
+- **Backup automático:** `createBackup()` se ejecuta al arrancar y cada 24 h; los backups se guardan en `backend/backups/`.
+
+### Despliegue del catálogo público (GitHub Pages)
+
+El catálogo público se genera con `node scripts/generate-catalog.js` → `public-catalog/index.html` → se commitea y se sube a GitHub Pages desde Settings → Pages → Deploy from a branch.
+
+### Recomendaciones de seguridad
+
+- Nunca commitees `.env` (ya está en `.gitignore`).
+- Usa contraseñas fuertes para las cuentas de Facebook; el panel las guarda en `settings.publish_config` (en la BD, en texto plano).
+- El `COORD_TOKEN` protege la API de coordinación (solo la instancia que coordina puede escribir/leer coordinación).
+- El `auth_secret` se genera automáticamente en `settings.auth_secret` y se usa para firmar tokens JWT; no debería cambiar una vez el sistema está en producción.
