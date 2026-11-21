@@ -16,6 +16,7 @@ import { render as renderPublications } from '../views/publicationsView.js';
 import { render as renderExports } from '../views/exportsView.js';
 import { render as renderRankings } from '../views/rankingsView.js';
 import { renderImport } from '../views/importView.js';
+import { render as renderAvailabilityUpdate } from '../views/availabilityUpdateView.js';
 import { render as renderPageRoutines } from '../views/pageRoutinesView.js';
 
 const toastEl = document.getElementById('toast');
@@ -185,6 +186,7 @@ async function bootstrap() {
   route('#/publications', protect((_, c) => renderPublications(c)));
   route('#/exports', protect((_, c) => renderExports(c)));
   route('#/import', protect((_, c) => renderImport(c)));
+  route('#/availability-update', protect((_, c) => renderAvailabilityUpdate(c)));
   route('#/page-routines', protect((_, c) => renderPageRoutines(c)));
   route('#/rankings', protect((_, c) => renderRankings(c)));
 

@@ -33,10 +33,17 @@ import pubQueueRouter from './routes/pubQueue.js';
 import promptEngineRouter from './routes/promptEngine.js';
 import providerStylesRouter from './routes/providerStyles.js';
 import pageRoutinesRouter from './routes/pageRoutines.js';
+import availabilityUpdateRouter from './routes/availabilityUpdate.js';
+import {
+  startPageRoutineWorker,
+  stopPageRoutineWorker,
+  setPageRoutineWorkerActive,
+  getPageRoutineWorkerStatus,
+} from './lib/pageRoutineWorker.js';
 import { getWarrantyReminders } from './lib/warranty.js';
 import warrantyRulesRouter from './routes/warrantyRules.js';
 import { getUploadsDir, getAccountConfig, getCuentasConfig, ACCOUNT_IDS } from './lib/accountConfig.js';
-import { createBackup, scheduleBackups } from './scripts/backup.js';
+import { scheduleBackups } from './scripts/backup.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -129,6 +136,7 @@ app.use('/api/prompt-engine', promptEngineRouter);
 app.use('/api/provider-styles', providerStylesRouter);
 app.use('/api/warranty-rules', warrantyRulesRouter);
 app.use('/api/page-routines', pageRoutinesRouter);
+app.use('/api/availability-update', availabilityUpdateRouter);
 
 app.post('/api/upload', (req, res) => {
   upload.single('image')(req, res, async (err) => {
@@ -219,6 +227,25 @@ app.put('/api/settings', (req, res) => {
       try { agendaWasActive = Boolean(agendaSchedulerState().active); } catch { agendaWasActive = false; }
       const r = rescheduleAgenda({ wasActive: agendaWasActive });
       if (r.rescheduled) console.log('[settings] temporizador del disparador por fecha reaplicado sin reiniciar el server');
+    }
+
+    // Worker de Rutinas de Página: se rearma si cambió enabled/tickMs/maxRetries/retryBaseMs
+    if (publish_config && publish_config.pageRoutines) {
+      const pr = publish_config.pageRoutines;
+      const prev = {};
+      try {
+        const existing = JSON.parse(db.prepare('SELECT publish_config FROM settings WHERE id = 1').get().publish_config || '{}');
+        Object.assign(prev, existing.pageRoutines || {});
+      } catch {}
+      const changed =
+        pr.enabled !== prev.enabled ||
+        pr.tickMs !== prev.tickMs ||
+        pr.maxRetries !== prev.maxRetries ||
+        pr.retryBaseMs !== prev.retryBaseMs;
+      if (changed) {
+        setPageRoutineWorkerActive(pr.enabled !== false);
+        console.log('[settings] worker de page routines reaplicado sin reiniciar el server');
+      }
     }
   }
 
@@ -414,6 +441,27 @@ app.get('/api/dashboard', (req, res) => {
   res.json({ stats, monthlySales, topProducts, recentSales, exchange_rate: settings.exchange_rate, warrantyReminders });
 });
 
+app.post('/api/warranty-reminders/:saleId/dismiss', (req, res) => {
+  const saleId = String(req.params.saleId || '');
+  const warrantyEnd = String(req.body?.warranty_end || '');
+  if (!saleId || !/^\d{4}-\d{2}-\d{2}$/.test(warrantyEnd)) {
+    return res.status(400).json({ error: 'Venta o fecha de vencimiento inválida' });
+  }
+
+  const db = getDB();
+  const sale = db.prepare('SELECT id, warranty_end FROM sales WHERE id = ?').get(saleId);
+  if (!sale) return res.status(404).json({ error: 'Venta no encontrada' });
+  if (sale.warranty_end !== warrantyEnd) {
+    return res.status(409).json({ error: 'La fecha de garantía cambió. Actualizá el Dashboard e intentá de nuevo.' });
+  }
+
+  db.prepare(`
+    INSERT OR REPLACE INTO warranty_reminder_dismissals (sale_id, warranty_end, dismissed_at)
+    VALUES (?, ?, datetime('now'))
+  `).run(saleId, warrantyEnd);
+  res.json({ sale_id: saleId, warranty_end: warrantyEnd, dismissed: true });
+});
+
 app.post('/api/login', loginLimiter, (req, res) => {
   const db = getDB();
   const { username, password } = req.body;
@@ -453,10 +501,6 @@ app.post('/api/generate-catalog', async (req, res) => {
       WHERE p.status = 'active' AND p.catalog_visible = 1
       ORDER BY p.category, p.name
     `).all();
-
-    if (!products.length) {
-      return res.status(400).json({ error: 'No hay productos activos para generar el catálogo' });
-    }
 
     const catalogDir = join(__dirname, '..', 'public-catalog');
     await generateCatalogFile(products, catalogDir, uploadsDir);
@@ -512,13 +556,7 @@ async function start() {
     process.exit(1);
   }
 
-  createBackup().catch((e) => {
-    console.error('[Backup] Error automático al iniciar:', e.message);
-  });
-
-  // Y de acá en adelante cada BACKUP_INTERVAL_HOURS (24 por defecto). Antes solo
-  // se respaldaba en este punto, así que un server que se dejaba encendido
-  // semanas no generaba ni un respaldo nuevo.
+  // Respaldar diariamente a una hora fija local, independientemente del arranque.
   scheduleBackups();
 
   // Chequeo de secretos al arrancar. Una API key enmascarada en la base no
@@ -545,14 +583,14 @@ async function start() {
 
   // El disparador por fecha, que es el que hace que "18:00" signifique 18:00.
   // Es un reloj independiente del worker de arriba y arranca según su propio
-  // interruptor (por defecto encendido). Evencia si auto=false se limita a
-  // tener el timer armado mirando la cola sin publicar nada.
+  // interruptor (por defecto encendido).
   startAgendaScheduler();
 
-  // Reintento opcional de lotes fallidos al final del día. Solo actúa si
-  // agenda.lote_retry está habilitado (default false) y el modo de cuentas es
-  // 'alternado'. Revisa cada 30 min si hay publicaciones con lote sin-boton /
-  // sin-grupos y crea reintentos en la cuenta alternativa.
+  // Worker automático de Rutinas de Página: agenda posts en Meta cada minuto
+  // (o el intervalo configurado en publish_config.pageRoutines.tickMs).
+  startPageRoutineWorker();
+
+  // Reintento opcional de lotes fallidos al final del día.
   startLoteRetryScheduler();
 }
 

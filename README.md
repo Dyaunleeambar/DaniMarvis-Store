@@ -844,10 +844,18 @@ Funcionalidad para actualizar precios y disponibilidad de productos a partir de 
 3. **Revisar** — Para cada imagen se muestra: producto detectado (con % de coincidencia), precio detectado, precio actual y texto OCR. Se puede corregir manualmente.
 4. **Aplicar** — Actualiza precios, define visibilidad en catálogo y elimina de la carpeta las imágenes ya procesadas. Opcionalmente oculta productos del proveedor que no aparecen en la lista.
 
+### Flujo por Vista por Categoría (clasificación de imágenes)
+
+1. Maximiza el área de trabajo y activa **Vista por categoría**.
+2. **Analizar todo** compara las imágenes pendientes con las imágenes de referencia de los productos mediante hash perceptual (dHash).
+3. **Sincronizar** mueve las imágenes con coincidencia a su carpeta de categoría; las que no coinciden quedan en la raíz para revisión manual.
+4. También puedes arrastrar imágenes individuales o seleccionadas a una categoría.
+
 ### Características
 
 - **OCR en español e inglés** con tesseract.js v7
 - **Coincidencia fuzzy** — Algoritmo de matching que tolera errores de escritura y variaciones en nombres
+- **Clasificación por categoría** — Comparación local de imágenes con referencias existentes, sin consumir límites de IA de visión
 - **Detección de precios** — Reconoce montos en USD con contexto (distingue precios de especificaciones técnicas)
 - **Creación de productos** — Botón `+` para crear un producto nuevo directamente desde la imagen
 - **Toggle de visibilidad** — Controlar si cada producto queda visible en el catálogo
@@ -858,9 +866,17 @@ Funcionalidad para actualizar precios y disponibilidad de productos a partir de 
 
 1. Ve a **Importar / Sincronizar** en el panel.
 2. Selecciona el proveedor y la carpeta con las imágenes.
-3. Haz clic en **Analizar imágenes**.
+3. Haz clic en **Analizar imágenes** para actualizar precios o activa **Vista por categoría** para clasificar imágenes.
 4. Revisa cada resultado, corrige si hace falta.
-5. Marca los productos a actualizar y haz clic en **Aplicar seleccionados**.
+5. Marca los productos a actualizar y haz clic en **Aplicar seleccionados** (OCR) o **Sincronizar** (clasificación).
+
+---
+
+## Actualización
+
+La sección **Actualización** compara las imágenes del inventario de un proveedor con las imágenes de referencia guardadas en sus productos para proponer cambios de disponibilidad. Analiza la carpeta raíz y sus subcarpetas inmediatas usando comparación perceptual local, sin IA generativa. Las coincidencias claras proponen disponible; las referencias sin coincidencia proponen oculto; los casos ambiguos y productos sin referencia quedan para revisión o sin cambios.
+
+La vista previa permite revisar el resultado antes de aplicar. Las actualizaciones aplicadas quedan en el historial y se pueden deshacer; al aplicar o deshacer, el catálogo público se regenera.
 
 ---
 
@@ -1398,6 +1414,10 @@ Permite exportar e importar todos los datos del sistema.
 2. Haz clic en **"Exportar datos"**.
 3. Se descarga un archivo JSON con todos los productos, proveedores, ventas, categorías, configuración, publicaciones y exportaciones.
 
+### Exportar selección configurable
+
+Permite elegir qué tablas incluir y, al exportar productos, filtrar por proveedor y visibilidad. Las demás tablas seleccionadas se exportan completas. Es útil para preparar datos de un proveedor o una actualización asistida por IA sin exportar todo el sistema.
+
 ### Importar (panel)
 
 1. Ve a **Respaldos** en el panel.
@@ -1639,6 +1659,8 @@ En **Configuración** del panel puedes definir una plantilla de texto con placeh
 - [x] Configuración de tipo de cambio USD → MN
 - [x] Exportación de reportes PDF (tabla y lista detallada)
 - [x] Importación/sincronización de precios con OCR (tesseract.js)
+- [x] Vista por categoría en Importar/Sincronizar para clasificar imágenes usando referencias de productos
+- [x] Exportación selectiva de respaldos por tabla con filtros de proveedor y visibilidad
 - [x] Motor de prompts para anuncios con IA (familias, variantes y rotación)
 - [x] Importación de imágenes generadas con IA (asociación automática por nombre)
 - [x] Generación de imágenes con IA (Pollinations)

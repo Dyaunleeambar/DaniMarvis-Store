@@ -210,6 +210,10 @@ async function ensureFormMeta() {
 }
 
 export async function openProductForm(product, options = {}) {
+  if (product && !Object.prototype.hasOwnProperty.call(product, 'reference_image')) {
+    showToast('El servidor no devolvió la imagen de referencia del producto. Reinicia el panel y vuelve a intentarlo.', 'error');
+    return;
+  }
   await ensureFormMeta();
   const isDuplicate = !!options.isDuplicate;
   const presetName = options.name;
@@ -218,6 +222,7 @@ export async function openProductForm(product, options = {}) {
   const presetCatalogVisible = options.catalogVisible;
   const presetImages = Array.isArray(options.images) ? [...options.images] : [];
   const previewImage = options.previewImage || '';
+  const initialReferenceImage = product?.reference_image || options.referenceImage || '';
   const onCreated = options.onCreated;
   const onSaved = options.onSaved;
   const initialImages = product?.images ? [...product.images] : presetImages;
@@ -300,9 +305,9 @@ export async function openProductForm(product, options = {}) {
         <div class="form-group">
           <label>Imágenes</label>
           <div id="product-images-thumbs" class="image-thumbnails">
-            ${initialImages.map(url =>
-              `<div class="img-thumb" data-url="${escAttr(url)}">
-                <img src="${escAttr(url)}" alt="" />
+            ${initialImages.map((url, i) =>
+              `<div class="img-thumb" data-url="${escAttr(url)}" data-idx="${i}">
+                  <img src="${escAttr(url)}" alt="Ampliar imagen ${i + 1} del catálogo" role="button" tabindex="0" title="Clic para ampliar" />
                 <button type="button" class="img-thumb-remove" data-url="${escAttr(url)}">&times;</button>
               </div>`
             ).join('')}
@@ -320,9 +325,22 @@ export async function openProductForm(product, options = {}) {
         </div>
       </div>
       <div class="form-group">
-        <label>URL de referencia (ficha del producto)</label>
-        <input type="url" name="image_url" class="form-control" placeholder="https://..." value="${product?.image_url || ''}" />
-        <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">Enlace a la página web con la descripción completa del producto</small>
+        <label>Imagen de referencia para Actualización</label>
+        <input type="hidden" name="image_url" value="${escAttr(product?.image_url || '')}" />
+        <input type="hidden" name="reference_image" id="product-reference-image" value="${escAttr(initialReferenceImage)}" />
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <div id="product-reference-preview" class="product-reference-preview" style="width:76px;height:76px;border:1px dashed var(--border);border-radius:8px;display:grid;place-items:center;overflow:hidden;background:var(--bg)" ${initialReferenceImage ? 'role="button" tabindex="0" title="Clic para ampliar"' : ''} aria-label="${initialReferenceImage ? 'Ampliar imagen de referencia' : 'Sin imagen de referencia'}">
+            ${initialReferenceImage ? `<img src="${escAttr(initialReferenceImage)}" alt="Imagen de referencia" style="width:100%;height:100%;object-fit:contain" />` : '<span style="font-size:.68rem;color:var(--text-muted);text-align:center">Sin imagen</span>'}
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <label class="btn btn--secondary btn--sm" style="cursor:pointer;margin:0">
+              Cargar referencia
+              <input type="file" accept="image/*" id="product-reference-file" style="display:none" />
+            </label>
+            <button type="button" class="btn btn--ghost btn--sm" id="product-reference-clear" ${initialReferenceImage ? '' : 'disabled'}>Quitar</button>
+          </div>
+        </div>
+        <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:4px">Imagen usada solo para comparar disponibilidad; no se publica en la galería del catálogo.</small>
       </div>
       <div class="form-group">
         <label>Texto de publicación</label>
@@ -426,24 +444,88 @@ export async function openProductForm(product, options = {}) {
   const fileInput = document.getElementById('product-image-file');
   const urlInput = document.getElementById('product-image-url-input');
   const addUrlBtn = document.getElementById('btn-add-image-url');
+  const referenceImageInput = document.getElementById('product-reference-image');
+  const referenceFileInput = document.getElementById('product-reference-file');
+  const referencePreview = document.getElementById('product-reference-preview');
+  const referenceClearButton = document.getElementById('product-reference-clear');
   let dragIndex = null;
+
+  function renderReferenceImage(url) {
+    referenceImageInput.value = url;
+    referencePreview.innerHTML = url
+      ? `<img src="${escAttr(url)}" alt="Imagen de referencia" style="width:100%;height:100%;object-fit:contain" />`
+      : '<span style="font-size:.68rem;color:var(--text-muted);text-align:center">Sin imagen</span>';
+    referencePreview.setAttribute('aria-label', url ? 'Ampliar imagen de referencia' : 'Sin imagen de referencia');
+    referencePreview.title = url ? 'Clic para ampliar' : '';
+    if (url) {
+      referencePreview.setAttribute('role', 'button');
+      referencePreview.tabIndex = 0;
+    } else {
+      referencePreview.removeAttribute('role');
+      referencePreview.removeAttribute('tabindex');
+    }
+    referenceClearButton.disabled = !url;
+  }
+
+  referencePreview.addEventListener('click', () => {
+    if (referenceImageInput.value) window._openLightbox([referenceImageInput.value]);
+  });
+  referencePreview.addEventListener('keydown', (event) => {
+    if ((event.key === 'Enter' || event.key === ' ') && referenceImageInput.value) {
+      event.preventDefault();
+      window._openLightbox([referenceImageInput.value]);
+    }
+  });
+
+  referenceFileInput?.addEventListener('change', async () => {
+    const file = referenceFileInput.files?.[0];
+    if (!file) return;
+    try {
+      referenceFileInput.disabled = true;
+      const result = await api.uploadImage(file);
+      renderReferenceImage(result.url);
+      showToast('Imagen de referencia cargada', 'success');
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      referenceFileInput.disabled = false;
+      referenceFileInput.value = '';
+    }
+  });
+  referenceClearButton?.addEventListener('click', () => renderReferenceImage(''));
 
   function renderThumbs() {
     thumbsContainer.innerHTML = productImages.map((url, i) =>
       `<div class="img-thumb" draggable="true" data-url="${escAttr(url)}" data-idx="${i}">
-        <img src="${escAttr(url)}" alt="" />
+        <img src="${escAttr(url)}" alt="Ampliar imagen ${i + 1} del catálogo" role="button" tabindex="0" title="Clic para ampliar" />
         <button type="button" class="img-thumb-remove" data-url="${escAttr(url)}">&times;</button>
       </div>`
     ).join('');
-    thumbsContainer.querySelectorAll('.img-thumb-remove').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const idx = productImages.indexOf(btn.dataset.url);
-        if (idx !== -1) productImages.splice(idx, 1);
-        renderThumbs();
-      });
-    });
   }
+
+  thumbsContainer.addEventListener('click', (event) => {
+    const removeButton = event.target.closest('.img-thumb-remove');
+    if (removeButton) {
+      event.stopPropagation();
+      const idx = productImages.indexOf(removeButton.dataset.url);
+      if (idx !== -1) productImages.splice(idx, 1);
+      renderThumbs();
+      return;
+    }
+    openProductImage(event.target);
+  });
+
+  function openProductImage(target) {
+    const image = target.closest('.img-thumb img');
+    if (!image) return;
+    window._openLightbox(productImages, Number(image.closest('.img-thumb').dataset.idx));
+  }
+  thumbsContainer.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    if (!event.target.closest('.img-thumb img')) return;
+    event.preventDefault();
+    openProductImage(event.target);
+  });
 
   thumbsContainer.addEventListener('dragstart', (e) => {
     const el = e.target.closest('.img-thumb');
@@ -607,16 +689,23 @@ export async function openProductForm(product, options = {}) {
     data.commission_type = 'fixed';
     data.commission_value = parseFloat(data.commission_value) || 0;
     data.images = productImages;
+    data.reference_image = referenceImageInput.value;
     const catalogCb = e.target.querySelector('[name="catalog_visible"]');
     data.catalog_visible = catalogCb && catalogCb.checked ? 1 : 0;
 
     try {
       let createdProduct;
       if (product && !isDuplicate) {
-        await api.updateProduct(product.id, data);
+        const savedProduct = await api.updateProduct(product.id, data);
+        if (savedProduct.reference_image !== data.reference_image) {
+          throw new Error('El servidor no confirmó la imagen de referencia guardada. El producto no se cerró; revisa la conexión con el servidor e inténtalo nuevamente.');
+        }
         showToast('Producto actualizado', 'success');
       } else {
         createdProduct = await api.createProduct(data);
+        if (createdProduct.reference_image !== data.reference_image) {
+          throw new Error('El servidor no confirmó la imagen de referencia guardada. El producto no se cerró; revisa la conexión con el servidor e inténtalo nuevamente.');
+        }
         showToast('Producto creado', 'success');
       }
       await invalidateProductsCache();

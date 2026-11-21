@@ -29,6 +29,28 @@ async function request(method, path, body) {
   return data;
 }
 
+async function requestBlob(path) {
+  const headers = {};
+  const token = sessionStorage.getItem('dm_token');
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(`${API_BASE}${path}`, { headers });
+  if (res.status === 401) {
+    sessionStorage.removeItem('dm_user');
+    sessionStorage.removeItem('dm_token');
+    window.location.hash = '#/login';
+    throw new Error('Sesión expirada');
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    let message = `Error del servidor (${res.status})`;
+    try {
+      message = JSON.parse(text).error || message;
+    } catch {}
+    throw new Error(message);
+  }
+  return res.blob();
+}
+
 export const api = {
   // Products
   getProducts: (params = {}) => {
@@ -60,6 +82,8 @@ export const api = {
 
   // Dashboard
   getDashboard: () => request('GET', '/dashboard'),
+  dismissWarrantyReminder: (saleId, warrantyEnd) =>
+    request('POST', `/warranty-reminders/${encodeURIComponent(saleId)}/dismiss`, { warranty_end: warrantyEnd }),
   getCounts: () => request('GET', '/counts'),
 
   // Categories
@@ -70,6 +94,11 @@ export const api = {
 
   // Backup
   exportBackup: () => request('GET', '/backup'),
+  createAiAnalysisPackage: (data) => request('POST', '/backup/ai-analysis-package', data),
+  getAiAnalysisAsset: (packageId, assetId) =>
+    requestBlob(`/backup/ai-analysis-package/${encodeURIComponent(packageId)}/assets/${encodeURIComponent(assetId)}`),
+  deleteAiAnalysisPackage: (packageId) =>
+    request('DELETE', `/backup/ai-analysis-package/${encodeURIComponent(packageId)}`),
   restoreBackup: (data) => request('POST', '/backup/restore', data),
 
   // Settings
@@ -180,9 +209,24 @@ export const api = {
   importImages: (data) => request('POST', '/images/import', data),
 
   // Sincronización desde imágenes (proveedor)
+  importPrepareCategories: (data) => request('POST', '/import/prepare-categories', data),
+  importAssignImage: (data) => request('POST', '/import/assign-image', data),
+  importBrowse: (data) => request('POST', '/import/browse', data),
   importAnalyze: (data) => request('POST', '/import/analyze', data),
+  importSyncReferenceImages: (data) => request('POST', '/import/sync-reference-images', data),
+  importCompareSingleImage: (data) => request('POST', '/import/compare-single-image', data),
   importDiscardImage: (data) => request('POST', '/import/discard-image', data),
   importApply: (data) => request('POST', '/import/apply', data),
+
+  // Actualización de disponibilidad por comparación visual
+  getAvailabilityUpdateHistory: () => request('GET', '/availability-update/history'),
+  analyzeAvailabilityUpdate: (data) => request('POST', '/availability-update/analyze', data),
+  discardAvailabilityUpdateImage: (data) => request('POST', '/availability-update/discard-image', data),
+  copyAvailabilityUpdateImage: (data) => request('POST', '/availability-update/copy-image', data),
+  applyAvailabilityUpdate: (batchId, data) =>
+    request('POST', `/availability-update/${encodeURIComponent(batchId)}/apply`, data),
+  undoAvailabilityUpdate: (batchId) =>
+    request('POST', `/availability-update/${encodeURIComponent(batchId)}/undo`, {}),
 
   // Destinos de una publicación. La cola dejó de ser una pantalla: es el
   // registro interno que el Planificador escribe (fan-out a N grupos) y que la
@@ -249,6 +293,14 @@ export const api = {
   testPageRoutine: (routineId) => request('GET', `/page-routines/test${routineId ? '?routine_id=' + routineId : ''}`),
   runPageRoutineNow: () => request('POST', '/page-routines/run-now'),
   cancelPageRoutineLog: (logId) => request('DELETE', `/page-routines/logs/${logId}`),
+  retryPageRoutineLog: (logId) => request('POST', `/page-routines/logs/${logId}/retry`),
+
+  // Worker automático de Page Routines
+  getPageRoutineWorkerStatus: () => request('GET', '/page-routines/worker-status'),
+  startPageRoutineWorker: () => request('POST', '/page-routines/worker/start'),
+  stopPageRoutineWorker: () => request('POST', '/page-routines/worker/stop'),
+  setPageRoutineWorkerActive: (active) => request('POST', '/page-routines/worker/active', { active }),
+  syncPageRoutinesMeta: () => request('POST', '/page-routines/sync-meta'),
 
   // Auth
   login: (username, password) => request('POST', '/login', { username, password }),

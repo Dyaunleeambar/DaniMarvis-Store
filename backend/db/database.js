@@ -89,6 +89,7 @@ export async function initDB() {
   createSchema();
   seedIfEmpty();
   migrateImages();
+  migrateProductReferenceImage();
   migratePublishText();
   migrateProviderInfo();
   migrateCatalogVisible();
@@ -114,6 +115,7 @@ export async function initDB() {
   migrateRankingSnapshots();
   migrateRankingHistory();
   migratePageRoutines();
+  migratePageRoutinesExtended();
   migrateAuthSecret();
   migrateIndexes();
   migrateCollapseQueueToSingleDestination();
@@ -229,6 +231,7 @@ function createSchema() {
       warranty TEXT,
       provider_id TEXT,
       image_url TEXT,
+      reference_image TEXT DEFAULT '',
       publish_text TEXT DEFAULT '',
       stock INTEGER DEFAULT 0,
       status TEXT DEFAULT 'active',
@@ -258,6 +261,22 @@ function createSchema() {
       updated_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (product_id) REFERENCES products(id),
       FOREIGN KEY (provider_id) REFERENCES providers(id)
+    );
+    CREATE TABLE IF NOT EXISTS warranty_reminder_dismissals (
+      sale_id TEXT NOT NULL,
+      warranty_end TEXT NOT NULL,
+      dismissed_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (sale_id, warranty_end)
+    );
+    CREATE TABLE IF NOT EXISTS availability_update_batches (
+      id TEXT PRIMARY KEY,
+      provider_id TEXT NOT NULL,
+      folder TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'preview',
+      preview_json TEXT NOT NULL DEFAULT '{}',
+      changes_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
@@ -367,6 +386,12 @@ function migrateImages() {
   for (const row of toMigrate) {
     db.prepare("UPDATE products SET images = ? WHERE id = ?").run(JSON.stringify([row.image_url]), row.id);
   }
+}
+
+function migrateProductReferenceImage() {
+  try {
+    db.exec("ALTER TABLE products ADD COLUMN reference_image TEXT DEFAULT ''");
+  } catch (_) {}
 }
 
 function migratePublishText() {
@@ -790,6 +815,23 @@ function migratePageRoutines() {
       updated_at TEXT DEFAULT (datetime('now'))
     );
   `);
+}
+
+function migratePageRoutinesExtended() {
+  // Nuevas columnas para reintentos automáticos, formato de imagen y sincronización con Meta
+  try { db.exec("ALTER TABLE page_schedule_log ADD COLUMN format TEXT DEFAULT '4:5'"); } catch (_) {}
+  try { db.exec("ALTER TABLE page_schedule_log ADD COLUMN retry_count INTEGER DEFAULT 0"); } catch (_) {}
+  try { db.exec("ALTER TABLE page_schedule_log ADD COLUMN next_retry_at TEXT"); } catch (_) {}
+  try { db.exec("ALTER TABLE page_schedule_log ADD COLUMN meta_status TEXT DEFAULT ''"); } catch (_) {}
+  try { db.exec("ALTER TABLE page_schedule_log ADD COLUMN synced_at TEXT"); } catch (_) {}
+
+  // Índice para consultas de reintentos automáticos
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_page_schedule_log_retry ON page_schedule_log(status, next_retry_at);
+  `);
+
+  // Backfill: marcar logs existentes sin meta_status como 'scheduled' si aún lo están
+  db.prepare("UPDATE page_schedule_log SET meta_status = status WHERE status = 'scheduled' AND meta_status = ''").run();
 }
 
 function migrateWarrantyRules() {
