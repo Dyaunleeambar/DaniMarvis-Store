@@ -5,7 +5,7 @@
 // verifica leyendo su código (no se abre un navegador).
 import { readFileSync } from 'node:fs';
 import { sumarComisiones, ingresosDeVentas, textoComisiones, formatUSD } from '../frontend/js/utils/utils.js';
-import { ingresosPorComisiones } from '../backend/lib/ingresos.js';
+import { comisionesPendientesPorMoneda, ingresosPorComisiones } from '../backend/lib/ingresos.js';
 import { abrirMemoria } from './helpers/sqljs.mjs';
 
 let fallos = 0;
@@ -34,6 +34,8 @@ console.log('1. sumarComisiones: qué cuenta como ingreso\n');
     sumarComisiones([venta(1e6, 10, 'USD', 1)], true).usd === 10);
   ok('cobradas + pendientes = todas las comisiones',
     c.usd + p.usd === 570 && c.mn + p.mn === 4500);
+  ok('las ventas canceladas nunca suman, aunque estén pendientes',
+    sumarComisiones([venta(1, 25, 'USD', 0, 'cancelled')], false).usd === 0);
 }
 
 console.log('\n2. casos raros\n');
@@ -43,6 +45,7 @@ console.log('\n2. casos raros\n');
   ok('monto vacío o inválido cuenta como 0', sumarComisiones([venta(1, null, 'USD', 1), venta(1, 'abc', 'USD', 1), venta(1, '7.5', 'USD', 1)], true).usd === 7.5);
   ok('commission_paid acepta 1, true y "1"', sumarComisiones([venta(1, 1, 'USD', 1), venta(1, 2, 'USD', true), venta(1, 4, 'USD', '1')], true).usd === 7);
   ok('commission_paid 0, false o ausente es pendiente', sumarComisiones([venta(1, 1, 'USD', 0), venta(1, 2, 'USD', false), venta(1, 4, 'USD', undefined)], true).usd === 0);
+  ok('commission_paid 0, false o ausente se considera pendiente', sumarComisiones([venta(1, 1, 'USD', 0), venta(1, 2, 'USD', false), venta(1, 4, 'USD', undefined)], false).usd === 7);
   ok('una moneda desconocida no se mezcla con USD ni MN', (() => { const r = sumarComisiones([venta(1, 9, 'EUR', 1)], true); return r.usd === 0 && r.mn === 0; })());
 }
 
@@ -66,6 +69,8 @@ console.log('\n4. cableado: vista y PDF muestran comisiones cobradas, no el valo
   ok('el PDF usa las comisiones cobradas en el resumen y en el pie', (pdf.match(/ingresosDeVentas\(all\)/g) || []).length === 2);
   ok('el PDF ya no suma total_amount para los ingresos', !/totalRevenue/.test(pdf));
   ok('el PDF dice de dónde sale el número', pdf.includes('Ingresos totales (comisiones cobradas)'));
+  ok('Ventas muestra la comisión cancelada como no aplicable', vista.includes("s.delivery_status === 'cancelled' ? '—'") && vista.includes('No aplica'));
+  ok('el PDF muestra la comisión cancelada como no aplicable', pdf.includes("s.delivery_status === 'cancelled' ? '—'") && pdf.includes("'No aplica'"));
 }
 
 console.log('\n5. las ventas canceladas no suman a los ingresos\n');
@@ -82,6 +87,8 @@ console.log('\n5. las ventas canceladas no suman a los ingresos\n');
   ok('una venta sin entregar todavía sí cuenta si la comisión se cobró', ingresosDeVentas([venta(1, 20, 'USD', 1, 'pending')]).usd === 20);
   ok('una venta sin estado cuenta', ingresosDeVentas([venta(1, 5, 'USD', 1, undefined)]).usd === 5);
   ok('lista vacía o nula no revienta', ingresosDeVentas([]).usd === 0 && ingresosDeVentas(null).mn === 0);
+  const pendientes = sumarComisiones(ventas, false);
+  ok('las pendientes tampoco suman comisión de ventas canceladas', pendientes.usd === 0 && pendientes.mn === 0, JSON.stringify(pendientes));
 }
 
 console.log('\n6. el Dashboard (SQL) y Ventas (JS) dan el mismo número\n');
@@ -103,10 +110,14 @@ console.log('\n6. el Dashboard (SQL) y Ventas (JS) dan el mismo número\n');
   ];
   for (const f of filas) db.prepare('INSERT INTO sales (total_amount, commission_amount, commission_currency, commission_paid, delivery_status) VALUES (?, ?, ?, ?, ?)').run(...f);
   const sql = ingresosPorComisiones(db);
+  const pendientes = comisionesPendientesPorMoneda(db);
   ok('el SQL suma las cobradas no canceladas en USD (50 + 12,5 + 8)', sql.usd === 70.5, JSON.stringify(sql));
   ok('y en MN (3000)', sql.mn === 3000, JSON.stringify(sql));
+  ok('el SQL excluye las comisiones pendientes de ventas canceladas', pendientes.usd === 406 && pendientes.mn === 0, JSON.stringify(pendientes));
   const js = ingresosDeVentas(filas.map(([t, c, m, p, e]) => ({ total_amount: t, commission_amount: c, commission_currency: m, commission_paid: p, delivery_status: e })));
   ok('el frontend da exactamente lo mismo sobre las mismas filas', js.usd === sql.usd && js.mn === sql.mn, JSON.stringify({ js, sql }));
+  const pendientesJS = sumarComisiones(filas.map(([t, c, m, p, e]) => ({ total_amount: t, commission_amount: c, commission_currency: m, commission_paid: p, delivery_status: e })), false);
+  ok('el frontend y el SQL coinciden en comisiones pendientes', pendientesJS.usd === pendientes.usd && pendientesJS.mn === pendientes.mn, JSON.stringify({ pendientesJS, pendientes }));
   const vacia = (await abrirMemoria(`CREATE TABLE sales (id INTEGER PRIMARY KEY, total_amount REAL, commission_amount REAL, commission_currency TEXT, commission_paid INTEGER, delivery_status TEXT);`)).db;
   const r0 = ingresosPorComisiones(vacia);
   ok('sin ventas: cero en ambas monedas', r0.usd === 0 && r0.mn === 0);
@@ -116,6 +127,8 @@ console.log('\n7. cableado del Dashboard\n');
 {
   const server = leer('../backend/server.js');
   ok('el endpoint agrega los ingresos por comisiones', server.includes('ingresosPorComisiones(db)') && server.includes('stats.income_commissions_usd = ingresos.usd') && server.includes('stats.income_commissions_mn = ingresos.mn'));
+  ok('el Dashboard obtiene comisiones pendientes excluyendo canceladas', server.includes('comisionesPendientesPorMoneda(db)') && server.includes('stats.pending_commissions_usd = pendientes.usd') && server.includes('stats.pending_commissions_mn = pendientes.mn'));
+  ok('el total de comisiones del Dashboard también excluye canceladas', server.includes("COALESCE(delivery_status, '') != 'cancelled') as total_commissions"));
   ok('se mantiene total_revenue en la respuesta (compatibilidad)', server.includes('as total_revenue'));
   const dash = leer('../frontend/js/views/dashboardView.js');
   ok('el Dashboard muestra las comisiones cobradas como Ingresos totales', dash.includes('stats.income_commissions_usd') && dash.includes('stats.income_commissions_mn') && dash.includes('<div class="stat-label">Ingresos totales</div>'));
@@ -125,6 +138,28 @@ console.log('\n7. cableado del Dashboard\n');
     dash.includes('async function completarIngresos(data)') && dash.includes('ingresosDeVentas(await api.getSales())') && dash.includes('await completarIngresos(data);'));
   ok('solo completa cuando faltan los dos campos (con el servidor nuevo manda el SQL)',
     dash.includes('s.income_commissions_usd !== undefined || s.income_commissions_mn !== undefined'));
+}
+
+console.log('\n8. filtro de estado de comisión en Ventas\n');
+{
+  const vista = leer('../frontend/js/views/salesView.js');
+  const route = leer('../backend/routes/sales.js');
+  ok('hay filtros separados para entrega y estado de comisión',
+    vista.includes('id="filter-status"') && vista.includes('id="filter-commission"'));
+  ok('el filtro ofrece pendiente, pagada y no aplicable (canceladas)',
+    vista.includes('value="pending" ${activeFilters.commission_status') &&
+    vista.includes('value="paid" ${activeFilters.commission_status') &&
+    vista.includes('value="not_applicable" ${activeFilters.commission_status'));
+  ok('el estado seleccionado se manda y se conserva al volver a renderizar',
+    vista.includes('params.commission_status = commissionFilter.value') &&
+    vista.includes('commission_status: commissionFilter.value'));
+  ok('el endpoint filtra pendientes y pagadas excluyendo las canceladas',
+    route.includes("commission_status === 'paid'") &&
+    route.includes("commission_status === 'pending'") &&
+    route.includes("COALESCE(s.delivery_status, '') != 'cancelled'"));
+  ok('el endpoint puede listar canceladas como sin comisión',
+    route.includes("commission_status === 'not_applicable'") &&
+    route.includes("s.delivery_status = 'cancelled'"));
 }
 
 console.log(fallos ? `\n${fallos} FALLO(S)` : '\nTodo en verde');

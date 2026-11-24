@@ -93,9 +93,7 @@ function renderTable(container, sales, activeFilters = {}) {
   // Ingresos = comisiones YA COBRADAS (USD y MN por separado), sin ventas canceladas.
   // El valor de los productos vendidos no es ingreso.
   const ingresosTxt = textoComisiones(ingresosDeVentas(sales));
-  const pendingCommissions = sales.filter(v => !v.commission_paid).reduce((s, v) => s + v.commission_amount, 0);
-  const pendingCommissionsUSD = sales.filter(v => !v.commission_paid && (v.commission_currency || 'USD') === 'USD').reduce((s, v) => s + v.commission_amount, 0);
-  const pendingCommissionsMN = sales.filter(v => !v.commission_paid && (v.commission_currency || 'USD') === 'MN').reduce((s, v) => s + v.commission_amount, 0);
+  const pendingCommissionsTxt = textoComisiones(sumarComisiones(sales, false));
   const exchangeRate = sales.length > 0 ? sales[0].exchange_rate : 61000;
 
   container.innerHTML = `
@@ -103,7 +101,7 @@ function renderTable(container, sales, activeFilters = {}) {
       <div class="page-header">
         <div>
           <h1>Ventas</h1>
-          <p>${sales.length} venta(s) · Ingresos: ${ingresosTxt} · Comisiones pendientes: ${pendingCommissionsUSD > 0 ? formatUSD(pendingCommissionsUSD) : ''}${pendingCommissionsUSD > 0 && pendingCommissionsMN > 0 ? ' + ' : ''}${pendingCommissionsMN > 0 ? formatCommission(pendingCommissionsMN, 'MN') : ''}${pendingCommissions === 0 ? '$0.00' : ''}</p>
+          <p>${sales.length} venta(s) · Ingresos: ${ingresosTxt} · Comisiones pendientes: ${pendingCommissionsTxt}</p>
         </div>
         <div class="page-header-left" style="display:flex;align-items:center;gap:10px">
           <button class="btn btn--primary" onclick="window._openSaleForm(null)">
@@ -134,7 +132,7 @@ function renderTable(container, sales, activeFilters = {}) {
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           </div>
           <div>
-            <div class="stat-value">${pendingCommissionsUSD > 0 ? formatUSD(pendingCommissionsUSD) : ''}${pendingCommissionsUSD > 0 && pendingCommissionsMN > 0 ? ' + ' : ''}${pendingCommissionsMN > 0 ? formatCommission(pendingCommissionsMN, 'MN') : ''}${pendingCommissions === 0 ? '$0.00' : ''}</div>
+            <div class="stat-value">${pendingCommissionsTxt}</div>
             <div class="stat-label">Comisiones pendientes</div>
           </div>
         </div>
@@ -156,6 +154,12 @@ function renderTable(container, sales, activeFilters = {}) {
           <option value="shipped" ${activeFilters.delivery_status === 'shipped' ? 'selected' : ''}>Enviado</option>
           <option value="delivered" ${activeFilters.delivery_status === 'delivered' ? 'selected' : ''}>Entregado</option>
           <option value="cancelled" ${activeFilters.delivery_status === 'cancelled' ? 'selected' : ''}>Cancelado</option>
+        </select>
+        <select id="filter-commission" class="form-control form-control--small" aria-label="Filtrar por estado de comisión">
+          <option value="">Todos los estados de comisión</option>
+          <option value="pending" ${activeFilters.commission_status === 'pending' ? 'selected' : ''}>Comisión pendiente</option>
+          <option value="paid" ${activeFilters.commission_status === 'paid' ? 'selected' : ''}>Comisión pagada</option>
+          <option value="not_applicable" ${activeFilters.commission_status === 'not_applicable' ? 'selected' : ''}>Sin comisión (canceladas)</option>
         </select>
         <select id="filter-provider" class="form-control form-control--small">
           <option value="">Todos los proveedores</option>
@@ -197,8 +201,8 @@ function renderTable(container, sales, activeFilters = {}) {
                       ${s.client_phone ? `<div style="font-size:.75rem;color:var(--text-muted)">${escHtml(s.client_phone)}</div>` : ''}
                     </td>
                     <td class="amount">${formatUSD(s.total_amount)}<br><span style="font-size:.7rem;color:var(--text-muted)">${formatMN(s.total_amount, s.exchange_rate || exchangeRate)}</span></td>
-                    <td class="amount">${formatCommission(s.commission_amount, s.commission_currency || 'USD')}</td>
-                    <td><span class="badge badge--${s.commission_paid ? 'paid' : 'unpaid'}">${s.commission_paid ? 'Pagada' : 'Pendiente'}</span></td>
+                    <td class="amount">${s.delivery_status === 'cancelled' ? '—' : formatCommission(s.commission_amount, s.commission_currency || 'USD')}</td>
+                    <td>${s.delivery_status === 'cancelled' ? '<span style="color:var(--text-muted)">No aplica</span>' : `<span class="badge badge--${s.commission_paid ? 'paid' : 'unpaid'}">${s.commission_paid ? 'Pagada' : 'Pendiente'}</span>`}</td>
                     <td><span class="badge badge--${s.delivery_status === 'delivered' ? 'delivered' : s.delivery_status === 'shipped' ? 'shipped' : 'pending'}">${s.delivery_status || 'pending'}</span></td>
                     <td style="font-size:.82rem;color:var(--text-secondary);white-space:nowrap">${formatDate(s.sale_date)}</td>
                     <td style="white-space:nowrap">
@@ -226,6 +230,7 @@ function renderTable(container, sales, activeFilters = {}) {
 
   // Filters
   const statusFilter = document.getElementById('filter-status');
+  const commissionFilter = document.getElementById('filter-commission');
   const providerFilter = document.getElementById('filter-provider');
   const categoryFilter = document.getElementById('filter-category');
   const startFilter = document.getElementById('filter-start');
@@ -234,12 +239,14 @@ function renderTable(container, sales, activeFilters = {}) {
   function applyFilters() {
     const params = {};
     if (statusFilter.value) params.delivery_status = statusFilter.value;
+    if (commissionFilter.value) params.commission_status = commissionFilter.value;
     if (providerFilter.value) params.provider_id = providerFilter.value;
     if (categoryFilter.value) params.category = categoryFilter.value;
     if (startFilter.value) params.start_date = startFilter.value;
     if (endFilter.value) params.end_date = endFilter.value;
     const filters = {
       delivery_status: statusFilter.value,
+      commission_status: commissionFilter.value,
       provider_id: providerFilter.value,
       category: categoryFilter.value,
       start_date: startFilter.value,
@@ -257,6 +264,7 @@ function renderTable(container, sales, activeFilters = {}) {
   }
 
   statusFilter.addEventListener('change', applyFilters);
+  commissionFilter.addEventListener('change', applyFilters);
   providerFilter.addEventListener('change', applyFilters);
   categoryFilter.addEventListener('change', applyFilters);
   startFilter.addEventListener('change', applyFilters);
@@ -368,6 +376,7 @@ window._openSaleForm = function(sale) {
             <input type="checkbox" name="commission_paid" value="1" ${sale?.commission_paid ? 'checked' : ''} />
             Comisión pagada
           </label>
+          <small id="commission-paid-note" style="color:var(--text-muted);font-size:.75rem"></small>
         </div>
       </div>
       <div class="form-group">
@@ -389,6 +398,24 @@ window._openSaleForm = function(sale) {
   const priceInput = document.getElementById('sale-price');
   const totalInput = document.getElementById('sale-total');
   const commissionInput = document.getElementById('sale-commission');
+  const deliveryStatusInput = document.querySelector('[name="delivery_status"]');
+  const commissionPaidInput = document.querySelector('[name="commission_paid"]');
+  let commissionWasPaid = !!sale?.commission_paid;
+
+  function updateCommissionPaidAvailability() {
+    const cancelled = deliveryStatusInput.value === 'cancelled';
+    commissionPaidInput.disabled = cancelled;
+    commissionPaidInput.checked = cancelled ? false : commissionWasPaid;
+    const note = document.getElementById('commission-paid-note');
+    if (note) note.textContent = cancelled ? 'No aplica para ventas canceladas' : '';
+  }
+
+  commissionPaidInput.addEventListener('change', () => {
+    commissionWasPaid = commissionPaidInput.checked;
+  });
+  deliveryStatusInput.addEventListener('change', updateCommissionPaidAvailability);
+  updateCommissionPaidAvailability();
+
   const saleDateInput = document.getElementById('sale-date');
   const warrantyEndInput = document.getElementById('sale-warranty-end');
 
@@ -489,7 +516,7 @@ window._openSaleForm = function(sale) {
     data.unit_price = parseFloat(data.unit_price) || 0;
     data.total_amount = parseFloat(data.total_amount) || 0;
     data.commission_amount = parseFloat(data.commission_amount) || 0;
-    data.commission_paid = data.commission_paid ? 1 : 0;
+    if ('commission_paid' in data) data.commission_paid = data.commission_paid ? 1 : 0;
 
     try {
       if (sale) {

@@ -7,7 +7,7 @@ const router = Router();
 
 router.get('/', (req, res) => {
   const db = getDB();
-  const { delivery_status, provider_id, category, start_date, end_date } = req.query;
+  const { delivery_status, commission_status, provider_id, category, start_date, end_date } = req.query;
   let sql = `SELECT s.*, p.name as product_name, p.warranty as product_warranty, pr.name as provider_name
              FROM sales s
              LEFT JOIN products p ON p.id = s.product_id
@@ -16,6 +16,13 @@ router.get('/', (req, res) => {
   const params = [];
 
   if (delivery_status) { conditions.push('s.delivery_status = ?'); params.push(delivery_status); }
+  if (commission_status === 'paid') {
+    conditions.push("COALESCE(s.delivery_status, '') != 'cancelled' AND COALESCE(s.commission_paid, 0) != 0");
+  } else if (commission_status === 'pending') {
+    conditions.push("COALESCE(s.delivery_status, '') != 'cancelled' AND COALESCE(s.commission_paid, 0) = 0");
+  } else if (commission_status === 'not_applicable') {
+    conditions.push("s.delivery_status = 'cancelled'");
+  }
   if (provider_id) { conditions.push('s.provider_id = ?'); params.push(provider_id); }
   if (category) { conditions.push('p.category = ?'); params.push(category); }
   if (start_date) { conditions.push('s.sale_date >= ?'); params.push(start_date); }

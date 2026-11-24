@@ -21,13 +21,15 @@ export function formatCommission(amount, currency) {
 
 /**
  * Suma las comisiones de una lista de ventas, separadas por moneda (USD y MN no se
- * pueden sumar entre sí sin convertir). `cobradas` = true suma solo las ya cobradas
- * (commission_paid); false, las pendientes. Un monto vacío o inválido cuenta como 0.
+ * pueden sumar entre sí sin convertir). Las ventas canceladas nunca suman comisión.
+ * `cobradas` = true suma solo las ya cobradas (commission_paid); false, las
+ * pendientes. Un monto vacío o inválido cuenta como 0.
  */
 export function sumarComisiones(sales, cobradas) {
   let usd = 0;
   let mn = 0;
   for (const v of sales || []) {
+    if (v.delivery_status === 'cancelled') continue;
     if (!!v.commission_paid !== !!cobradas) continue;
     const monto = Number(v.commission_amount) || 0;
     const moneda = v.commission_currency || 'USD';
@@ -43,7 +45,7 @@ export function sumarComisiones(sales, cobradas) {
  * usan esta.
  */
 export function ingresosDeVentas(sales) {
-  return sumarComisiones((sales || []).filter((v) => v.delivery_status !== 'cancelled'), true);
+  return sumarComisiones(sales, true);
 }
 
 /**

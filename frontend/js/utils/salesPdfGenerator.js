@@ -70,21 +70,14 @@ export function generateSalesPDF(sales, options = {}) {
   if (options.includeSummary !== false) {
     // Ingresos = comisiones ya cobradas, sin ventas canceladas (el valor de lo vendido no es ingreso).
     const ingresosTxt = textoComisiones(ingresosDeVentas(all), fmtUSD, (n) => fmtCommission(n, 'MN'));
-    const pendingComm = all
-      .filter(v => !v.commission_paid)
-      .reduce((s, v) => s + (v.commission_amount || 0), 0);
-    const pendingUSD = all
-      .filter(v => !v.commission_paid && (v.commission_currency || 'USD') === 'USD')
-      .reduce((s, v) => s + (v.commission_amount || 0), 0);
-    const pendingMN = all
-      .filter(v => !v.commission_paid && (v.commission_currency || 'USD') === 'MN')
-      .reduce((s, v) => s + (v.commission_amount || 0), 0);
+    const pending = sumarComisiones(all, false);
+    const pendingTxt = textoComisiones(pending, fmtUSD, (n) => fmtCommission(n, 'MN'));
     const delivered = all.filter(v => v.delivery_status === 'delivered').length;
 
     const lines = [
       `Ventas: ${all.length}${cancelledCount > 0 ? `  ·  Canceladas excluidas: ${cancelledCount}` : ''}`,
       `Ingresos totales (comisiones cobradas): ${ingresosTxt}`,
-      `Comisiones pendientes: ${pendingComm === 0 ? '$0.00' : `${pendingUSD > 0 ? fmtUSD(pendingUSD) : ''}${pendingUSD > 0 && pendingMN > 0 ? ' + ' : ''}${pendingMN > 0 ? fmtCommission(pendingMN, 'MN') : ''}`}`,
+      `Comisiones pendientes: ${pendingTxt}`,
       `Entregadas: ${delivered}  ·  Enviadas: ${all.filter(v => v.delivery_status === 'shipped').length}  ·  Pendientes: ${all.filter(v => v.delivery_status === 'pending').length}`,
     ];
 
@@ -114,8 +107,8 @@ export function generateSalesPDF(sales, options = {}) {
       String(s.quantity ?? ''),
       fmtUSD(s.total_amount || 0),
       fmtMN(s.total_amount || 0, s.exchange_rate || exchangeRate),
-      fmtCommission(s.commission_amount || 0, s.commission_currency || 'USD'),
-      s.commission_paid ? 'Sí' : 'No',
+      s.delivery_status === 'cancelled' ? '—' : fmtCommission(s.commission_amount || 0, s.commission_currency || 'USD'),
+      s.delivery_status === 'cancelled' ? 'No aplica' : s.commission_paid ? 'Sí' : 'No',
       DELIVERY_LABELS[s.delivery_status] || s.delivery_status || '—',
     ];
   });

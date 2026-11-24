@@ -18,8 +18,23 @@ const SQL = `
     AND COALESCE(delivery_status, '') != 'cancelled'
 `;
 
+const SQL_PENDIENTES = `
+  SELECT
+    COALESCE(SUM(CASE WHEN commission_currency = 'MN' THEN commission_amount ELSE 0 END), 0) AS mn,
+    COALESCE(SUM(CASE WHEN commission_currency = 'USD' OR commission_currency IS NULL THEN commission_amount ELSE 0 END), 0) AS usd
+  FROM sales
+  WHERE COALESCE(commission_paid, 0) = 0
+    AND COALESCE(delivery_status, '') != 'cancelled'
+`;
+
 /** { usd, mn }: comisiones cobradas de ventas no canceladas. */
 export function ingresosPorComisiones(db) {
   const fila = db.prepare(SQL).get() || {};
+  return { usd: Number(fila.usd) || 0, mn: Number(fila.mn) || 0 };
+}
+
+/** { usd, mn }: comisiones pendientes de ventas no canceladas. */
+export function comisionesPendientesPorMoneda(db) {
+  const fila = db.prepare(SQL_PENDIENTES).get() || {};
   return { usd: Number(fila.usd) || 0, mn: Number(fila.mn) || 0 };
 }

@@ -10,7 +10,7 @@ import { initDB, getDB, verifyToken, listTables, saveDB, getAuthSecret, verifyPa
 import { mergePublishConfig, MASCARA, pareceSecretoValido } from './lib/settingsMerge.js';
 import { rescheduleGroupPublish, groupPublishSchedulerState, startGroupPublishScheduler, stopGroupPublishScheduler, startAgendaScheduler, rescheduleAgenda, agendaSchedulerState, startLoteRetryScheduler, stopLoteRetryScheduler, loteRetrySchedulerState } from './lib/groupPublisher/index.js';
 import { ensureWebp } from './lib/imageUtils.js';
-import { ingresosPorComisiones } from './lib/ingresos.js';
+import { comisionesPendientesPorMoneda, ingresosPorComisiones } from './lib/ingresos.js';
 import { generateCatalogFile } from './lib/catalogGenerator.js';
 
 import { reconciliarApiKey, respaldarApiKey } from './lib/secrets.js';
@@ -396,11 +396,13 @@ app.get('/api/dashboard', (req, res) => {
       (SELECT COUNT(*) FROM providers) as total_providers,
       (SELECT COUNT(*) FROM sales) as total_sales,
       (SELECT COALESCE(SUM(total_amount), 0) FROM sales) as total_revenue,
-      (SELECT COALESCE(SUM(commission_amount), 0) FROM sales WHERE commission_paid = 0) as pending_commissions,
-      (SELECT COALESCE(SUM(commission_amount), 0) FROM sales) as total_commissions,
-      (SELECT COALESCE(SUM(commission_amount), 0) FROM sales WHERE commission_paid = 0 AND (commission_currency = 'USD' OR commission_currency IS NULL)) as pending_commissions_usd,
-      (SELECT COALESCE(SUM(commission_amount), 0) FROM sales WHERE commission_paid = 0 AND commission_currency = 'MN') as pending_commissions_mn
+      (SELECT COALESCE(SUM(commission_amount), 0) FROM sales WHERE COALESCE(commission_paid, 0) = 0 AND COALESCE(delivery_status, '') != 'cancelled') as pending_commissions,
+      (SELECT COALESCE(SUM(commission_amount), 0) FROM sales WHERE COALESCE(delivery_status, '') != 'cancelled') as total_commissions
   `).get();
+
+  const pendientes = comisionesPendientesPorMoneda(db);
+  stats.pending_commissions_usd = pendientes.usd;
+  stats.pending_commissions_mn = pendientes.mn;
 
   // Ingresos = comisiones cobradas (sin ventas canceladas), por moneda. `total_revenue`
   // (suma del valor de lo vendido) se mantiene en la respuesta por compatibilidad,
