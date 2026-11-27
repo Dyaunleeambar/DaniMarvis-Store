@@ -17,7 +17,7 @@ Panel de gestión para gestores de ventas que trabajan con importadores de elect
 - [Exportaciones PDF](#exportaciones-pdf)
 - [Importación / Sincronización OCR](#importación--sincronización-ocr)
 - [Reglas de Garantía (Warranty Rules)](#reglas-de-garantía-warranty-rules)
-- [Anuncios generados con IA](#anuncios-generados-con-ia)
+- [Generación e importación de imágenes](#generación-e-importación-de-imágenes)
 - [Catálogo Público (GitHub Pages)](#catálogo-público-github-pages)
 - [Publicaciones en Redes Sociales](#publicaciones-en-redes-sociales)
 - [Rutinas de Página (Page Routines)](#rutinas-de-página-page-routines)
@@ -45,13 +45,12 @@ Este sistema permite a un **gestor de ventas**:
 8. **Generar textos de publicación** con IA (compatible con OpenAI) usando plantillas personalizables.
 9. **Publicar directamente en Facebook e Instagram** mediante la Graph API.
 10. **Generar un catálogo web público** con todos los productos activos, filtros por categoría, búsqueda y botón directo a WhatsApp. Se despliega en GitHub Pages.
-11. **Crear anuncios con IA (ChatGPT)** — copiar prompts generados por producto e importar los resultados.
-12. **Rutinas de página recurrentes** — programar publicaciones automáticas en Página FB con horarios fijos y rotación de productos.
-13. **Dar seguimiento** a entregas y comisiones pendientes.
-14. **Configurar el tipo de cambio** USD → MN para mostrar precios en moneda nacional.
-15. **Respaldar y restaurar** todos los datos del sistema como archivos JSON.
-16. **Ranking de grupos por desempeño** — medir con la Biblioteca de Contenido de Facebook qué grupos devuelven más y menos visualizaciones por publicación, con historial consultable por fecha y evolución por grupo.
-17. **Publicador automático en grupos** — cola de publicaciones que se publica sola en grupos de Facebook vía CDP (Chrome real), con dos cuentas, límites de ritmo y reintento automático.
+11. **Rutinas de página recurrentes** — programar publicaciones automáticas en Página FB con horarios fijos y rotación de productos.
+12. **Dar seguimiento** a entregas y comisiones pendientes.
+13. **Configurar el tipo de cambio** USD → MN para mostrar precios en moneda nacional.
+14. **Respaldar y restaurar** todos los datos del sistema como archivos JSON.
+15. **Ranking de grupos por desempeño** — medir con la Biblioteca de Contenido de Facebook qué grupos devuelven más y menos visualizaciones por publicación, con historial consultable por fecha y evolución por grupo.
+16. **Publicador automático en grupos** — cola de publicaciones que se publica sola en grupos de Facebook vía CDP (Chrome real), con dos cuentas, límites de ritmo y reintento automático.
 
 El negocio funciona así:
 
@@ -157,9 +156,7 @@ El modelo de datos vive en `backend/db/database.js`. Las tablas principales son:
 | `page_routines` | `id`, `name`, `active`, `products`, `times`, `default_text`, `format`, `lead_minutes`, `last_product_index` | Rutinas recurrentes de Página FB |
 | `page_schedule_log` | `id`, `routine_id`, `product_id`, `product_name`, `scheduled_for`, `status`, `meta_post_id`, `message`, `images_count`, `error` | Logs de programación de rutinas |
 | `warranty_rules` | `id`, `provider_id`, `keyword`, `warranty_text` | Reglas de garantía. FK → `providers.id` |
-| `provider_styles` | `code`, `name`, `style_name`, `palette`, `background_rules`, `accent_rules`, `signature_rules`, `negative_rules`, `shipping_rule` | Estilos visuales de proveedor |
-
-> El esquema incluye **34 migraciones** en `database.js` que se aplican en orden en cada arranque (`initDB()`). Ver `migrateImages`, `migrateProviderInfo`, `migrateCatalogVisible`, `migratePublishConfig`, `migratePublicationDate`, `migrateExportsKind`, `migratePubQueue`, `migratePubAgenda`, `migratePromptEngine`, `migrateGeneratedImages`, `migrateCommissionCurrency`, `migrateProviderStyleCode`, `migrateProviderStyles`, `migrateFacebookGroups`, `migrateGroupFbId`, `migrateRankingSnapshots`, `migrateRankingHistory`, `migratePageRoutines`, `migrateWarrantyRules`, `migrateWarrantyEnd`, `migrateAuthSecret`, `migrateIndexes`, `migrateCollapseQueueToSingleDestination`.
+> Las migraciones activas en `database.js` se aplican en orden en cada arranque (`initDB()`).
 
 ---
 
@@ -278,7 +275,6 @@ DaniMarvisStore/
 │   │   ├── ocr.js              # OCR con tesseract.js + fuzzy matching
 │   │   ├── pageRoutineWorker.js# Worker de rutinas recurrentes en Página FB
 │   │   ├── plans.js            # Planificador de slots para rutinas de página
-│   │   ├── promptEngine.js     # Motor de prompts para anuncios IA (familias/variantes)
 │   │   ├── secrets.js          # Reconciliación API key (base ↔ .env)
 │   │   ├── settingsMerge.js    # Merge profundo de publish_config
 │   │   ├── transaccion.js      # Helper transacciones SQLite
@@ -300,7 +296,6 @@ DaniMarvisStore/
 │   │   ├── pageRoutines.js     # Rutinas recurrentes en Página FB (horarios, formatos)
 │   │   ├── products.js         # CRUD productos + visibilidad
 │   │   ├── providers.js        # CRUD proveedores
-│   │   ├── providerStyles.js   # Perfiles de estilo visual por proveedor (IA)
 │   │   ├── pubQueue.js         # Cola de publicación simple (un destino por item)
 │   │   ├── publications.js     # CRUD publicaciones + publicar en FB/IG + reorder
 │   │   ├── rankingsRouter.js   # Ranking de grupos + historial (Biblioteca de Contenido)
@@ -559,13 +554,11 @@ Es el **seguro del publicador**: publica solo lo que ya venció, con límites de
 | `POST` | `/api/import/analyze` | Analizar imágenes de una carpeta con OCR (requiere `folder` y `provider_id`) |
 | `POST` | `/api/import/apply` | Aplicar precios detectados a productos (actualiza precio y visibilidad) |
 
-### Anuncios generados con IA
+### Imágenes publicitarias
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
 | `POST` | `/api/images/import` | Importar imágenes desde una carpeta (asociación automática por nombre) |
-| `GET` | `/api/prompt-engine/families` | Listar familias y variantes creativas del motor de prompts |
-| `POST` | `/api/prompt-engine/generate` | Generar prompt para un producto (rotación automática o familia/variante fija) |
 
 ### Dashboard
 
@@ -664,22 +657,6 @@ Asignación automática de texto de garantía a productos según **palabras clav
 | `POST` | `/api/warranty-rules/match` | Probar coincidencia (`provider_id`, `product_name`) → devuelve `warranty` y `matched` |
 | `DELETE` | `/api/warranty-rules/:id` | Eliminar regla |
 | `DELETE` | `/api/warranty-rules/provider/:provider_id` | Eliminar todas las reglas de un proveedor |
-
----
-
-### Estilos de Proveedor (Provider Styles)
-
-Perfiles de **estilo visual para generación de imágenes con IA** por proveedor. Cada estilo define paleta, reglas de fondo/acento/firma/negativo/envío y un `style_name` que inyecta el motor de prompts.
-
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| `GET` | `/api/provider-styles` | Listar estilos (palette parseado) |
-| `GET` | `/api/provider-styles/:code` | Obtener estilo por código |
-| `POST` | `/api/provider-styles` | Crear (`code`, `name`, `style_name`, `palette`, `background_rules`, `accent_rules`, `signature_rules`, `negative_rules`, `shipping_rule`) |
-| `PUT` | `/api/provider-styles/:code` | Actualizar estilo |
-| `DELETE` | `/api/provider-styles/:code` | Eliminar (bloqueado si hay proveedores usándolo) |
-
-Los proveedores referencian el estilo vía `provider_style_code`. Códigos actuales: `GE`, `EM`, `MM`.
 
 ---
 
@@ -918,74 +895,11 @@ Si el producto se llama "Nevera No Frost 300L", coincide con ambas keywords de F
 
 ---
 
-## Anuncios generados con IA
+## Generación e importación de imágenes
 
-El panel incluye un **motor de prompts** que construye el texto listo para generar anuncios publicitarios en **ChatGPT**, con identidad visual DaniMarvis, plantillas por familia creativa y rotación de variantes.
+La sección **Exportaciones → Imágenes** conserva el generador local de imágenes promocionales, la generación opcional de fondos con Pollinations y la importación de imágenes terminadas desde una carpeta.
 
-### Flujo
-
-1. **Copiar prompt** — Junto a cada producto hay un botón 📋 que copia un prompt detallado para generar un anuncio publicitario. Incluye nombre del producto, precio, garantía y estilo visual.
-2. **Generar en ChatGPT** — Usar el prompt copiado en ChatGPT para generar la imagen.
-3. **Guardar** — Guardar la imagen generada en una carpeta local con el nombre sugerido (slug del producto).
-4. **Importar** — Indicar la ruta de la carpeta y hacer clic en **Importar**. El sistema:
-   - Copia las imágenes a `uploads/generated/`
-   - Registra cada imagen en el historial de exportaciones
-   - Opcionalmente asocia la imagen al producto (prepende en la galería)
-   - Detecta el producto por coincidencia del nombre del archivo
-
-### Cómo usarlo
-
-1. Ve a **Exportaciones** → pestaña **Imágenes**.
-2. Elige **Familia creativa** y **Variante** (o dejá **Automático** para que el sistema elija y rote variantes según el historial del producto).
-3. Haz clic en 📋 junto al producto que querés anunciar.
-4. Genera la imagen en ChatGPT.
-5. Guarda la imagen en la carpeta indicada.
-6. Importa la carpeta desde el panel.
-
-### Estilos visuales de proveedor (Provider Styles)
-
-Perfiles completos de **estilo visual para generación de imágenes con IA** por proveedor. Se gestionan en `#/settings` (pestaña **Estilos**) y vía API `/api/provider-styles`. Cada estilo inyecta un bloque `[PROVIDER_STYLE]` estructurado en los prompts del motor de anuncios.
-
-#### Estructura de un estilo
-
-| Campo | Tipo | Descripción |
-|-------|------|-------------|
-| `code` | STRING | Código corto único (ej: `GE`, `EM`, `MM`). Clave foránea en `providers.provider_style_code`. |
-| `name` | STRING | Nombre legible (ej: "MiPime Gabriel y Erika"). |
-| `style_name` | STRING | Identificador interno para el motor de prompts (ej: `DANIMARVIS_G_ERIKA`). |
-| `palette` | JSON | Paleta de colores: `primary`, `secondary`, `accent`, `background`, `text`, `badge_bg`, `badge_text`. |
-| `background_rules` | TEXT | Reglas de fondo: texturas, gradientes, ambientes, restricciones. |
-| `accent_rules` | TEXT | Reglas de acentos: bordes, sombras, highlights, elementos decorativos. |
-| `signature_rules` | TEXT | Firma visual: logo placement, watermark, tagline, posición. |
-| `negative_rules` | TEXT | Restricciones: qué NO hacer (colores prohibidos, estilos vetados, elementos禁用). |
-| `shipping_rule` | TEXT | Regla de envío/entrega a incluir en el copy visual.
-
-#### Códigos actuales
-
-| Código | Proveedor | `style_name` |
-|--------|-----------|--------------|
-| `GE` | MiPime Gabriel y Erika | `DANIMARVIS_G_ERIKA` |
-| `EM` | TCP El Marinero | `DANIMARVIS_MARINERO` |
-| `MM` | MiPimeMelani | `DANIMARVIS_MELANI` |
-
-> **Badge de proveedor:** si la pieza incluye un badge o sello de proveedor (p. ej. en el header), los prompts instructan mostrar **solo el código** (`GE`, `EM`, `MM`, etc.), nunca el nombre completo. Aplica a todos los estilos y variantes.
-
-#### Gestión
-
-- **Crear/Editar** — Formulario en Settings con campos de texto largo para reglas y color picker para paleta.
-- **Validación** — No se puede eliminar un estilo si hay proveedores usándolo (error 409).
-- **Herencia** — El proveedor referencia el estilo vía `provider_style_code`; al generar prompt, se mergea la config del estilo con la familia/variante elegida.
-
-### Familias creativas y variantes
-
-| Familia | Propósito | Variantes |
-|---------|-----------|-----------|
-| **A — HERO** | Atención + presentación | A1 Front, A2 Angle, A3 Float |
-| **B — CATALOG** | Información técnica | B1 Grid, B2 Minimal, B3 Detail |
-| **C — OFFER** | Oportunidad + acción | C1 Block, C2 Strike, C3 Badge, C4 Flyer |
-| **D — LIFESTYLE** | Deseo + experiencia | D1 Home, D2 Use, D3 Aspirational |
-
-La variante **C4 — Flyer** genera piezas tipo folleto profesional: producto a la derecha con grid de características a la izquierda, precio destacado, badges de confianza y franja de features.
+Se retiraron los perfiles visuales por proveedor y el antiguo generador de prompts para copiar a ChatGPT (familias, variantes y rotación). La nueva solución de prompts y el estilo visual común se definirán cuando se incorpore el nuevo contexto técnico visual. Mientras tanto, las imágenes producidas externamente pueden importarse desde esta sección.
 
 ---
 
@@ -1661,7 +1575,6 @@ En **Configuración** del panel puedes definir una plantilla de texto con placeh
 - [x] Importación/sincronización de precios con OCR (tesseract.js)
 - [x] Vista por categoría en Importar/Sincronizar para clasificar imágenes usando referencias de productos
 - [x] Exportación selectiva de respaldos por tabla con filtros de proveedor y visibilidad
-- [x] Motor de prompts para anuncios con IA (familias, variantes y rotación)
 - [x] Importación de imágenes generadas con IA (asociación automática por nombre)
 - [x] Generación de imágenes con IA (Pollinations)
 - [x] Descarga masiva de imágenes en ZIP (JSZip)
@@ -1704,7 +1617,7 @@ Proyecto privado — DaniMarvis Store.
 
 ## Notas de revisión
 
-Documentación generada el 2026-11-19 por revisión del repo. Las secciones de **Publicador automático de grupos** y **Publicaciones en Redes Sociales** contienen detalles internos de operación (referencias a archivos y líneas, comportamiento de la UI, trampas verificadas). El documento `docs/PUBLICADOR_GRUPOS.md` es la referencia técnica exhaustiva para ese módulo; el `docs/GUIA_PUBLICACION_AUTOMATICA_META.md` es la guía de usuario para Rutinas de Página; `docs/DaniMarvis_ChatGPT_Prompts_v1.0.md` es la biblioteca de prompts para ChatGPT.
+Documentación generada el 2026-11-19 por revisión del repo. Las secciones de **Publicador automático de grupos** y **Publicaciones en Redes Sociales** contienen detalles internos de operación (referencias a archivos y líneas, comportamiento de la UI, trampas verificadas). El documento `docs/PUBLICADOR_GRUPOS.md` es la referencia técnica exhaustiva para ese módulo; el `docs/GUIA_PUBLICACION_AUTOMATICA_META.md` es la guía de usuario para Rutinas de Página.
 
 
 ## Despliegue

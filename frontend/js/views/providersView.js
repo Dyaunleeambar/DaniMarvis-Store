@@ -3,7 +3,6 @@ import { openModal, closeModal, showToast, confirmDialog, refreshSidebarCounts }
 
 let currentContainer = null;
 let currentProviders = [];
-let currentStyles = [];
 
 function escHtml(str) {
   return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -22,12 +21,8 @@ export async function render(container) {
   container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-secondary)">Cargando proveedores...</div>';
 
   try {
-    const [providers, styles] = await Promise.all([
-      api.getProviders(),
-      api.getProviderStyles(),
-    ]);
+    const providers = await api.getProviders();
     currentProviders = providers;
-    currentStyles = styles;
     renderTable(container, currentProviders);
   } catch (err) {
     container.innerHTML = `<div class="empty-state"><h3>Error</h3><p>${err.message}</p></div>`;
@@ -58,7 +53,6 @@ function renderTable(container, providers) {
                 <th>Teléfono</th>
                 <th>Email</th>
                 <th>Info</th>
-                <th>Estilo</th>
                 <th>Moneda</th>
                 <th>Carpeta</th>
                 <th>Productos</th>
@@ -67,17 +61,14 @@ function renderTable(container, providers) {
             </thead>
             <tbody>
               ${providers.length === 0
-                ? `<tr><td colspan="10"><div class="empty-state" style="padding:32px"><h3>No hay proveedores</h3><p>Registra tu primer proveedor</p></div></td></tr>`
-                : providers.map(p => {
-                  const styleObj = currentStyles.find(s => s.code === p.provider_style_code);
-                  return `
+                ? `<tr><td colspan="9"><div class="empty-state" style="padding:32px"><h3>No hay proveedores</h3><p>Registra tu primer proveedor</p></div></td></tr>`
+                : providers.map(p => `
                   <tr>
                     <td><span style="font-weight:600">${p.name}</span></td>
                     <td>${p.contact || '—'}</td>
                     <td>${p.phone || '—'}</td>
                     <td>${p.email || '—'}</td>
                     <td style="max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.info ? escHtml(p.info) : '—'}</td>
-                    <td>${p.provider_style_code ? `<span class="badge badge--active" title="${escHtml(styleObj?.name || '')}">${escHtml(p.provider_style_code)}</span>` : '<span style="color:var(--text-muted);font-size:.78rem">—</span>'}</td>
                     <td><span class="badge badge--${(p.commission_currency || 'USD') === 'USD' ? 'active' : 'unpaid'}">${p.commission_currency || 'USD'}</span></td>
                     <td><span style="font-size:.75rem;color:var(--text-muted);font-family:monospace">${sanitizeFolderName(p.name)}/</span></td>
                     <td><span class="badge badge--${p.product_count > 0 ? 'active' : 'archived'}">${p.product_count}</span></td>
@@ -94,8 +85,8 @@ function renderTable(container, providers) {
                         </button>
                       </div>
                     </td>
-                  </tr>`;
-                }).join('')
+                  </tr>`
+                ).join('')
               }
             </tbody>
           </table>
@@ -107,193 +98,14 @@ function renderTable(container, providers) {
 
 // ── Global handlers ───────────────────────────────────────────
 window._openProviderForm = function(provider) {
-  if (provider) {
-    openProviderFormDirect(provider);
-  } else {
-    openStyleSelector();
-  }
+  openProviderFormDirect(provider || null);
 };
 
-function parsePalette(palette) {
-  try {
-    const obj = typeof palette === 'string' ? JSON.parse(palette) : (palette || {});
-    return Object.entries(obj).map(([label, v]) => {
-      if (v && typeof v === 'object' && typeof v.hex === 'string') {
-        const pct = Number(v.pct);
-        return { label, hex: v.hex, pct: Number.isFinite(pct) && pct > 0 ? pct : 0 };
-      }
-      if (typeof v === 'string' && v.startsWith('#')) {
-        return { label, hex: v, pct: 0 };
-      }
-      return null;
-    }).filter(Boolean);
-  } catch { return []; }
-}
-
-function styleSummaryHTML(style) {
-  const palette = parsePalette(style.palette);
-  const rules = [
-    { label: 'Fondos', value: style.background_rules },
-    { label: 'Acentos', value: style.accent_rules },
-    { label: 'Firma', value: style.signature_rules },
-    { label: 'Restricciones', value: style.negative_rules },
-  ].filter(r => r.value);
-  return `
-    ${palette.length > 0 ? `
-      <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
-        ${palette.map(c =>
-          `<span title="${escHtml(c.label)}: ${c.hex}${c.pct ? ' · ' + c.pct + '%' : ''}" style="display:inline-flex;align-items:center;gap:3px;font-size:.72rem;color:var(--text-muted)"><span style="width:12px;height:12px;border-radius:50%;background:${c.hex};border:1px solid var(--border);display:inline-block"></span>${c.hex}${c.pct ? ` <b>${c.pct}%</b>` : ''}</span>`
-        ).join('')}
-      </div>` : ''}
-    ${rules.length > 0 ? `
-      <div style="font-size:.78rem;color:var(--text-secondary);line-height:1.5">
-        ${rules.map(r => `<div><b>${r.label}:</b> ${escHtml(r.value.length > 80 ? r.value.slice(0, 80) + '...' : r.value)}</div>`).join('')}
-      </div>` : '<div style="font-size:.78rem;color:var(--text-muted)">Sin reglas personalizadas</div>'}
-  `;
-}
-
-function openStyleSelector() {
+function openProviderFormDirect(provider = null) {
+  const isEditing = !!provider;
   openModal(`
     <div class="modal-header">
-      <h2>Nuevo proveedor — Elegí un estilo visual</h2>
-      <button class="modal-close" onclick="closeModal()">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-    </div>
-    <p style="font-size:.85rem;color:var(--text-secondary);margin:0 0 16px">
-      Elegí el perfil visual que definirá los anuncios de este proveedor. Podés cambiarlo después.
-    </p>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-bottom:16px" id="style-cards">
-      ${currentStyles.map(s => `
-        <div class="card style-card" data-code="${escAttr(s.code)}" style="padding:14px;cursor:pointer;border:2px solid transparent;transition:border-color .15s">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-            <span class="badge badge--active">${escHtml(s.code)}</span>
-            <span style="font-weight:600;font-size:.9rem">${escHtml(s.name)}</span>
-          </div>
-          <div style="font-size:.75rem;color:var(--text-muted);margin-bottom:8px;font-family:monospace">${escHtml(s.style_name)}</div>
-          ${styleSummaryHTML(s)}
-        </div>
-      `).join('')}
-      <div class="card style-card" data-code="" style="padding:14px;cursor:pointer;border:2px solid transparent;transition:border-color .15s;display:flex;flex-direction:column;justify-content:center;align-items:center;min-height:100px">
-        <div style="font-size:1.5rem;margin-bottom:4px;opacity:.4">&#8709;</div>
-        <span style="font-weight:600;font-size:.85rem">Sin estilo</span>
-        <span style="font-size:.75rem;color:var(--text-muted)">Estilo por defecto</span>
-      </div>
-    </div>
-    <div class="form-actions">
-      <button type="button" class="btn btn--secondary" onclick="closeModal()">Cancelar</button>
-      <button type="button" class="btn btn--primary" id="style-continue" disabled>Continuar →</button>
-    </div>
-  `, 'modal-content--wide');
-
-  let selectedCode = null;
-  const cards = document.querySelectorAll('.style-card');
-  const continueBtn = document.getElementById('style-continue');
-
-  cards.forEach(card => {
-    card.addEventListener('click', () => {
-      cards.forEach(c => c.style.borderColor = 'transparent');
-      card.style.borderColor = 'var(--primary)';
-      selectedCode = card.dataset.code;
-      continueBtn.disabled = false;
-    });
-  });
-
-  continueBtn.addEventListener('click', () => {
-    const style = selectedCode ? currentStyles.find(s => s.code === selectedCode) : null;
-    openProviderFormWithStyle(style);
-  });
-}
-
-function openProviderFormWithStyle(style) {
-  openModal(`
-    <div class="modal-header">
-      <h2>Nuevo proveedor</h2>
-      <button class="modal-close" onclick="closeModal()">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-    </div>
-    ${style ? `
-      <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg);border-radius:8px;margin-bottom:16px;font-size:.85rem">
-        <span class="badge badge--active">${escHtml(style.code)}</span>
-        <span style="flex:1"><b>${escHtml(style.name)}</b> — ${escHtml(style.style_name)}</span>
-        <button type="button" class="btn btn--sm btn--ghost" id="style-change-btn" style="font-size:.78rem">Cambiar</button>
-      </div>
-    ` : `
-      <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg);border-radius:8px;margin-bottom:16px;font-size:.85rem">
-        <div style="font-size:1.2rem;opacity:.4">&#8709;</div>
-        <span style="flex:1"><b>Sin estilo asignado</b> — Se usará el estilo por defecto</span>
-        <button type="button" class="btn btn--sm btn--ghost" id="style-change-btn" style="font-size:.78rem">Elegir estilo</button>
-      </div>
-    `}
-    <form id="provider-form">
-      <input type="hidden" name="id" value="" />
-      <input type="hidden" name="provider_style_code" value="${style?.code || ''}" />
-      <div class="form-group">
-        <label>Nombre del proveedor *</label>
-        <input type="text" name="name" class="form-control" required autofocus />
-      </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label>Persona de contacto</label>
-          <input type="text" name="contact" class="form-control" />
-        </div>
-        <div class="form-group">
-          <label>Teléfono</label>
-          <input type="text" name="phone" class="form-control" />
-        </div>
-      </div>
-      <div class="form-group">
-        <label>Email</label>
-        <input type="email" name="email" class="form-control" />
-      </div>
-      <div class="form-group">
-        <label>Información del proveedor</label>
-        <textarea name="info" class="form-control" style="min-height:120px" placeholder="Condiciones, requisitos, formas de pago, etc."></textarea>
-      </div>
-      <div class="form-group">
-        <label>Moneda de comisión</label>
-        <select name="commission_currency" class="form-control">
-          <option value="USD">USD — Dólares</option>
-          <option value="MN">MN — Peso nacional</option>
-        </select>
-        <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:2px">Moneda en la que este proveedor paga comisiones. Los productos heredan esta moneda por defecto.</small>
-      </div>
-      <div class="form-group">
-        <label>Notas</label>
-        <textarea name="notes" class="form-control"></textarea>
-      </div>
-      <div class="form-actions">
-        <button type="button" class="btn btn--secondary" onclick="closeModal()">Cancelar</button>
-        <button type="submit" class="btn btn--primary">Crear proveedor</button>
-      </div>
-    </form>
-  `, 'modal-content--wide');
-
-  document.getElementById('style-change-btn')?.addEventListener('click', () => {
-    closeModal();
-    setTimeout(openStyleSelector, 100);
-  });
-
-  document.getElementById('provider-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const data = Object.fromEntries(new FormData(e.target));
-    try {
-      await api.createProvider(data);
-      showToast('Proveedor creado', 'success');
-      closeModal();
-      refreshSidebarCounts();
-      render(currentContainer);
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
-}
-
-function openProviderFormDirect(provider) {
-  openModal(`
-    <div class="modal-header">
-      <h2>Editar proveedor</h2>
+      <h2>${isEditing ? 'Editar proveedor' : 'Nuevo proveedor'}</h2>
       <button class="modal-close" onclick="closeModal()">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
@@ -331,20 +143,12 @@ function openProviderFormDirect(provider) {
         <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:2px">Moneda en la que este proveedor paga comisiones. Los productos heredan esta moneda por defecto.</small>
       </div>
       <div class="form-group">
-        <label>Estilo visual (proveedor)</label>
-        <select name="provider_style_code" class="form-control">
-          <option value="">Sin estilo asignado</option>
-          ${currentStyles.map(s => `<option value="${escAttr(s.code)}" ${provider?.provider_style_code === s.code ? 'selected' : ''}>${escHtml(s.code)} — ${escHtml(s.name)}</option>`).join('')}
-        </select>
-        <small style="color:var(--text-muted);font-size:.75rem;display:block;margin-top:2px">Perfil visual que se usa en la generación de prompts de IA. Determina la paleta y estilo del anuncio.</small>
-      </div>
-      <div class="form-group">
         <label>Notas</label>
         <textarea name="notes" class="form-control">${escHtml(provider?.notes || '')}</textarea>
       </div>
       <div class="form-actions">
         <button type="button" class="btn btn--secondary" onclick="closeModal()">Cancelar</button>
-        <button type="submit" class="btn btn--primary">Guardar cambios</button>
+        <button type="submit" class="btn btn--primary">${isEditing ? 'Guardar cambios' : 'Crear proveedor'}</button>
       </div>
     </form>
   `);
@@ -353,8 +157,13 @@ function openProviderFormDirect(provider) {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(e.target));
     try {
-      await api.updateProvider(provider.id, data);
-      showToast('Proveedor actualizado', 'success');
+      if (isEditing) {
+        await api.updateProvider(provider.id, data);
+        showToast('Proveedor actualizado', 'success');
+      } else {
+        await api.createProvider(data);
+        showToast('Proveedor creado', 'success');
+      }
       closeModal();
       refreshSidebarCounts();
       render(currentContainer);

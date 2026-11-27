@@ -30,8 +30,6 @@ import groupsRouter from './routes/groups.js';
 import coordinationRouter from './routes/coordination.js';
 import rankingsRouter from './routes/rankingsRouter.js';
 import pubQueueRouter from './routes/pubQueue.js';
-import promptEngineRouter from './routes/promptEngine.js';
-import providerStylesRouter from './routes/providerStyles.js';
 import pageRoutinesRouter from './routes/pageRoutines.js';
 import availabilityUpdateRouter from './routes/availabilityUpdate.js';
 import {
@@ -132,8 +130,6 @@ app.use('/api/pub-queue', pubQueueRouter);
 app.use('/api/group-publish', groupPublishRouter);
 app.use('/api/groups', groupsRouter);
 app.use('/api/rankings', rankingsRouter);
-app.use('/api/prompt-engine', promptEngineRouter);
-app.use('/api/provider-styles', providerStylesRouter);
 app.use('/api/warranty-rules', warrantyRulesRouter);
 app.use('/api/page-routines', pageRoutinesRouter);
 app.use('/api/availability-update', availabilityUpdateRouter);

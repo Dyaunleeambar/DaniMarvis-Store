@@ -8,14 +8,8 @@ function escHtml(str) {
 }
 
 const STORAGE_KEY = 'danimarvis_images_config';
-const PROMPT_KEY = 'danimarvis_images_prompt';
+const AI_BACKGROUND_PROMPT_KEY = 'danimarvis_images_prompt';
 const GENERATED_FOLDER_KEY = 'danimarvis_images_generated_folder';
-
-let promptFamilies = [];
-let promptFormats = [];
-let selFamily = '';
-let selVariant = '';
-let selFormat = '4:5';
 
 function loadConfig() {
   try {
@@ -63,7 +57,7 @@ function renderForm(container, products, providers, onDone) {
   let previewProductId = products[0]?.id || '';
   let aiEnabled = !!localStorage.getItem('ai_bg');
   let aiBg = localStorage.getItem('ai_bg') || '';
-  let aiPrompt = localStorage.getItem(PROMPT_KEY) || '';
+  let aiPrompt = localStorage.getItem(AI_BACKGROUND_PROMPT_KEY) || '';
   let aiBusy = false;
   let generatedFolder = localStorage.getItem(GENERATED_FOLDER_KEY) || 'D:\\Proyectos\\DaniMarvisStore\\generadas';
   let previewCounter = 0;
@@ -123,7 +117,6 @@ function renderForm(container, products, providers, onDone) {
         <span style="color:var(--text-muted);font-size:.78rem">${escHtml(p.provider_name || '—')}</span>
         <span style="color:var(--text-muted);font-size:.78rem">${escHtml(p.category || '—')}</span>
         <span style="font-weight:600;font-size:.82rem">${formatPrice(p.price)}</span>
-        <button type="button" class="btn btn--sm btn--ghost img-gen-copy" data-id="${p.id}" title="Copiar prompt para generar el anuncio" style="padding:2px 6px;font-size:.85rem">📋</button>
       </label>
     `).join('');
     if (filtered.length === 0) {
@@ -310,34 +303,10 @@ function renderForm(container, products, providers, onDone) {
           </div>
 
           <div class="card" style="padding:20px">
-            <h3 style="margin:0 0 4px;font-size:1rem">Anuncios generados con IA</h3>
+            <h3 style="margin:0 0 4px;font-size:1rem">Importar anuncios</h3>
             <p style="margin:0 0 12px;font-size:.78rem;color:var(--text-secondary)">
-              1) Tocá <b>📋</b> junto a un producto para copiar el prompt y el nombre sugerido del archivo.<br />
-              2) Generá el anuncio en ChatGPT y guardalo en la carpeta con ese nombre.<br />
-              3) Importá la carpeta: las imágenes se archivan en el historial y se asocian al producto.
+              Importá imágenes publicitarias que ya tengas generadas. Se archivarán en el historial y, si lo elegís, se asociarán al producto.
             </p>
-            <div style="display:flex;gap:8px;margin:10px 0 6px">
-              <div style="flex:1">
-                <label style="font-size:.78rem;color:var(--text-secondary);display:block;margin-bottom:4px">Familia creativa</label>
-                <select id="img-prompt-family" class="form-control form-control--small"></select>
-              </div>
-              <div style="flex:1">
-                <label style="font-size:.78rem;color:var(--text-secondary);display:block;margin-bottom:4px">Variante</label>
-                <select id="img-prompt-variant" class="form-control form-control--small" disabled></select>
-              </div>
-              <div style="flex:1">
-                <label style="font-size:.78rem;color:var(--text-secondary);display:block;margin-bottom:4px">Formato</label>
-                <select id="img-prompt-format" class="form-control form-control--small"></select>
-              </div>
-            </div>
-            <details style="margin-bottom:12px">
-              <summary style="cursor:pointer;font-size:.8rem;color:var(--text-secondary)">Ver / copiar prompt generado</summary>
-              <div style="margin-top:6px">
-                <div id="img-prompt-meta" style="font-size:.72rem;color:var(--text-muted);margin-bottom:4px"></div>
-                <textarea id="img-prompt-preview" class="form-control" rows="9" readonly style="font-family:monospace;font-size:.7rem"></textarea>
-                <button type="button" class="btn btn--sm btn--secondary" id="img-prompt-copy" style="margin-top:6px">Copiar prompt</button>
-              </div>
-            </details>
             <div style="display:flex;gap:8px;margin-top:10px">
               <input type="text" id="img-gen-folder" class="form-control" value="${escHtml(generatedFolder)}" style="flex:1" placeholder="Ruta de la carpeta con los anuncios" />
               <button type="button" class="btn btn--primary" id="img-gen-import">Importar</button>
@@ -383,8 +352,6 @@ function renderForm(container, products, providers, onDone) {
   renderPreviewProductSelect();
   renderAiThumb();
   refreshPreview();
-  selFormat = localStorage.getItem('danimarvis_prompt_format') || '4:5';
-  loadPromptFamilies();
 
   const debouncedSearch = debounce(() => {
     filterQ = document.getElementById('img-search').value;
@@ -492,7 +459,7 @@ function renderForm(container, products, providers, onDone) {
     if (!prompt) { showToast('Escribí un prompt para el fondo', 'error'); return; }
 
     aiPrompt = prompt;
-    localStorage.setItem(PROMPT_KEY, prompt);
+    localStorage.setItem(AI_BACKGROUND_PROMPT_KEY, prompt);
 
     aiBusy = true;
     btn.disabled = true;
@@ -515,55 +482,7 @@ function renderForm(container, products, providers, onDone) {
     }
   });
 
-  // ── Anuncios generados con IA ─────────────────────────────────
-
-  document.getElementById('img-product-list').addEventListener('click', async (e) => {
-    const btn = e.target.closest('button.img-gen-copy');
-    if (!btn) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const product = products.find(p => p.id === btn.dataset.id);
-    if (!product) return;
-    btn.disabled = true;
-    try {
-      const data = await api.generatePrompt({
-        product_id: product.id,
-        family: selFamily || undefined,
-        variant: selVariant || undefined,
-        format: selFormat || '4:5',
-      });
-      setPromptPreview(data.prompt, data.meta);
-      await copyText(data.prompt);
-      const slug = slugify(product.name);
-      showToast(`Prompt copiado (${data.meta.variant}). Guardá la imagen como ${slug}.png`, 'success');
-    } catch (err) {
-      showToast('Error al generar prompt: ' + err.message, 'error');
-    } finally {
-      btn.disabled = false;
-    }
-  });
-
-  document.getElementById('img-prompt-family').addEventListener('change', (e) => {
-    selFamily = e.target.value;
-    selVariant = '';
-    renderPromptSelects();
-  });
-
-  document.getElementById('img-prompt-variant').addEventListener('change', (e) => {
-    selVariant = e.target.value;
-  });
-
-  document.getElementById('img-prompt-format').addEventListener('change', (e) => {
-    selFormat = e.target.value;
-    localStorage.setItem('danimarvis_prompt_format', selFormat);
-  });
-
-  document.getElementById('img-prompt-copy').addEventListener('click', () => {
-    const ta = document.getElementById('img-prompt-preview');
-    if (!ta || !ta.value) { showToast('Primero tocá 📋 junto a un producto', 'error'); return; }
-    copyText(ta.value).then(() => showToast('Prompt copiado', 'success'))
-      .catch(() => showToast('No se pudo copiar al portapapeles', 'error'));
-  });
+  // ── Importación de imágenes publicitarias ─────────────────────
 
   document.getElementById('img-gen-import').addEventListener('click', async () => {
     const folder = document.getElementById('img-gen-folder').value.trim();
@@ -677,71 +596,6 @@ function renderForm(container, products, providers, onDone) {
 
 function formatPrice(price) {
   return '$' + Number(price || 0).toLocaleString('es-CO');
-}
-
-function copyText(text) {
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    return navigator.clipboard.writeText(text);
-  }
-  const ta = document.createElement('textarea');
-  ta.value = text;
-  ta.style.position = 'fixed';
-  ta.style.opacity = '0';
-  document.body.appendChild(ta);
-  ta.select();
-  document.execCommand('copy');
-  ta.remove();
-  return Promise.resolve();
-}
-
-async function loadPromptFamilies() {
-  try {
-    const [famData, fmtData] = await Promise.all([
-      api.getPromptFamilies(),
-      api.getPromptFormats(),
-    ]);
-    promptFamilies = famData.families || [];
-    promptFormats = fmtData.formats || [];
-  } catch (err) {
-    promptFamilies = [];
-    promptFormats = [];
-  }
-  renderPromptSelects();
-}
-
-function renderPromptSelects() {
-  const famSel = document.getElementById('img-prompt-family');
-  const varSel = document.getElementById('img-prompt-variant');
-  const fmtSel = document.getElementById('img-prompt-format');
-  if (!famSel) return;
-  famSel.innerHTML = '<option value="">Automático</option>' + promptFamilies.map(f =>
-    `<option value="${f.id}" ${selFamily === f.id ? 'selected' : ''}>${escHtml(f.name)}</option>`
-  ).join('');
-  const fam = promptFamilies.find(f => f.id === selFamily);
-  if (fam) {
-    varSel.innerHTML = '<option value="">Automático (rota)</option>' + fam.variants.map(v =>
-      `<option value="${v.id}" ${selVariant === v.id ? 'selected' : ''}>${escHtml(v.name)}</option>`
-    ).join('');
-    varSel.disabled = false;
-  } else {
-    varSel.innerHTML = '<option value="">Automático</option>';
-    varSel.disabled = true;
-  }
-  if (fmtSel) {
-    fmtSel.innerHTML = promptFormats.map(f =>
-      `<option value="${f.id}" ${selFormat === f.id ? 'selected' : ''}>${escHtml(f.label)}</option>`
-    ).join('');
-  }
-}
-
-function setPromptPreview(prompt, meta) {
-  const metaEl = document.getElementById('img-prompt-meta');
-  if (metaEl && meta) {
-    const providerInfo = meta.provider_style_code ? ` · Proveedor: ${meta.provider_style_code}` : '';
-    metaEl.textContent = `Familia ${meta.family} · Variante ${meta.variant} · Formato ${meta.format || '4:5'}${providerInfo}${meta.automatic ? ' · rotación automática' : ''} · ${meta.product_name}`;
-  }
-  const ta = document.getElementById('img-prompt-preview');
-  if (ta) ta.value = prompt || '';
 }
 
 function renderImportResults(el, data) {

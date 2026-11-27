@@ -9,10 +9,9 @@ export async function render(container) {
   container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-secondary)">Cargando configuración...</div>';
 
   try {
-    const [settings, categories, providerStyles, status] = await Promise.all([
+    const [settings, categories, status] = await Promise.all([
       api.getSettings(),
       api.getCategories(),
-      api.getProviderStyles(),
       // El estado trae los valores efectivos de las cuentas A y B (base →
       // entorno → default). Se usa solo para PINTAR los campos: si no hay
       // sesión o el endpoint falla, la sección de cuentas se pinta con los
@@ -20,7 +19,7 @@ export async function render(container) {
       api.getStatus().catch(() => null),
     ]);
     currentSettings = settings;
-    renderPage(container, settings, categories, providerStyles, status);
+    renderPage(container, settings, categories, status);
   } catch (err) {
     container.innerHTML = `<div class="empty-state"><h3>Error</h3><p>${err.message}</p></div>`;
   }
@@ -350,7 +349,7 @@ function tiemposCardHTML(perfil, valores, confirmRed, gap) {
       </div>`;
 }
 
-function renderPage(container, settings, categories, providerStyles, status) {
+function renderPage(container, settings, categories, status) {
   const pc = settings.publish_config || {};
   const template = pc.template || '';
   const ai = pc.ai || {};
@@ -818,64 +817,7 @@ function renderPage(container, settings, categories, providerStyles, status) {
         }
       </div>
 
-      <div class="card" style="margin-top:16px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px">
-          <div>
-            <h3 style="margin:0">Estilos de Proveedor</h3>
-            <p style="margin:4px 0 0;font-size:.82rem;color:var(--text-secondary)">Perfiles visuales que usa el motor de prompts al generar anuncios. Asigná un estilo a cada proveedor desde la sección de Proveedores.</p>
-          </div>
-          <button type="button" class="btn btn--primary btn--sm" id="btn-add-style">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            Nuevo estilo
-          </button>
-        </div>
-        ${providerStyles.length === 0
-          ? '<div class="empty-state" style="padding:24px"><p>No hay estilos configurados.</p></div>'
-          : `<div style="display:flex;flex-direction:column;gap:12px">
-              ${providerStyles.map(s => {
-                const palette = typeof s.palette === 'object' ? s.palette : {};
-                return `
-                <details style="border:1px solid var(--border);border-radius:8px;padding:0">
-                  <summary style="cursor:pointer;padding:12px 16px;font-weight:600;display:flex;align-items:center;gap:10px">
-                    <span class="badge badge--active">${escHtml(s.code)}</span>
-                    <span>${escHtml(s.name)}</span>
-                    <span style="font-size:.78rem;color:var(--text-muted);margin-left:auto">${escHtml(s.style_name)}</span>
-                  </summary>
-                  <div style="padding:0 16px 16px;display:flex;flex-direction:column;gap:10px">
-                    <div class="style-palette-section" data-code="${s.code}">
-                      ${paletteBuilderHTML(palette)}
-                    </div>
-                    <div class="form-group" style="margin:0">
-                      <label style="font-size:.78rem">Reglas de fondo</label>
-                      <textarea class="form-control style-rule" data-code="${s.code}" data-field="background_rules" style="min-height:60px;font-size:.8rem">${escHtml(s.background_rules)}</textarea>
-                    </div>
-                    <div class="form-group" style="margin:0">
-                      <label style="font-size:.78rem">Reglas de acentos</label>
-                      <textarea class="form-control style-rule" data-code="${s.code}" data-field="accent_rules" style="min-height:60px;font-size:.8rem">${escHtml(s.accent_rules)}</textarea>
-                    </div>
-                    <div class="form-group" style="margin:0">
-                      <label style="font-size:.78rem">Reglas de firma</label>
-                      <textarea class="form-control style-rule" data-code="${s.code}" data-field="signature_rules" style="min-height:60px;font-size:.8rem">${escHtml(s.signature_rules)}</textarea>
-                    </div>
-                    <div class="form-group" style="margin:0">
-                      <label style="font-size:.78rem">Restricciones del perfil</label>
-                      <textarea class="form-control style-rule" data-code="${s.code}" data-field="negative_rules" style="min-height:60px;font-size:.8rem">${escHtml(s.negative_rules)}</textarea>
-                    </div>
-                    <div class="form-group" style="margin:0">
-                      <label style="font-size:.78rem">Envío gratis (texto del prompt)</label>
-                      <input type="text" class="form-control style-rule" data-code="${s.code}" data-field="shipping_rule" value="${escAttr(s.shipping_rule || '')}" placeholder="Envío: GRATIS a ..." />
-                      <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">Texto que aparece en el prompt generado. Si está vacío, usa el valor por defecto.</small>
-                    </div>
-                    <div style="display:flex;gap:8px;align-items:center">
-                      <button type="button" class="btn btn--primary btn--sm btn-save-style" data-code="${s.code}">Guardar estilo</button>
-                      <button type="button" class="btn btn--sm btn--ghost btn-delete-style" data-code="${s.code}" data-name="${escAttr(s.name)}" style="color:var(--error);margin-left:auto">Eliminar</button>
-                    </div>
-                  </div>
-                </details>`;
-              }).join('')}
-            </div>`
-        }
-      </div>
+
     </div>
   `;
 
@@ -1190,47 +1132,7 @@ function renderPage(container, settings, categories, providerStyles, status) {
     btn.addEventListener('click', () => deleteCategory(btn.dataset.id, btn.dataset.name));
   });
 
-  container.querySelectorAll('.btn-save-style').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const code = btn.dataset.code;
-      const fields = container.querySelectorAll(`.style-rule[data-code="${code}"]`);
-      const data = {};
-      fields.forEach(el => { data[el.dataset.field] = el.value; });
-      const paletteSection = container.querySelector(`.style-palette-section[data-code="${code}"]`);
-      if (paletteSection) {
-        data.palette = collectPaletteFrom(paletteSection);
-      }
-      try {
-        await api.updateProviderStyle(code, data);
-        showToast(`Estilo ${code} actualizado`, 'success');
-      } catch (err) {
-        showToast(err.message, 'error');
-      }
-    });
-  });
 
-  initPaletteBuilder();
-  refreshPaletteSummaries();
-
-  document.getElementById('btn-add-style')?.addEventListener('click', () => openStyleForm());
-
-  container.querySelectorAll('.btn-delete-style').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const ok = await confirmDialog(`¿Eliminar el estilo "${btn.dataset.name}" (${btn.dataset.code})?`, {
-        title: 'Eliminar estilo',
-        danger: true,
-        confirmText: 'Eliminar'
-      });
-      if (!ok) return;
-      try {
-        await api.deleteProviderStyle(btn.dataset.code);
-        showToast('Estilo eliminado', 'success');
-        render(container);
-      } catch (err) {
-        showToast(err.message, 'error');
-      }
-    });
-  });
 }
 
 function openCategoryForm(id = null, name = '') {
@@ -1305,286 +1207,6 @@ async function deleteCategory(id, name) {
   } catch (err) {
     showToast(err.message, 'error');
   }
-}
-
-const BRAND_BASE_COLORS = [
-  { label: 'Navy', hex: '#08245A' },
-  { label: 'Deep Navy', hex: '#061633' },
-  { label: 'Naranja', hex: '#FF6A00' },
-  { label: 'Dorado', hex: '#D9A928' },
-  { label: 'Blanco', hex: '#FFFFFF' },
-];
-
-function normalizePaletteEntries(palette = {}) {
-  const entries = Object.entries(palette || {}).filter(([k]) => k);
-  if (entries.length === 0) return [{ label: '', hex: '#08245A', pct: 0 }];
-  return entries.map(([label, val]) => {
-    if (val && typeof val === 'object' && typeof val.hex === 'string') {
-      const pct = Number(val.pct);
-      return { label, hex: val.hex, pct: Number.isFinite(pct) ? pct : 0 };
-    }
-    return { label, hex: typeof val === 'string' ? val : '#08245A', pct: 0 };
-  });
-}
-
-function paletteBuilderHTML(existingPalette = {}) {
-  const rows = normalizePaletteEntries(existingPalette);
-  return `
-    <div class="form-group">
-      <label>Paleta de colores y proporciones</label>
-      <div style="margin-bottom:10px">
-        <div style="font-size:.75rem;color:var(--text-muted);margin-bottom:6px">Paleta base DaniMarvis (referencia):</div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
-          ${BRAND_BASE_COLORS.map(c => `
-            <span title="${escHtml(c.label)}: ${c.hex}" style="display:inline-flex;align-items:center;gap:4px;font-size:.72rem;color:var(--text-muted);background:var(--bg);padding:3px 8px;border-radius:12px">
-              <span style="width:14px;height:14px;border-radius:50%;background:${c.hex};border:1px solid var(--border);display:inline-block;flex-shrink:0"></span>
-              ${c.hex}
-            </span>
-          `).join('')}
-        </div>
-      </div>
-      <div class="palette-rows" style="display:flex;flex-direction:column;gap:6px">
-        ${rows.map(r => paletteRowHTML(r.label, r.hex, r.pct)).join('')}
-      </div>
-      <button type="button" class="btn btn--sm btn--ghost palette-add-btn" style="margin-top:6px">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        Agregar color
-      </button>
-      <div class="palette-summary"></div>
-      <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:4px">Colores específicos de este estilo. Mové la barra para ajustar la proporción de cada color; en el prompt se envía como rango (±10%).</small>
-    </div>
-  `;
-}
-
-function paletteRowHTML(label = '', hex = '#08245A', pct = 0) {
-  const safePct = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
-  return `
-    <div class="palette-row" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px">
-      <input type="text" class="form-control palette-label" placeholder="Nombre" value="${escAttr(label)}" style="flex:1 1 110px;font-size:.82rem" />
-      <input type="color" class="palette-color" value="${hex}" style="width:34px;height:30px;padding:2px;border:1px solid var(--border);border-radius:4px;cursor:pointer;flex-shrink:0" />
-      <span class="palette-hex" style="font-size:.72rem;font-family:monospace;color:var(--text-muted);min-width:52px">${escHtml(hex)}</span>
-      <div style="flex:1 1 150px;display:flex;align-items:center;gap:6px;min-width:150px">
-        <input type="range" class="palette-pct" min="0" max="100" step="1" value="${safePct}" style="flex:1" title="Proporción del color" />
-        <input type="number" class="palette-pct-num" min="0" max="100" value="${safePct}" style="width:50px;font-size:.8rem;padding:4px 6px;border:1px solid var(--border);border-radius:4px" />
-        <span style="font-size:.75rem;color:var(--text-muted)">%</span>
-      </div>
-      <button type="button" class="btn btn--sm btn--ghost palette-remove" style="color:var(--error);padding:2px 4px;flex-shrink:0" title="Eliminar">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-    </div>
-  `;
-}
-
-function setPalettePct(row, v) {
-  const clamped = Math.max(0, Math.min(100, Math.round(Number(v) || 0)));
-  const s = row.querySelector('.palette-pct');
-  const n = row.querySelector('.palette-pct-num');
-  if (s) s.value = clamped;
-  if (n) n.value = clamped;
-}
-
-function normalizePalette(root) {
-  const formGroup = root.closest('.form-group') || (root.classList && root.classList.contains('form-group') ? root : null);
-  if (!formGroup) return;
-  const rows = Array.from(formGroup.querySelectorAll('.palette-row'));
-  if (rows.length === 0) return;
-  const pcts = rows.map(r => Number(r.querySelector('.palette-pct').value) || 0);
-  const sum = pcts.reduce((a, b) => a + b, 0);
-  if (sum === 0) {
-    const each = Math.floor(100 / rows.length);
-    rows.forEach((r, i) => setPalettePct(r, i === rows.length - 1 ? 100 - each * (rows.length - 1) : each));
-  } else {
-    let assigned = 0;
-    rows.forEach((r, i) => {
-      if (i === rows.length - 1) {
-        setPalettePct(r, 100 - assigned);
-      } else {
-        const v = Math.round((pcts[i] / sum) * 100);
-        setPalettePct(r, v);
-        assigned += v;
-      }
-    });
-  }
-  renderPaletteSummary(root);
-}
-
-function renderPaletteSummary(root) {
-  const formGroup = root.closest ? root.closest('.form-group') : null;
-  const container = formGroup || root;
-  const box = container.querySelector && container.querySelector('.palette-summary');
-  if (!box) return;
-  const rows = Array.from(container.querySelectorAll('.palette-row'));
-  const items = rows.map(row => ({
-    hex: row.querySelector('.palette-color').value,
-    pct: Number(row.querySelector('.palette-pct').value) || 0,
-    name: (row.querySelector('.palette-label').value || '').trim(),
-  }));
-  const total = items.reduce((s, i) => s + Math.max(0, i.pct), 0);
-  if (items.length === 0) { box.innerHTML = ''; return; }
-  box.innerHTML = `
-    <div style="margin-top:10px;display:flex;flex-direction:column;gap:4px">
-      <div style="display:flex;height:14px;border-radius:6px;overflow:hidden;border:1px solid var(--border)">
-        ${items.map(i => `<div title="${escAttr(i.name)} ${i.pct}%" style="flex:${Math.max(i.pct, 0.1)};background:${i.hex};min-width:${i.pct > 0 ? '2px' : '0'}"></div>`).join('')}
-      </div>
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-        <span style="font-size:.72rem;color:var(--text-muted)">Total: <b>${total}%</b>${total > 100 ? ' <span style="color:#b8860b">(supera 100%)</span>' : ''}</span>
-        <button type="button" class="btn btn--sm btn--ghost palette-reset-btn" style="padding:2px 8px;font-size:.75rem">Normalizar a 100%</button>
-      </div>
-    </div>
-  `;
-}
-
-function refreshPaletteSummaries() {
-  document.querySelectorAll('.palette-rows').forEach(rowsEl => {
-    renderPaletteSummary(rowsEl);
-  });
-}
-
-function collectPaletteFrom(root) {
-  const palette = {};
-  (root || document).querySelectorAll('.palette-row').forEach(row => {
-    const label = row.querySelector('.palette-label').value.trim();
-    const hex = row.querySelector('.palette-color').value;
-    const pctInput = row.querySelector('.palette-pct');
-    const pct = Number(pctInput ? pctInput.value : 0);
-    if (label) palette[label] = { hex, pct: Math.max(0, Math.min(100, Math.round(pct || 0))) };
-  });
-  return palette;
-}
-
-function collectPalette() {
-  return collectPaletteFrom(document);
-}
-
-function initPaletteBuilder() {
-  if (window._paletteBuilderInit) return;
-  window._paletteBuilderInit = true;
-
-  document.addEventListener('input', (e) => {
-    if (e.target.classList.contains('palette-color')) {
-      const hex = e.target.value;
-      const row = e.target.closest('.palette-row');
-      row.querySelector('.palette-hex').textContent = hex;
-    } else if (e.target.classList.contains('palette-pct')) {
-      const row = e.target.closest('.palette-row');
-      setPalettePct(row, e.target.value);
-      renderPaletteSummary(row);
-    } else if (e.target.classList.contains('palette-pct-num')) {
-      const row = e.target.closest('.palette-row');
-      const n = Number(e.target.value);
-      const clamped = Math.max(0, Math.min(100, Math.round(n || 0)));
-      setPalettePct(row, clamped);
-      renderPaletteSummary(row);
-    } else if (e.target.classList.contains('palette-label')) {
-      const row = e.target.closest('.palette-row');
-      renderPaletteSummary(row);
-    }
-  });
-
-  document.addEventListener('click', (e) => {
-    if (e.target.closest('.palette-remove')) {
-      const row = e.target.closest('.palette-row');
-      const parent = row.parentElement;
-      if (parent.querySelectorAll('.palette-row').length > 1) {
-        row.remove();
-        renderPaletteSummary(row);
-      } else {
-        showToast('Debe haber al menos un color', 'warning');
-      }
-    }
-    if (e.target.closest('.palette-add-btn')) {
-      const rowsContainer = e.target.closest('.form-group').querySelector('.palette-rows');
-      if (rowsContainer) {
-        rowsContainer.insertAdjacentHTML('beforeend', paletteRowHTML('', '#08245A', 0));
-        renderPaletteSummary(rowsContainer);
-      }
-    }
-    if (e.target.closest('.palette-reset-btn')) {
-      normalizePalette(e.target.closest('.form-group'));
-    }
-  });
-}
-
-function openStyleForm() {
-  openModal(`
-    <div class="modal-header">
-      <h2>Nuevo estilo de proveedor</h2>
-      <button class="modal-close" onclick="closeModal()">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-    </div>
-    <p style="font-size:.82rem;color:var(--text-secondary);margin:0 0 16px">
-      Creá un nuevo perfil visual para un proveedor. El ADN de la marca (paleta base, tipografía, personalidad) se mantiene siempre como base. Este estilo se superpone como variación visual.
-    </p>
-    <form id="style-form">
-      <div class="form-row" style="grid-template-columns:1fr 2fr">
-        <div class="form-group">
-          <label>Código del estilo *</label>
-          <input type="text" name="code" class="form-control" placeholder="Ej: NP" maxlength="5" required style="text-transform:uppercase;font-weight:700;font-family:monospace" />
-          <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">Identificador corto (máx. 5 caracteres)</small>
-        </div>
-        <div class="form-group">
-          <label>Nombre del estilo *</label>
-          <input type="text" name="name" class="form-control" placeholder="Ej: MiPime Nuevo Proveedor" required />
-        </div>
-      </div>
-      <div class="form-group">
-        <label>Nombre interno (prompt) *</label>
-        <input type="text" name="style_name" class="form-control" placeholder="Ej: DANIMARVIS_CUSTOM" required style="font-family:monospace;font-size:.85rem" />
-        <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">Nombre que aparece en el prompt generado. Formato recomendado: DANIMARVIS_XXX</small>
-      </div>
-      ${paletteBuilderHTML({})}
-      <div class="form-group">
-        <label>Reglas de fondo</label>
-        <textarea name="background_rules" class="form-control" rows="3" placeholder="Describí cómo deben ser los fondos de los anuncios de este proveedor..."></textarea>
-      </div>
-      <div class="form-group">
-        <label>Reglas de acentos</label>
-        <textarea name="accent_rules" class="form-control" rows="3" placeholder="Describí cómo usar los colores de acento..."></textarea>
-      </div>
-      <div class="form-group">
-        <label>Reglas de firma visual</label>
-        <textarea name="signature_rules" class="form-control" rows="3" placeholder="Elementos visuales distintivos de este estilo..."></textarea>
-      </div>
-      <div class="form-group">
-        <label>Restricciones del perfil</label>
-        <textarea name="negative_rules" class="form-control" rows="3" placeholder="Qué NO hacer en los anuncios de este estilo..."></textarea>
-      </div>
-      <div class="form-group">
-        <label>Texto de envío</label>
-        <input type="text" name="shipping_rule" class="form-control" placeholder="Envío: GRATIS a ..." />
-        <small style="color:var(--text-muted);font-size:.72rem;display:block;margin-top:2px">Si está vacío, se usa el valor por defecto.</small>
-      </div>
-      <div class="form-actions">
-        <button type="button" class="btn btn--secondary" onclick="closeModal()">Cancelar</button>
-        <button type="submit" class="btn btn--primary">Crear estilo</button>
-      </div>
-    </form>
-  `, 'modal-content--wide');
-
-  initPaletteBuilder();
-  refreshPaletteSummaries();
-
-  document.getElementById('style-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const data = Object.fromEntries(new FormData(e.target));
-    data.code = data.code.trim().toUpperCase();
-    data.name = data.name.trim();
-    data.style_name = data.style_name.trim();
-    data.palette = collectPalette();
-    if (!data.code || !data.name || !data.style_name) {
-      showToast('Código, nombre y nombre de estilo son obligatorios', 'error');
-      return;
-    }
-    try {
-      await api.createProviderStyle(data);
-      showToast(`Estilo ${data.code} creado`, 'success');
-      closeModal(true);
-      render(currentContainer);
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
 }
 
 function snapshotForm(form) {

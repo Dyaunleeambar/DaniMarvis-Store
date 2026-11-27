@@ -261,18 +261,6 @@ export const api = {
   getRankingWeeklyDetail: (inicio) => request('GET', `/rankings/weekly/${inicio}`),
   getRankingWeeklyGroup: (name) => request('GET', `/rankings/weekly/group/${encodeURIComponent(name)}`),
 
-  // Prompt Engine
-  getPromptFamilies: () => request('GET', '/prompt-engine/families'),
-  getPromptFormats: () => request('GET', '/prompt-engine/formats'),
-  generatePrompt: (data) => request('POST', '/prompt-engine/generate', data),
-
-  // Provider Styles
-  getProviderStyles: () => request('GET', '/provider-styles'),
-  getProviderStyle: (code) => request('GET', `/provider-styles/${code}`),
-  createProviderStyle: (data) => request('POST', '/provider-styles', data),
-  updateProviderStyle: (code, data) => request('PUT', `/provider-styles/${code}`, data),
-  deleteProviderStyle: (code) => request('DELETE', `/provider-styles/${code}`),
-
   // Warranty Rules
   getWarrantyRules: (providerId) => request('GET', `/warranty-rules${providerId ? '?provider_id=' + providerId : ''}`),
   createWarrantyRule: (data) => request('POST', '/warranty-rules', data),
